@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Edo",
+    "slug": "edo",
+    "version": "0.0.0",
+    "userInterfaceStyle": "dark",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "bundleIdentifier": "studio.lightwork.edo"
+    },
+    "android": {
+      "package": "studio.lightwork.edo"
+    }
+  }
+}

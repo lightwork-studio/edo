@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Edo targets</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0;background:#141517}
+button,input{font:inherit;color:inherit;margin:0}
+input::placeholder{color:#8A8780;opacity:1}
+a{color:#F6B84D}a:hover{color:#F9CD80}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; box-sizing: border-box; background: #141517; color: #F4F2EE; font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 15px; line-height: 1.3; -webkit-font-smoothing: antialiased">
+  <header style="position: relative; padding: 8px 12px 0; height: 60px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between">
+    <button type="button" aria-label="Back to profile" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #1F2023; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    </button>
+    <h1 style="position: absolute; left: 64px; right: 64px; top: 8px; height: 52px; margin: 0; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700">Targets</h1>
+    <span aria-hidden="true" style="width: 40px"></span>
+  </header>
+
+  <main style="padding: 8px 16px 0; display: flex; flex-direction: column; gap: 12px">
+    <div role="radiogroup" aria-label="How targets are set" style="height: 40px; box-sizing: border-box; border-radius: 20px; background: #1F2023; padding: 3px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px">
+      <button type="button" role="radio" aria-checked="true" style="border-radius: 17px; border: 0; padding: 0; background: #3A3B40; font-size: 14px; font-weight: 700; color: #F4F2EE; cursor: pointer">Calculated</button>
+      <button type="button" role="radio" aria-checked="false" style="border-radius: 17px; border: 0; padding: 0; background: none; font-size: 14px; font-weight: 600; color: #B0ACA5; cursor: pointer">Manual</button>
+    </div>
+
+    <section aria-labelledby="h-body" style="border-radius: 18px; background: #1F2023; padding: 12px">
+      <h2 id="h-body" style="margin: 0 2px; font-size: 13px; font-weight: 600; color: #B0ACA5">From your body</h2>
+      <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px">
+        <button type="button" id="b-sex" aria-label="Sex: Male. Change" style="height: 50px; box-sizing: border-box; border-radius: 12px; border: 0; background: #292A2E; padding: 0 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; cursor: pointer; min-width: 0">
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap">Sex</span>
+          <span style="max-width: 100%; font-size: 15px; font-weight: 700; color: #F4F2EE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Male</span>
+        </button>
+        <button type="button" id="b-age" aria-label="Age: 34 years. Change" style="height: 50px; box-sizing: border-box; border-radius: 12px; border: 0; background: #292A2E; padding: 0 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; cursor: pointer; min-width: 0">
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap">Age</span>
+          <span style="max-width: 100%; font-size: 15px; font-weight: 700; color: #F4F2EE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">34 <span style="font-size: 12.5px; font-weight: 500; color: #B0ACA5">years</span></span>
+        </button>
+        <button type="button" id="b-height" aria-label="Height: 182 cm. Change" style="height: 50px; box-sizing: border-box; border-radius: 12px; border: 0; background: #292A2E; padding: 0 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; cursor: pointer; min-width: 0">
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap">Height</span>
+          <span style="max-width: 100%; font-size: 15px; font-weight: 700; color: #F4F2EE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">182 <span style="font-size: 12.5px; font-weight: 500; color: #B0ACA5">cm</span></span>
+        </button>
+        <button type="button" id="b-weight" aria-label="Weight: 78.6 kg, from trend. Change" style="height: 50px; box-sizing: border-box; border-radius: 12px; border: 0; background: #292A2E; padding: 0 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; cursor: pointer; min-width: 0">
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap">Weight <span style="color: #8A8780">· from trend</span></span>
+          <span style="max-width: 100%; font-size: 15px; font-weight: 700; color: #F4F2EE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">78.6 <span style="font-size: 12.5px; font-weight: 500; color: #B0ACA5">kg</span></span>
+        </button>
+        <button type="button" id="b-act" aria-label="Activity: Active 3–4× a week. Change" style="height: 50px; box-sizing: border-box; border-radius: 12px; border: 0; background: #292A2E; padding: 0 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; cursor: pointer; min-width: 0">
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap">Activity</span>
+          <span style="max-width: 100%; font-size: 15px; font-weight: 700; color: #F4F2EE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Active 3–4× a week</span>
+        </button>
+        <button type="button" id="b-goal" aria-label="Goal: Lose 0.4 kg/week. Change" style="height: 50px; box-sizing: border-box; border-radius: 12px; border: 0; background: #292A2E; padding: 0 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; cursor: pointer; min-width: 0">
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap">Goal</span>
+          <span style="max-width: 100%; font-size: 15px; font-weight: 700; color: #F4F2EE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Lose 0.4 <span style="font-size: 12.5px; font-weight: 500; color: #B0ACA5">kg/week</span></span>
+        </button>
+      </div>
+      <div style="margin-top: 12px; padding: 10px 2px 0; border-top: 1px solid #292A2E; display: flex; flex-direction: column; gap: 3px">
+        <p style="margin: 0; display: flex; align-items: baseline; gap: 6px; font-size: 14px; color: #B0ACA5; white-space: nowrap">Maintenance ≈ <b style="font-weight: 700; color: #F4F2EE">2,590</b><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="align-self: center"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>target <b style="font-size: 17px; font-weight: 700; color: #F6B84D">2,150</b> kcal</p>
+        <span style="font-size: 11.5px; color: #8A8780">Mifflin-St Jeor · 0.4 kg/week ≈ 440 kcal less a day</span>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-macros" style="border-radius: 18px; background: #1F2023; padding: 12px 14px 12px 12px">
+      <div style="display: flex; align-items: baseline; margin: 0 2px">
+        <h2 id="h-macros" style="flex: 1; margin: 0; font-size: 13px; font-weight: 600; color: #B0ACA5">Macros</h2>
+        <span style="font-size: 12px; color: #B0ACA5">per day</span>
+      </div>
+      <ul style="list-style: none; margin: 6px 0 0; padding: 0">
+        <li style="height: 54px; display: flex; align-items: center; gap: 12px">
+          <svg aria-hidden="true" width="38" height="38" viewBox="0 0 38 38" style="flex: none"><circle cx="19" cy="19" r="15" fill="none" stroke="#2C2D31" stroke-width="4.5"></circle><circle cx="19" cy="19" r="15" fill="none" stroke="#5FD38D" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="26.30 94.25" transform="rotate(-90 19 19)"></circle><text x="19" y="19.5" text-anchor="middle" dominant-baseline="central" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="700" fill="#5FD38D">P</text></svg>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+            <label for="m-p" style="font-size: 15px; font-weight: 600; color: #F4F2EE">Protein</label>
+            <span style="font-size: 12px; color: #B0ACA5">≈ 1.9 g per kg body weight</span>
+          </span>
+          <span style="height: 40px; min-width: 96px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 0 12px; display: flex; align-items: center; justify-content: flex-end; gap: 4px"><input id="m-p" type="text" inputmode="numeric" value="150" style="width: 44px; height: 32px; border: 0; outline: none; background: transparent; padding: 0; text-align: right; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </li>
+        <li style="height: 54px; display: flex; align-items: center; gap: 12px; border-top: 1px solid #292A2E">
+          <svg aria-hidden="true" width="38" height="38" viewBox="0 0 38 38" style="flex: none"><circle cx="19" cy="19" r="15" fill="none" stroke="#2C2D31" stroke-width="4.5"></circle><circle cx="19" cy="19" r="15" fill="none" stroke="#FF7D8A" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="27.62 94.25" transform="rotate(-90 19 19)"></circle><text x="19" y="19.5" text-anchor="middle" dominant-baseline="central" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="700" fill="#FF7D8A">F</text></svg>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+            <label for="m-f" style="font-size: 15px; font-weight: 600; color: #F4F2EE">Fat</label>
+            <span style="font-size: 12px; color: #B0ACA5">29 % of calories</span>
+          </span>
+          <span style="height: 40px; min-width: 96px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 0 12px; display: flex; align-items: center; justify-content: flex-end; gap: 4px"><input id="m-f" type="text" inputmode="numeric" value="70" style="width: 44px; height: 32px; border: 0; outline: none; background: transparent; padding: 0; text-align: right; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </li>
+        <li style="height: 54px; display: flex; align-items: center; gap: 12px; border-top: 1px solid #292A2E">
+          <svg aria-hidden="true" width="38" height="38" viewBox="0 0 38 38" style="flex: none"><circle cx="19" cy="19" r="15" fill="none" stroke="#2C2D31" stroke-width="4.5"></circle><circle cx="19" cy="19" r="15" fill="none" stroke="#E8DD72" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="40.33 94.25" transform="rotate(-90 19 19)"></circle><text x="19" y="19.5" text-anchor="middle" dominant-baseline="central" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="700" fill="#E8DD72">C</text></svg>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+            <label for="m-c" style="font-size: 15px; font-weight: 600; color: #F4F2EE">Carbs</label>
+            <span style="font-size: 12px; color: #B0ACA5">Fills the rest · set automatically</span>
+          </span>
+          <span style="height: 40px; min-width: 96px; box-sizing: border-box; border-radius: 12px; background: #232427; border: 1px dashed #4A4B50; padding: 0 12px; display: flex; align-items: center; justify-content: flex-end; gap: 4px"><output id="m-c" style="font-size: 17px; font-weight: 700; color: #F4F2EE">230</output><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </li>
+      </ul>
+      <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 6px">
+        <div role="img" aria-label="Calories from macros: protein 600, carbs 920, fat 630, total 2,150 kcal, matches the target" style="height: 8px; display: flex; gap: 2px">
+          <span style="flex: 600 1 0; border-radius: 4px 2px 2px 4px; background: #5FD38D"></span>
+          <span style="flex: 920 1 0; border-radius: 2px; background: #E8DD72"></span>
+          <span style="flex: 630 1 0; border-radius: 2px 4px 4px 2px; background: #FF7D8A"></span>
+        </div>
+        <span style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #B0ACA5; font-variant-numeric: tabular-nums">600 + 920 + 630 = <b style="font-weight: 600; color: #F4F2EE">2,150 kcal</b><svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5FD38D" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>matches</span>
+      </div>
+    </section>
+
+    <div aria-disabled="true" style="height: 52px; box-sizing: border-box; border-radius: 18px; background: #1A1B1D; border: 1px dashed #3A3B40; padding: 0 14px 0 10px; display: flex; align-items: center; gap: 12px">
+      <span aria-hidden="true" style="width: 32px; height: 32px; flex: none; border-radius: 10px; background: #292A2E; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D4D0C9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l5-5 4 4 7-7"></path><path d="M15 8h5v5"></path></svg></span>
+      <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px">
+        <span style="font-size: 15px; font-weight: 500; color: #8A8780">Adaptive targets</span>
+        <span style="font-size: 11.5px; color: #8A8780">Adjusts from your weight trend</span>
+      </span>
+      <span style="height: 22px; padding: 0 8px; border-radius: 11px; background: #232427; display: flex; align-items: center; font-size: 11px; font-weight: 600; color: #B0ACA5; white-space: nowrap">Coming later</span>
+    </div>
+  </main>
+
+  <div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 16px 34px; background: #141517; border-top: 1px solid #232427; box-shadow: 0 -16px 24px #141517">
+    <button type="button" style="width: 100%; height: 56px; border-radius: 18px; border: 0; padding: 0; background: #F6B84D; color: #2B1B00; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 700; cursor: pointer">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2B1B00" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+      Save targets
+    </button>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Edo food over target</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0;background:#141517}
+button,input{font:inherit;color:inherit;margin:0}
+input::placeholder{color:#B0ACA5;opacity:1}
+a{color:#F6B84D}a:hover{color:#F9CD80}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; box-sizing: border-box; background: #141517; color: #F4F2EE; font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 15px; line-height: 1.3; -webkit-font-smoothing: antialiased">
+
+  <header style="position: relative; padding: 8px 12px 0; height: 60px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between">
+    <button type="button" aria-label="Back to search" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #1F2023; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    </button>
+    <div style="position: absolute; left: 64px; right: 64px; top: 8px; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center">
+      <button type="button" aria-label="Adding to snacks. Change meal" style="height: 26px; border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 5px; font-size: 17px; font-weight: 700; color: #F4F2EE; cursor: pointer">
+        Add to Snacks
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+      </button>
+      <span style="font-size: 12px; color: #B0ACA5">Wed, 25 Nov · 22:10</span>
+    </div>
+    <button type="button" aria-pressed="false" aria-label="Favourite" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #1F2023; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.8l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.7-5 2.7.9-5.6-4-4 5.6-.8z"></path></svg>
+    </button>
+  </header>
+
+  <section aria-label="Food" style="padding: 14px 20px 0; display: flex; flex-direction: column; gap: 6px">
+    <h1 style="margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.5px">Pizza Salami, tiefgekühlt</h1>
+    <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #B0ACA5">
+      <span>1 pizza 320 g</span>
+      <span style="height: 22px; padding: 0 8px; border-radius: 11px; background: #232427; border: 1px solid #3A3B40; display: flex; align-items: center; font-size: 11.5px; font-weight: 600; color: #B0ACA5">BLS</span>
+    </div>
+  </section>
+
+  <main style="padding: 16px 16px 0; display: flex; flex-direction: column; gap: 12px">
+
+    <section aria-label="Amount" style="background: #1F2023; border-radius: 20px; padding: 14px 14px 14px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <div style="flex: none; width: 128px; height: 56px; box-sizing: border-box; border-radius: 14px; background: #292A2E; border: 1.5px solid #F6B84D; padding: 0 14px; display: flex; align-items: center; gap: 6px">
+          <label for="amount" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Amount in grams</label>
+          <input id="amount" type="text" inputmode="decimal" value="320" style="flex: 1; min-width: 0; width: 60px; height: 44px; border: 0; outline: none; background: transparent; padding: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; color: #F4F2EE">
+          <span style="font-size: 16px; font-weight: 600; color: #B0ACA5">g</span>
+        </div>
+        <div role="radiogroup" aria-label="Unit" style="flex: 1; min-width: 0; height: 56px; box-sizing: border-box; border-radius: 14px; background: #292A2E; padding: 4px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px">
+          <button type="button" role="radio" aria-checked="true" style="border-radius: 10px; border: 0; padding: 0; background: #3A3B40; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #F4F2EE; cursor: pointer">g</button>
+          <button type="button" role="radio" aria-checked="false" aria-label="Pizza, 320 g" style="border-radius: 10px; border: 0; padding: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">Pizza<span style="font-size: 10.5px; font-weight: 500; color: #B0ACA5">320 g</span></button>
+          <button type="button" role="radio" aria-checked="false" aria-label="Half pizza, 160 g" style="border-radius: 10px; border: 0; padding: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">½ Pizza<span style="font-size: 10.5px; font-weight: 500; color: #B0ACA5">160 g</span></button>
+        </div>
+      </div>
+      <div role="group" aria-label="Quick amounts" style="margin-top: 12px; display: flex; gap: 6px">
+        <button type="button" style="flex: 1; height: 36px; border-radius: 18px; border: 1px solid #3A3B40; background: none; padding: 0; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">¼ pizza</button>
+        <button type="button" style="flex: 1; height: 36px; border-radius: 18px; border: 1px solid #3A3B40; background: none; padding: 0; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">½ pizza</button>
+        <button type="button" style="flex: 1; height: 36px; border-radius: 18px; border: 1px solid #3A3B40; background: none; padding: 0; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">¾ pizza</button>
+        <button type="button" aria-pressed="true" style="flex: 1; height: 36px; border-radius: 18px; border: 0; background: #F6B84D29; padding: 0; font-size: 13px; font-weight: 700; color: #F6B84D; cursor: pointer">1 pizza</button>
+      </div>
+      <p style="margin: 10px 2px 0; font-size: 12px; color: #B0ACA5">First time you log this.</p>
+    </section>
+
+    <section aria-labelledby="h-impact" style="background: #1F2023; border-radius: 20px; padding: 14px 12px 16px">
+      <div style="display: flex; align-items: baseline; gap: 8px; padding: 0 4px">
+        <h2 id="h-impact" style="flex: 1; margin: 0; font-size: 13px; font-weight: 600; color: #B0ACA5">Your day with this</h2>
+        <span style="font-size: 13px; color: #B0ACA5"><b style="font-weight: 700; color: #F4F2EE">294</b> kcal over target</span>
+      </div>
+      <ul style="list-style: none; margin: 14px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px">
+        <li aria-label="Calories: 1,580 plus 864, 2,444 of 2,150, 294 over target" style="display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0">
+          <svg aria-hidden="true" width="60" height="60" viewBox="0 0 60 60"><circle cx="30" cy="30" r="23" fill="none" stroke="#2C2D31" stroke-width="6"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#F6B84D59" stroke-width="6" stroke-dasharray="106.20 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#F6B84D" stroke-width="6" stroke-dasharray="38.31 144.51" stroke-dashoffset="-106.20" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#1F2023" stroke-width="9" stroke-dasharray="21.26 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#F6B84D" stroke-width="6" stroke-dasharray="19.76 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><text x="30" y="30.5" text-anchor="middle" dominant-baseline="central" font-family="Inter, system-ui, sans-serif" font-size="11.5" font-weight="700" fill="#F6B84D">+864</text></svg>
+          <span style="font-size: 12px; font-weight: 600; color: #F4F2EE">Calories</span>
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap; font-variant-numeric: tabular-nums">2,444 / 2,150</span>
+          <span style="height: 20px; padding: 0 7px; border-radius: 10px; background: #3A2A2C; display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; color: #F4F2EE; white-space: nowrap"><svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4L2.5 20h19z"></path><path d="M12 10v4.5M12 17.5h.01"></path></svg>294 over</span>
+        </li>
+        <li aria-label="Protein: 96 plus 32 g, 128 of 150 g" style="display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0">
+          <svg aria-hidden="true" width="60" height="60" viewBox="0 0 60 60"><circle cx="30" cy="30" r="23" fill="none" stroke="#2C2D31" stroke-width="6"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#5FD38D59" stroke-width="6" stroke-dasharray="92.49 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#5FD38D" stroke-width="6" stroke-dasharray="30.83 144.51" stroke-dashoffset="-92.49" transform="rotate(-90 30 30)"></circle><text x="30" y="30.5" text-anchor="middle" dominant-baseline="central" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="700" fill="#5FD38D">+32</text></svg>
+          <span style="font-size: 12px; font-weight: 600; color: #F4F2EE">Protein</span>
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap; font-variant-numeric: tabular-nums">128 / 150 g</span>
+          <span style="height: 20px; display: flex; align-items: center; font-size: 11px; color: #B0ACA5; white-space: nowrap">22 g left</span>
+        </li>
+        <li aria-label="Carbs: 192 plus 80 g, 272 of 230 g, 42 g over target" style="display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0">
+          <svg aria-hidden="true" width="60" height="60" viewBox="0 0 60 60"><circle cx="30" cy="30" r="23" fill="none" stroke="#2C2D31" stroke-width="6"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#E8DD7259" stroke-width="6" stroke-dasharray="120.64 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#E8DD72" stroke-width="6" stroke-dasharray="23.88 144.51" stroke-dashoffset="-120.64" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#1F2023" stroke-width="9" stroke-dasharray="27.89 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#E8DD72" stroke-width="6" stroke-dasharray="26.39 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><text x="30" y="30.5" text-anchor="middle" dominant-baseline="central" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="700" fill="#E8DD72">+80</text></svg>
+          <span style="font-size: 12px; font-weight: 600; color: #F4F2EE">Carbs</span>
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap; font-variant-numeric: tabular-nums">272 / 230 g</span>
+          <span style="height: 20px; padding: 0 7px; border-radius: 10px; background: #3A2A2C; display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; color: #F4F2EE; white-space: nowrap"><svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4L2.5 20h19z"></path><path d="M12 10v4.5M12 17.5h.01"></path></svg>42 g over</span>
+        </li>
+        <li aria-label="Fat: 39 plus 43 g, 82 of 70 g, 12 g over target" style="display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0">
+          <svg aria-hidden="true" width="60" height="60" viewBox="0 0 60 60"><circle cx="30" cy="30" r="23" fill="none" stroke="#2C2D31" stroke-width="6"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#FF7D8A59" stroke-width="6" stroke-dasharray="80.51 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#FF7D8A" stroke-width="6" stroke-dasharray="64.00 144.51" stroke-dashoffset="-80.51" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#1F2023" stroke-width="9" stroke-dasharray="26.27 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><circle cx="30" cy="30" r="23" fill="none" stroke="#FF7D8A" stroke-width="6" stroke-dasharray="24.77 144.51" stroke-dashoffset="0.00" transform="rotate(-90 30 30)"></circle><text x="30" y="30.5" text-anchor="middle" dominant-baseline="central" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="700" fill="#FF7D8A">+43</text></svg>
+          <span style="font-size: 12px; font-weight: 600; color: #F4F2EE">Fat</span>
+          <span style="font-size: 11.5px; color: #B0ACA5; white-space: nowrap; font-variant-numeric: tabular-nums">82 / 70 g</span>
+          <span style="height: 20px; padding: 0 7px; border-radius: 10px; background: #3A2A2C; display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; color: #F4F2EE; white-space: nowrap"><svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4L2.5 20h19z"></path><path d="M12 10v4.5M12 17.5h.01"></path></svg>12 g over</span>
+        </li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="h-per100" style="background: #1F2023; border-radius: 20px; padding: 12px 16px 6px">
+      <h2 id="h-per100" style="margin: 0 0 4px; display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; color: #B0ACA5"><span>Nutrition per 100 g</span><button type="button" style="border: 0; background: none; padding: 0; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">Edit</button></h2>
+      <dl style="margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px">
+        <div style="height: 34px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292A2E"><dt style="font-size: 13px; color: #B0ACA5">Energy</dt><dd style="margin: 0; font-size: 14px; font-weight: 600">270 kcal</dd></div>
+        <div style="height: 34px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292A2E"><dt style="font-size: 13px; color: #B0ACA5">Protein</dt><dd style="margin: 0; font-size: 14px; font-weight: 600">10 g</dd></div>
+        <div style="height: 34px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292A2E"><dt style="font-size: 13px; color: #B0ACA5">Fat</dt><dd style="margin: 0; font-size: 14px; font-weight: 600">13.5 g</dd></div>
+        <div style="height: 34px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292A2E"><dt style="font-size: 13px; color: #B0ACA5">saturated</dt><dd style="margin: 0; font-size: 14px; font-weight: 600">5.5 g</dd></div>
+        <div style="height: 34px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292A2E"><dt style="font-size: 13px; color: #B0ACA5">Carbs</dt><dd style="margin: 0; font-size: 14px; font-weight: 600">25 g</dd></div>
+        <div style="height: 34px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292A2E"><dt style="font-size: 13px; color: #B0ACA5">sugar</dt><dd style="margin: 0; font-size: 14px; font-weight: 600">3.5 g</dd></div>
+        <div style="height: 34px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292A2E"><dt style="font-size: 13px; color: #B0ACA5">Fibre</dt><dd style="margin: 0; font-size: 14px; font-weight: 600">1.8 g</dd></div>
+        <div style="height: 34px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292A2E"><dt style="font-size: 13px; color: #B0ACA5">Salt</dt><dd style="margin: 0; font-size: 14px; font-weight: 600">1.4 g</dd></div>
+      </dl>
+    </section>
+  </main>
+
+  <div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px 34px; background: #141517; border-top: 1px solid #232427">
+    <button type="button" style="width: 100%; height: 56px; border-radius: 18px; border: 0; padding: 0; background: #F6B84D; color: #2B1B00; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 700; cursor: pointer">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2B1B00" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+      Add 320 g · 864 kcal
+    </button>
+  </div>
+</div>
+</body>
+</html>

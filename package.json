@@ -1,0 +1,25 @@
+{
+  "name": "edo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.21.0",
+  "engines": {
+    "node": ">=24.3.0 <25"
+  },
+  "scripts": {
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "check:builds": "pnpm --filter @edo/mobile export:ios && pnpm --filter @edo/mobile export:android",
+    "dev:app": "pnpm --filter @edo/mobile start",
+    "dev:sync": "pnpm --filter @edo/sync-node start"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.9",
+    "@types/node": "^24.0.0",
+    "typescript": "7.0.2",
+    "vitest": "5.1.2"
+  }
+}

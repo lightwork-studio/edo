@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Edo Foods, recipes</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0;background:#141517}
+button,input{font:inherit;color:inherit;margin:0}
+input::placeholder{color:#B0ACA5;opacity:1}
+a{color:#F6B84D}a:hover{color:#F9CD80}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; box-sizing: border-box; background: #141517; color: #F4F2EE; font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 15px; line-height: 1.3; -webkit-font-smoothing: antialiased">
+  <header style="padding: 8px 12px 0 20px; height: 52px; box-sizing: border-box; display: flex; align-items: center; gap: 8px">
+    <h1 style="flex: 1; min-width: 0; margin: 0; font-size: 17px; font-weight: 700">Foods</h1>
+    <button type="button" aria-label="Create food" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #1F2023; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+    </button>
+    <button type="button" aria-label="Scan a barcode" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #1F2023; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M8 8.5v7M11 8.5v7M13.5 8.5v7M16 8.5v7"></path></svg>
+    </button>
+  </header>
+  <form role="search" aria-label="Search your recipes" style="margin: 10px 16px 0">
+    <div style="height: 46px; box-sizing: border-box; border-radius: 23px; background: #1F2023; padding: 0 16px 0 14px; display: flex; align-items: center; gap: 8px">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4 4"></path></svg>
+      <label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Search your recipes</label>
+      <input id="q" type="search" placeholder="Search your recipes" style="flex: 1; min-width: 0; height: 40px; border: 0; outline: none; background: transparent; padding: 0; font-size: 16px; color: #F4F2EE">
+    </div>
+  </form>
+  <div role="tablist" aria-label="Food lists" style="margin: 12px 16px 0; display: flex; gap: 8px">
+    <button type="button" role="tab" aria-selected="false" style="height: 36px; box-sizing: border-box; border-radius: 18px; border: 1px solid #3A3B40; padding: 0 14px; background: none; color: #F4F2EE; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer">My foods</button>
+    <button type="button" role="tab" aria-selected="true" style="height: 36px; border-radius: 18px; border: 0; padding: 0 14px; background: #F4F2EE; color: #141517; font-size: 14px; font-weight: 700; white-space: nowrap; cursor: pointer">Recipes</button>
+    <button type="button" role="tab" aria-selected="false" style="height: 36px; box-sizing: border-box; border-radius: 18px; border: 1px solid #3A3B40; padding: 0 14px; background: none; color: #F4F2EE; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer">Meals</button>
+    <button type="button" role="tab" aria-selected="false" style="height: 36px; box-sizing: border-box; border-radius: 18px; border: 1px solid #3A3B40; padding: 0 14px; background: none; color: #F4F2EE; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer">Favourites</button>
+  </div>
+
+  <div style="margin: 14px 16px 0; display: flex; gap: 8px">
+    <button type="button" style="flex: 1; min-width: 0; height: 52px; box-sizing: border-box; border-radius: 16px; border: 1.5px dashed #4A4B50; background: none; padding: 0 12px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 600; color: #F4F2EE; cursor: pointer">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F6B84D" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+      New recipe
+    </button>
+  </div>
+  <div style="margin: 4px 16px 0; padding: 0 4px 0 6px; height: 40px; display: flex; align-items: center">
+    <span style="flex: 1; font-size: 13px; color: #B0ACA5">4 recipes</span>
+    <button type="button" aria-label="Sort: Recently used. Change sorting" style="height: 40px; border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">Recently used<svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+  </div>
+
+  <main style="padding: 0 16px">
+    <ul aria-label="Your recipes" style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+      <li style="background: #1F2023; border-radius: 18px; padding: 12px; display: flex; flex-direction: column; gap: 6px">
+        <button type="button" aria-label="Skyr-Bowl mit Beeren, 1 serving, 4 ingredients, 285 kcal per serving, protein 24 g, carbs 36 g, fat 5 g. Open recipe" style="width: 100%; border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+          <span style="width: 44px; height: 44px; flex: none; border-radius: 13px; background: #292A2E; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 11.5h17a8.5 8 0 0 1-17 0z"></path><path d="M9 8c0-1.5 1-2 1-3.5M13.5 8c0-1.5 1-2 1-3.5"></path></svg></span>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+            <span style="font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Skyr-Bowl mit Beeren</span>
+            <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">1 serving · 4 ingredients · yesterday</span>
+          </span>
+          <span style="flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px">
+            <span style="font-size: 17px; font-weight: 700">285</span>
+            <span style="font-size: 11px; color: #B0ACA5">kcal/serving</span>
+          </span>
+        </button>
+        <div style="padding-left: 56px; display: flex; align-items: center; gap: 10px">
+          <span style="flex: 1; display: flex; gap: 10px; font-size: 12px; color: #B0ACA5; font-variant-numeric: tabular-nums"><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #5FD38D"></span>P 24</span><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #E8DD72"></span>C 36</span><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #FF7D8A"></span>F 5</span></span>
+          <button type="button" aria-label="Log 1 serving of Skyr-Bowl mit Beeren, 285 kcal" style="flex: none; height: 36px; border-radius: 18px; border: 0; padding: 0 12px 0 10px; background: #2C2D31; display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; color: #F4F2EE; cursor: pointer">
+            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6B84D" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>Log 1 serving
+          </button>
+        </div>
+      </li>
+      <li style="background: #1F2023; border-radius: 18px; padding: 12px; display: flex; flex-direction: column; gap: 6px">
+        <button type="button" aria-label="Chili sin Carne, 4 servings, 9 ingredients, 481 kcal per serving, protein 18 g, carbs 81 g, fat 7 g. Open recipe" style="width: 100%; border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+          <span style="width: 44px; height: 44px; flex: none; border-radius: 13px; background: #292A2E; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11h14v2a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5z"></path><path d="M17 12h4"></path><path d="M7 8c0-1 .8-1.5.8-2.5M11 8c0-1 .8-1.5.8-2.5"></path></svg></span>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+            <span style="font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Chili sin Carne</span>
+            <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">4 servings · 9 ingredients · last week</span>
+          </span>
+          <span style="flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px">
+            <span style="font-size: 17px; font-weight: 700">481</span>
+            <span style="font-size: 11px; color: #B0ACA5">kcal/serving</span>
+          </span>
+        </button>
+        <div style="padding-left: 56px; display: flex; align-items: center; gap: 10px">
+          <span style="flex: 1; display: flex; gap: 10px; font-size: 12px; color: #B0ACA5; font-variant-numeric: tabular-nums"><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #5FD38D"></span>P 18</span><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #E8DD72"></span>C 81</span><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #FF7D8A"></span>F 7</span></span>
+          <button type="button" aria-label="Log 1 serving of Chili sin Carne, 481 kcal" style="flex: none; height: 36px; border-radius: 18px; border: 0; padding: 0 12px 0 10px; background: #2C2D31; display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; color: #F4F2EE; cursor: pointer">
+            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6B84D" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>Log 1 serving
+          </button>
+        </div>
+      </li>
+      <li style="background: #1F2023; border-radius: 18px; padding: 12px; display: flex; flex-direction: column; gap: 6px">
+        <button type="button" aria-label="Overnight Oats, 2 servings, 5 ingredients, 410 kcal per serving, protein 18 g, carbs 58 g, fat 12 g. Open recipe" style="width: 100%; border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+          <span style="width: 44px; height: 44px; flex: none; border-radius: 13px; background: #292A2E; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="7" width="12" height="14" rx="3"></rect><path d="M7 3.5h10V7H7z"></path><path d="M6 13h12"></path></svg></span>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+            <span style="font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Overnight Oats</span>
+            <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">2 servings · 5 ingredients · 3 days ago</span>
+          </span>
+          <span style="flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px">
+            <span style="font-size: 17px; font-weight: 700">410</span>
+            <span style="font-size: 11px; color: #B0ACA5">kcal/serving</span>
+          </span>
+        </button>
+        <div style="padding-left: 56px; display: flex; align-items: center; gap: 10px">
+          <span style="flex: 1; display: flex; gap: 10px; font-size: 12px; color: #B0ACA5; font-variant-numeric: tabular-nums"><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #5FD38D"></span>P 18</span><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #E8DD72"></span>C 58</span><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #FF7D8A"></span>F 12</span></span>
+          <button type="button" aria-label="Log 1 serving of Overnight Oats, 410 kcal" style="flex: none; height: 36px; border-radius: 18px; border: 0; padding: 0 12px 0 10px; background: #2C2D31; display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; color: #F4F2EE; cursor: pointer">
+            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6B84D" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>Log 1 serving
+          </button>
+        </div>
+      </li>
+      <li style="background: #1F2023; border-radius: 18px; padding: 12px; display: flex; flex-direction: column; gap: 6px">
+        <button type="button" aria-label="Linsen-Dal, 3 servings, 9 ingredients, 480 kcal per serving, protein 22 g, carbs 64 g, fat 15 g. Open recipe" style="width: 100%; border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+          <span style="width: 44px; height: 44px; flex: none; border-radius: 13px; background: #292A2E; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1.4 11.2a1.5 1.5 0 0 1-1.5 1.3H7.9a1.5 1.5 0 0 1-1.5-1.3z"></path><path d="M4 8h16M8 8l1-3.5h6L16 8"></path></svg></span>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+            <span style="font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Linsen-Dal</span>
+            <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">3 servings · 9 ingredients · 2 weeks ago</span>
+          </span>
+          <span style="flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px">
+            <span style="font-size: 17px; font-weight: 700">480</span>
+            <span style="font-size: 11px; color: #B0ACA5">kcal/serving</span>
+          </span>
+        </button>
+        <div style="padding-left: 56px; display: flex; align-items: center; gap: 10px">
+          <span style="flex: 1; display: flex; gap: 10px; font-size: 12px; color: #B0ACA5; font-variant-numeric: tabular-nums"><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #5FD38D"></span>P 22</span><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #E8DD72"></span>C 64</span><span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #FF7D8A"></span>F 15</span></span>
+          <button type="button" aria-label="Log 1 serving of Linsen-Dal, 480 kcal" style="flex: none; height: 36px; border-radius: 18px; border: 0; padding: 0 12px 0 10px; background: #2C2D31; display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; color: #F4F2EE; cursor: pointer">
+            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6B84D" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>Log 1 serving
+          </button>
+        </div>
+      </li>
+    </ul>
+  </main>
+  <nav aria-label="Main" style="position: absolute; left: 0; right: 0; bottom: 0; height: 84px; box-sizing: border-box; padding: 0 4px 26px; background: #1A1B1D; border-top: 1px solid #2C2D31; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: start">
+    <button type="button" style="height: 56px; border: 0; background: none; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; font-weight: 500; color: #B0ACA5; cursor: pointer">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5V12H3.5"></path></svg>
+      Today
+    </button>
+    <button type="button" aria-current="page" style="height: 56px; border: 0; background: none; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; font-weight: 700; color: #F6B84D; cursor: pointer">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F6B84D" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 11.5h17a8.5 8 0 0 1-17 0z"></path><path d="M9 8c0-1.5 1-2 1-3.5M13.5 8c0-1.5 1-2 1-3.5"></path></svg>
+      Foods
+    </button>
+    <div style="height: 56px; display: flex; flex-direction: column; align-items: center">
+      <button type="button" aria-label="Log food: hold to speak, tap to type" style="width: 64px; height: 64px; margin-top: -24px; flex: none; border-radius: 32px; border: 0; padding: 0; background: #F6B84D; box-shadow: 0 0 0 5px #1A1B1D, 0 10px 24px rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; cursor: pointer">
+        <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2B1B00" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"></path></svg>
+      </button>
+      <span aria-hidden="true" style="margin-top: 3px; font-size: 11px; font-weight: 600; color: #F4F2EE">Log</span>
+    </div>
+    <button type="button" style="height: 56px; border: 0; background: none; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; font-weight: 500; color: #B0ACA5; cursor: pointer">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5v15h16"></path><path d="M7.5 15l3.5-4 3 2.5 5-6.5"></path></svg>
+      Progress
+    </button>
+    <button type="button" style="height: 56px; border: 0; background: none; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; font-weight: 500; color: #B0ACA5; cursor: pointer">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"></circle><path d="M5 20a7 7 0 0 1 14 0"></path></svg>
+      Profile
+    </button>
+  </nav>
+</div>
+</body>
+</html>

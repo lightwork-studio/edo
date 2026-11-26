@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Edo create food</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0;background:#141517}
+button,input{font:inherit;color:inherit;margin:0}
+input::placeholder{color:#8A8780;opacity:1}
+a{color:#F6B84D}a:hover{color:#F9CD80}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; box-sizing: border-box; background: #141517; color: #F4F2EE; font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 15px; line-height: 1.3; -webkit-font-smoothing: antialiased">
+
+  <header style="position: relative; padding: 8px 12px 0; height: 60px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between">
+    <button type="button" aria-label="Discard and close" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #1F2023; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </button>
+    <h1 style="position: absolute; left: 64px; right: 64px; top: 8px; height: 52px; margin: 0; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700">Create food</h1>
+    <span aria-hidden="true" style="width: 40px"></span>
+  </header>
+
+  <main style="padding: 8px 16px 0; display: flex; flex-direction: column; gap: 8px">
+
+    <div style="height: 52px; box-sizing: border-box; border-radius: 14px; background: #1F2023; padding: 7px 14px; display: flex; flex-direction: column; justify-content: center">
+      <label for="cf-name" style="font-size: 11.5px; color: #B0ACA5">Name</label>
+      <input id="cf-name" type="text" lang="de" value="Hafer-Protein-Riegel" style="height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 16px; font-weight: 600; color: #F4F2EE">
+    </div>
+
+    <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 8px">
+      <div style="height: 52px; box-sizing: border-box; border-radius: 14px; background: #1F2023; padding: 7px 14px; display: flex; flex-direction: column; justify-content: center">
+        <label for="cf-brand" style="font-size: 11.5px; color: #B0ACA5">Brand <span style="color: #8A8780">· optional</span></label>
+        <input id="cf-brand" type="text" placeholder="e.g. Rewe" style="width: 100%; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 16px; font-weight: 600; color: #F4F2EE">
+      </div>
+      <div style="height: 52px; box-sizing: border-box; border-radius: 14px; background: #1F2023; padding: 0 6px 0 14px; display: flex; align-items: center; gap: 6px">
+        <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center">
+          <label for="cf-ean" style="font-size: 11.5px; color: #B0ACA5">Barcode</label>
+          <input id="cf-ean" type="text" inputmode="numeric" value="4 260123 456789" style="width: 100%; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.3px; font-variant-numeric: tabular-nums; color: #F4F2EE">
+        </span>
+        <button type="button" aria-label="Scan the barcode" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #2C2D31; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M8 8.5v7M11 8.5v7M13.5 8.5v7M16 8.5v7"></path></svg></button>
+      </div>
+    </div>
+
+    <section aria-labelledby="h-nutr" style="margin-top: 4px; border-radius: 18px; background: #1F2023; padding: 10px 12px 12px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <h2 id="h-nutr" style="margin: 0; font-size: 13px; font-weight: 600; color: #B0ACA5">Nutrition</h2>
+        <div role="radiogroup" aria-label="Values are" style="margin-left: auto; height: 34px; box-sizing: border-box; border-radius: 17px; background: #292A2E; padding: 3px; display: flex; gap: 2px">
+          <button type="button" role="radio" aria-checked="true" style="height: 28px; border-radius: 14px; border: 0; padding: 0 12px; background: #3A3B40; font-size: 12.5px; font-weight: 700; color: #F4F2EE; cursor: pointer; white-space: nowrap">Per 100 g</button>
+          <button type="button" role="radio" aria-checked="false" style="height: 28px; border-radius: 14px; border: 0; padding: 0 12px; background: none; font-size: 12.5px; font-weight: 600; color: #B0ACA5; cursor: pointer; white-space: nowrap">Per Riegel</button>
+        </div>
+      </div>
+
+      <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+        <div style="height: 52px; box-sizing: border-box; border-radius: 12px; background: #292A2E; border: 1.5px solid #F6B84D; padding: 5px 12px; display: flex; flex-direction: column; justify-content: center">
+          <label for="n-kcal" style="font-size: 11.5px; color: #B0ACA5">Energy</label>
+          <span style="display: flex; align-items: baseline; gap: 4px"><input id="n-kcal" type="text" inputmode="decimal" value="388" style="width: 56px; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">kcal</span></span>
+        </div>
+        <div style="height: 52px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 5px 12px; display: flex; flex-direction: column; justify-content: center">
+          <label for="n-prot" style="display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: #B0ACA5"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #5FD38D"></span>Protein</label>
+          <span style="display: flex; align-items: baseline; gap: 4px"><input id="n-prot" type="text" inputmode="decimal" value="20" style="width: 56px; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </div>
+        <div style="height: 52px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 5px 12px; display: flex; flex-direction: column; justify-content: center">
+          <label for="n-carb" style="display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: #B0ACA5"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #E8DD72"></span>Carbs</label>
+          <span style="display: flex; align-items: baseline; gap: 4px"><input id="n-carb" type="text" inputmode="decimal" value="45" style="width: 56px; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </div>
+        <div style="height: 52px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 5px 12px; display: flex; flex-direction: column; justify-content: center">
+          <label for="n-sugar" style="font-size: 11.5px; color: #B0ACA5">of which sugar</label>
+          <span style="display: flex; align-items: baseline; gap: 4px"><input id="n-sugar" type="text" inputmode="decimal" value="18" style="width: 56px; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </div>
+        <div style="height: 52px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 5px 12px; display: flex; flex-direction: column; justify-content: center">
+          <label for="n-fat" style="display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: #B0ACA5"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 4px; background: #FF7D8A"></span>Fat</label>
+          <span style="display: flex; align-items: baseline; gap: 4px"><input id="n-fat" type="text" inputmode="decimal" value="12" style="width: 56px; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </div>
+        <div style="height: 52px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 5px 12px; display: flex; flex-direction: column; justify-content: center">
+          <label for="n-sat" style="font-size: 11.5px; color: #B0ACA5">of which saturated</label>
+          <span style="display: flex; align-items: baseline; gap: 4px"><input id="n-sat" type="text" inputmode="decimal" value="4.5" style="width: 56px; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </div>
+        <div style="height: 52px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 5px 12px; display: flex; flex-direction: column; justify-content: center">
+          <label for="n-fibre" style="font-size: 11.5px; color: #B0ACA5">Fibre</label>
+          <span style="display: flex; align-items: baseline; gap: 4px"><input id="n-fibre" type="text" inputmode="decimal" value="8" style="width: 56px; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </div>
+        <div style="height: 52px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 5px 12px; display: flex; flex-direction: column; justify-content: center">
+          <label for="n-salt" style="font-size: 11.5px; color: #B0ACA5">Salt</label>
+          <span style="display: flex; align-items: baseline; gap: 4px"><input id="n-salt" type="text" inputmode="decimal" value="0.3" style="width: 56px; height: 22px; border: 0; outline: none; background: transparent; padding: 0; font-size: 17px; font-weight: 700; color: #F4F2EE"><span style="font-size: 13px; color: #B0ACA5">g</span></span>
+        </div>
+      </div>
+      <p style="margin: 10px 2px 0; font-size: 12px; color: #B0ACA5">From the macros that's about <b style="font-weight: 600; color: #F4F2EE">384 kcal</b>, close to the label.</p>
+    </section>
+
+    <section aria-labelledby="h-port" style="border-radius: 18px; background: #1F2023; padding: 10px 12px 4px">
+      <h2 id="h-port" style="margin: 0 2px; font-size: 13px; font-weight: 600; color: #B0ACA5">Portions</h2>
+      <div style="margin-top: 6px; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 2px">
+        <span style="flex: 1; font-size: 15px; font-weight: 500">1 Riegel</span>
+        <span style="font-size: 15px; font-weight: 600">45 g</span>
+        <span style="width: 54px; text-align: right; font-size: 13px; color: #B0ACA5">175 kcal</span>
+        <button type="button" aria-label="Edit portion 1 Riegel" style="width: 36px; height: 36px; border-radius: 18px; border: 0; padding: 0; background: none; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg></button>
+      </div>
+      <button type="button" style="width: 100%; height: 44px; border: 0; border-top: 1px solid #292A2E; background: none; padding: 0 2px; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #F4F2EE; cursor: pointer">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F6B84D" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+        Add portion
+      </button>
+    </section>
+  </main>
+
+  <div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 16px 34px; background: #141517; border-top: 1px solid #232427; box-shadow: 0 -16px 24px #141517; display: flex; flex-direction: column; gap: 10px">
+    <p style="margin: 0; padding: 0 4px; display: flex; align-items: flex-start; gap: 10px; font-size: 12px; line-height: 1.4; color: #B0ACA5"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 1px"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"></path></svg><span>Shared with Open Food Facts because it has a barcode. Your diary stays private.</span></p>
+    <button type="button" style="height: 56px; border-radius: 18px; border: 0; padding: 0; background: #F6B84D; color: #2B1B00; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 700; cursor: pointer">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2B1B00" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+      Save food
+    </button>
+  </div>
+</div>
+</body>
+</html>

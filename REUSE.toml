@@ -1,0 +1,13 @@
+version = 1
+
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "Edo contributors"
+SPDX-License-Identifier = "MPL-2.0"
+
+[[annotations]]
+path = ["apps/sync-node/**", "packages/sync/src/server/**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "Edo contributors"
+SPDX-License-Identifier = "AGPL-3.0-only"

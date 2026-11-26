@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Edo swap match</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0;background:#141517}
+button,input{font:inherit;color:inherit;margin:0}
+a{color:#F6B84D}a:hover{color:#F9CD80}
+.hl{border-radius:6px;padding:1px 4px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; box-sizing: border-box; background: #141517; color: #F4F2EE; font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 15px; line-height: 1.3; -webkit-font-smoothing: antialiased">
+  <div aria-hidden="true" inert style="position: absolute; inset: 0">
+
+  <header style="position: relative; padding: 8px 12px 0; height: 60px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between">
+    <button type="button" aria-label="Discard and close" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #1F2023; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </button>
+    <div style="position: absolute; left: 64px; right: 64px; top: 8px; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center">
+      <button type="button" aria-label="Meal: dinner. Change meal" style="height: 26px; border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 5px; font-size: 17px; font-weight: 700; color: #F4F2EE; cursor: pointer">
+        Dinner
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+      </button>
+      <span style="font-size: 12px; color: #B0ACA5">Wed, 25 Nov · 19:30</span>
+    </div>
+    <span aria-hidden="true" style="width: 40px"></span>
+  </header>
+
+  <figure style="margin: 12px 16px 0; padding: 14px 16px 4px; border-radius: 22px; background: #1F2023">
+    <figcaption style="display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #B0ACA5">
+      <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"></path></svg>
+      You said
+    </figcaption>
+    <blockquote lang="de" style="margin: 10px 0 0; font-size: 20px; font-weight: 500; line-height: 1.6; letter-spacing: -0.2px">
+      <mark class="hl" style="background: #6CB4FF3D; color: #F4F2EE">Zwei Scheiben Vollkornbrot</mark> mit <mark class="hl" style="background: #B99CFF3D; color: #F4F2EE">Gouda</mark>, <mark class="hl" style="background: #4FD3D93D; color: #F4F2EE">eine Tomate</mark> und <mark class="hl" style="background: #FF9C7A3D; color: #F4F2EE">ein Glas Apfelschorle</mark>
+    </blockquote>
+    <div style="margin-top: 2px; display: flex; justify-content: flex-end; gap: 2px">
+      <button type="button" style="height: 44px; border: 0; background: none; padding: 0 8px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg>
+        Edit text
+      </button>
+      <button type="button" style="height: 44px; border: 0; background: none; padding: 0 8px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+        Say more
+      </button>
+    </div>
+  </figure>
+
+  <section aria-label="Items to log" style="margin: 18px 16px 0; display: flex; flex-direction: column; gap: 8px">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 0 4px 2px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">4 items</h2>
+      <span style="font-size: 15px; font-weight: 700">516 <span style="font-size: 13px; font-weight: 400; color: #B0ACA5">kcal</span></span>
+    </div>
+
+    <article aria-label="Vollkornbrot, 2 slices, 216 kcal" style="border-radius: 18px; background: #1F2023; padding: 12px 14px 12px 12px; display: flex; align-items: center; gap: 12px">
+      <span style="width: 40px; height: 40px; flex: none; border-radius: 12px; background: #6CB4FF3D; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#6CB4FF" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 20v-9.7A4 4 0 0 1 8 3.5h8a4 4 0 0 1 1.5 6.8V20z"></path><path d="M10 12.5h.01M14 11.5h.01M12 15.5h.01"></path></svg></span>
+      <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px">
+        <button type="button" aria-label="Vollkornbrot from your foods. Swap match" style="max-width: 100%; border: 0; background: none; padding: 0; display: flex; align-items: baseline; gap: 6px; cursor: pointer; white-space: nowrap">
+          <span style="font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis">Vollkornbrot</span><span style="font-size: 12px; color: #B0ACA5">your food</span>
+        </button>
+        <button type="button" aria-label="Amount: 2 slices, 100 g. Change" style="height: 30px; border-radius: 15px; border: 0; background: #2C2D31; padding: 0 9px 0 11px; display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer; white-space: nowrap">2 slices<span style="font-weight: 400; color: #B0ACA5">· 100 g</span><svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+      </span>
+      <span style="font-size: 17px; font-weight: 700; white-space: nowrap">216 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">kcal</span></span>
+    </article>
+
+    <article aria-label="Gouda, amount guessed, 2 slices, 218 kcal" style="border-radius: 18px; background: #1F2023; padding: 12px 14px 12px 12px; display: flex; align-items: center; gap: 12px">
+      <span style="width: 40px; height: 40px; flex: none; border-radius: 12px; background: #B99CFF3D; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#B99CFF" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17.5V11.5L15 5.5l6 6v6z"></path><path d="M3 11.5h18"></path><circle cx="8" cy="14.5" r="1.1"></circle><circle cx="15" cy="14.8" r="0.9"></circle></svg></span>
+      <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px">
+        <button type="button" aria-label="Gouda mittelalt from BLS. Swap match" style="max-width: 100%; border: 0; background: none; padding: 0; display: flex; align-items: baseline; gap: 6px; cursor: pointer; white-space: nowrap">
+          <span style="font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis">Gouda mittelalt</span><span style="font-size: 12px; color: #B0ACA5">BLS</span>
+        </button>
+        <button type="button" aria-label="Amount guessed: 2 slices, 60 g. Check" style="height: 30px; border-radius: 15px; border: 0; background: #F6B84D29; padding: 0 9px 0 11px; display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 700; color: #F6B84D; cursor: pointer; white-space: nowrap">≈ 2 slices<span style="font-weight: 500">· 60 g</span><svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+      </span>
+      <span style="font-size: 17px; font-weight: 700; white-space: nowrap">218 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">kcal</span></span>
+    </article>
+
+    <article aria-label="Tomate, 1 medium, 22 kcal" style="border-radius: 18px; background: #1F2023; padding: 12px 14px 12px 12px; display: flex; align-items: center; gap: 12px">
+      <span style="width: 40px; height: 40px; flex: none; border-radius: 12px; background: #4FD3D93D; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#4FD3D9" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7"></circle><path d="M8.5 6.5l3.5 2 3.5-2M12 8.5V4"></path></svg></span>
+      <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px">
+        <button type="button" aria-label="Tomate from BLS. Swap match" style="max-width: 100%; border: 0; background: none; padding: 0; display: flex; align-items: baseline; gap: 6px; cursor: pointer; white-space: nowrap">
+          <span style="font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis">Tomate</span><span style="font-size: 12px; color: #B0ACA5">BLS</span>
+        </button>
+        <button type="button" aria-label="Amount: 1 medium, 120 g. Change" style="height: 30px; border-radius: 15px; border: 0; background: #2C2D31; padding: 0 9px 0 11px; display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer; white-space: nowrap">1 medium<span style="font-weight: 400; color: #B0ACA5">· 120 g</span><svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+      </span>
+      <span style="font-size: 17px; font-weight: 700; white-space: nowrap">22 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">kcal</span></span>
+    </article>
+
+    <article aria-label="Apfelschorle, 1 glass, 60 kcal" style="border-radius: 18px; background: #1F2023; padding: 12px 14px 12px 12px; display: flex; align-items: center; gap: 12px">
+      <span style="width: 40px; height: 40px; flex: none; border-radius: 12px; background: #FF9C7A3D; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#FF9C7A" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5h11l-1.6 16.2a1.5 1.5 0 0 1-1.5 1.3H9.6a1.5 1.5 0 0 1-1.5-1.3z"></path><path d="M7.3 10h9.4"></path></svg></span>
+      <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px">
+        <button type="button" aria-label="Apfelschorle, recently eaten. Swap match" style="max-width: 100%; border: 0; background: none; padding: 0; display: flex; align-items: baseline; gap: 6px; cursor: pointer; white-space: nowrap">
+          <span style="font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis">Apfelschorle</span><span style="font-size: 12px; color: #B0ACA5">recent</span>
+        </button>
+        <button type="button" aria-label="Amount: 1 glass, 250 ml. Change" style="height: 30px; border-radius: 15px; border: 0; background: #2C2D31; padding: 0 9px 0 11px; display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer; white-space: nowrap">1 glass<span style="font-weight: 400; color: #B0ACA5">· 250 ml</span><svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+      </span>
+      <span style="font-size: 17px; font-weight: 700; white-space: nowrap">60 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">kcal</span></span>
+    </article>
+
+    <p style="margin: 2px 4px 0; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #B0ACA5">
+      <span style="height: 20px; padding: 0 7px; border-radius: 10px; background: #F6B84D29; color: #F6B84D; font-size: 12px; font-weight: 700; display: flex; align-items: center">≈</span>
+      Edo guessed this amount. Tap it to check.
+    </p>
+  </section>
+
+  <div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px 34px; background: #141517; border-top: 1px solid #232427; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px; font-size: 13px; color: #B0ACA5">
+      <svg aria-hidden="true" width="22" height="22" viewBox="0 0 22 22" style="flex: none"><circle cx="11" cy="11" r="8.5" fill="none" stroke="#2C2D31" stroke-width="3.5"></circle><circle cx="11" cy="11" r="8.5" fill="none" stroke="#F6B84D" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="39.0 53.41" transform="rotate(-90 11 11)"></circle></svg>
+      <span style="flex: 1">After logging</span>
+      <span><b style="font-weight: 700; color: #F4F2EE">570</b> kcal left today</span>
+    </div>
+    <button type="button" style="height: 56px; border-radius: 18px; border: 0; padding: 0; background: #F6B84D; color: #2B1B00; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 700; cursor: pointer">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2B1B00" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+      Log 4 items · 516 kcal
+    </button>
+  </div>
+</div>
+  <div aria-hidden="true" style="position: absolute; inset: 0; background: rgba(8, 9, 10, 0.62)"></div>
+
+  <section role="dialog" aria-modal="true" aria-labelledby="swap-title" style="position: absolute; left: 0; right: 0; bottom: 0; top: 64px; box-sizing: border-box; border-radius: 30px 30px 0 0; background: #232427; border-top: 1px solid #3A3B40; box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.55); padding: 10px 20px 0; display: flex; flex-direction: column">
+    <span aria-hidden="true" style="align-self: center; width: 36px; height: 5px; border-radius: 3px; background: #4A4B50"></span>
+    <div style="margin-top: 14px; display: flex; align-items: center; gap: 10px">
+      <h2 id="swap-title" style="flex: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 700">Swap match for <span lang="de" style="background: #B99CFF3D; border-radius: 6px; padding: 1px 5px">„Gouda“</span></h2>
+      <button type="button" aria-label="Close" style="width: 36px; height: 36px; flex: none; border-radius: 18px; border: 0; padding: 0; background: #2C2D31; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+    </div>
+    <p style="margin: 6px 0 0; font-size: 13px; color: #B0ACA5">The amount stays at 2 slices. Calories follow the food you pick.</p>
+    <form role="search" style="margin: 14px 0 0; height: 48px; box-sizing: border-box; border-radius: 14px; background: #18191B; border: 1px solid #3A3B40; padding: 0 4px 0 12px; display: flex; align-items: center; gap: 8px">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4 4"></path></svg>
+      <label for="swap-q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search foods</label>
+      <input id="swap-q" type="search" value="Gouda" style="flex: 1; min-width: 0; height: 44px; border: 0; outline: none; background: transparent; padding: 0; font-size: 16px; color: #F4F2EE">
+      <button type="button" aria-label="Scan a barcode" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: none; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M8 8.5v7M11 8.5v7M13.5 8.5v7M16 8.5v7"></path></svg></button>
+    </form>
+    <div style="flex: 1; min-height: 0; overflow: hidden">
+
+      <section style="margin-top: 14px">
+        <h3 style="margin: 0 0 2px; font-size: 12px; font-weight: 600; color: #B0ACA5">Your foods</h3>
+        <ul style="list-style: none; margin: 0; padding: 0">
+          <li><button type="button" style="width: 100%; min-height: 56px; border: 0; border-top: 0; background: none; padding: 8px 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+            <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <span lang="de" style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Gouda jung</span>
+              <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Rewe Bio · 30 g per slice</span>
+            </span>
+            <span style="font-size: 14px; font-weight: 600; white-space: nowrap">356 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">/100 g</span></span>
+            <span aria-hidden="true" style="width: 26px; height: 26px; flex: none; box-sizing: border-box; border-radius: 13px; border: 1.5px solid #4A4B50; display: flex; align-items: center; justify-content: center"></span>
+          </button></li>
+        </ul>
+      </section>
+
+      <section style="margin-top: 14px">
+        <h3 style="margin: 0 0 2px; font-size: 12px; font-weight: 600; color: #B0ACA5">Recent</h3>
+        <ul style="list-style: none; margin: 0; padding: 0">
+          <li><button type="button" aria-current="true" style="width: 100%; min-height: 56px; border: 0; border-top: 0; background: none; padding: 8px 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+            <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <span lang="de" style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Gouda mittelalt</span>
+              <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">BLS · Edo’s match</span>
+            </span>
+            <span style="font-size: 14px; font-weight: 600; white-space: nowrap">363 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">/100 g</span></span>
+            <span aria-hidden="true" style="width: 26px; height: 26px; flex: none; box-sizing: border-box; border-radius: 13px; background: #F6B84D; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2B1B00" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>
+          </button></li>
+          <li><button type="button" style="width: 100%; min-height: 56px; border: 0; border-top: 1px solid #2C2D31; background: none; padding: 8px 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+            <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <span lang="de" style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Gouda in Scheiben 48 %</span>
+              <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Milbona · Open Food Facts · Mon</span>
+            </span>
+            <span style="font-size: 14px; font-weight: 600; white-space: nowrap">356 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">/100 g</span></span>
+            <span aria-hidden="true" style="width: 26px; height: 26px; flex: none; box-sizing: border-box; border-radius: 13px; border: 1.5px solid #4A4B50; display: flex; align-items: center; justify-content: center"></span>
+          </button></li>
+        </ul>
+      </section>
+
+      <section style="margin-top: 14px">
+        <h3 style="margin: 0 0 2px; font-size: 12px; font-weight: 600; color: #B0ACA5">Database</h3>
+        <ul style="list-style: none; margin: 0; padding: 0">
+          <li><button type="button" style="width: 100%; min-height: 56px; border: 0; border-top: 0; background: none; padding: 8px 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+            <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <span lang="de" style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Gouda alt</span>
+              <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">BLS</span>
+            </span>
+            <span style="font-size: 14px; font-weight: 600; white-space: nowrap">380 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">/100 g</span></span>
+            <span aria-hidden="true" style="width: 26px; height: 26px; flex: none; box-sizing: border-box; border-radius: 13px; border: 1.5px solid #4A4B50; display: flex; align-items: center; justify-content: center"></span>
+          </button></li>
+          <li><button type="button" style="width: 100%; min-height: 56px; border: 0; border-top: 1px solid #2C2D31; background: none; padding: 8px 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+            <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <span lang="de" style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Gouda light 30 %</span>
+              <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Leerdammer · Open Food Facts</span>
+            </span>
+            <span style="font-size: 14px; font-weight: 600; white-space: nowrap">268 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">/100 g</span></span>
+            <span aria-hidden="true" style="width: 26px; height: 26px; flex: none; box-sizing: border-box; border-radius: 13px; border: 1.5px solid #4A4B50; display: flex; align-items: center; justify-content: center"></span>
+          </button></li>
+          <li><button type="button" style="width: 100%; min-height: 56px; border: 0; border-top: 1px solid #2C2D31; background: none; padding: 8px 0; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left">
+            <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <span lang="de" style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Gouda gerieben</span>
+              <span style="font-size: 12px; color: #B0ACA5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Ja! · Open Food Facts</span>
+            </span>
+            <span style="font-size: 14px; font-weight: 600; white-space: nowrap">362 <span style="font-size: 12px; font-weight: 400; color: #B0ACA5">/100 g</span></span>
+            <span aria-hidden="true" style="width: 26px; height: 26px; flex: none; box-sizing: border-box; border-radius: 13px; border: 1.5px solid #4A4B50; display: flex; align-items: center; justify-content: center"></span>
+          </button></li>
+        </ul>
+      </section>
+    </div>
+    <div style="margin: 0 -20px; padding: 10px 20px 34px; border-top: 1px solid #2C2D31; background: #232427; display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #B0ACA5">
+      Not found?
+      <button type="button" style="height: 44px; border-radius: 22px; border: 1px solid #3A3B40; background: none; padding: 0 16px 0 12px; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: #F4F2EE; cursor: pointer"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F6B84D" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>Create food</button>
+    </div>
+  </section>
+</div>
+</body>
+</html>

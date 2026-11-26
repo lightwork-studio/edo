@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Edo MCP access</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0;background:#141517}
+button,input{font:inherit;color:inherit;margin:0}
+input::placeholder{color:#8A8780;opacity:1}
+a{color:#F6B84D}a:hover{color:#F9CD80}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; box-sizing: border-box; background: #141517; color: #F4F2EE; font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 15px; line-height: 1.3; -webkit-font-smoothing: antialiased">
+  <header style="position: relative; padding: 8px 12px 0; height: 60px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between">
+    <button type="button" aria-label="Back to profile" style="width: 40px; height: 40px; flex: none; border-radius: 20px; border: 0; padding: 0; background: #1F2023; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    </button>
+    <h1 style="position: absolute; left: 64px; right: 64px; top: 8px; height: 52px; margin: 0; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700">MCP access</h1>
+    <span aria-hidden="true" style="width: 40px"></span>
+  </header>
+
+  <main style="padding: 4px 16px 0; display: flex; flex-direction: column">
+    <p style="margin: 0 4px; font-size: 15px; line-height: 1.45; color: #D4D0C9">Let AI agents like Claude read and log your diary through your Edo server.</p>
+
+    <section aria-labelledby="h-server" style="margin-top: 14px; border-radius: 18px; background: #1F2023; padding: 12px">
+      <h2 id="h-server" style="margin: 0 2px; font-size: 13px; font-weight: 600; color: #B0ACA5">Server address</h2>
+      <div style="margin-top: 8px; height: 44px; box-sizing: border-box; border-radius: 12px; background: #292A2E; padding: 0 4px 0 12px; display: flex; align-items: center; gap: 8px">
+        <span style="flex: 1; min-width: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">https://edo.example.app/mcp</span>
+        <button type="button" aria-label="Copy server address" style="flex: none; height: 36px; border-radius: 18px; border: 0; background: #3A3B40; padding: 0 12px 0 10px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F4F2EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"></rect><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"></path></svg>Copy</button>
+      </div>
+      <p style="margin: 8px 2px 0; font-size: 12px; color: #B0ACA5">Works with managed sync or your own server. Not available in local-only mode.</p>
+    </section>
+
+    <div style="margin: 18px 6px 8px; display: flex; align-items: baseline">
+      <h2 style="flex: 1; margin: 0; font-size: 13px; font-weight: 600; color: #B0ACA5">Access tokens</h2>
+      <span style="font-size: 12px; color: #B0ACA5">2 active</span>
+    </div>
+    <ul aria-label="Access tokens" style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+      <li style="border-radius: 18px; background: #1F2023; padding: 12px 12px 12px 12px; display: flex; align-items: center; gap: 12px">
+        <span aria-hidden="true" style="width: 32px; height: 32px; flex: none; border-radius: 10px; background: #292A2E; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D4D0C9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="12" r="4"></circle><path d="M12.5 12H20.5M17.5 12v3M20 12v2"></path></svg></span>
+        <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+          <span style="display: flex; align-items: center; gap: 8px; min-width: 0"><span style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Claude Desktop</span><span style="flex: none; height: 20px; padding: 0 7px; border-radius: 10px; background: #F6B84D29; color: #F6B84D; display: flex; align-items: center; font-size: 11px; font-weight: 700">Read + log</span></span>
+          <span style="font-size: 12.5px; color: #B0ACA5; white-space: nowrap">Created 12 Nov · last used today</span>
+        </span>
+        <button type="button" aria-label="Revoke token Claude Desktop" style="flex: none; height: 36px; border-radius: 18px; border: 1px solid #3A3B40; background: none; padding: 0 14px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">Revoke</button>
+      </li>
+      <li style="border-radius: 18px; background: #1F2023; padding: 12px 12px 12px 12px; display: flex; align-items: center; gap: 12px">
+        <span aria-hidden="true" style="width: 32px; height: 32px; flex: none; border-radius: 10px; background: #292A2E; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D4D0C9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="12" r="4"></circle><path d="M12.5 12H20.5M17.5 12v3M20 12v2"></path></svg></span>
+        <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+          <span style="display: flex; align-items: center; gap: 8px; min-width: 0"><span style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Laptop script</span><span style="flex: none; height: 20px; padding: 0 7px; border-radius: 10px; background: #292A2E; color: #D4D0C9; display: flex; align-items: center; font-size: 11px; font-weight: 700">Read only</span></span>
+          <span style="font-size: 12.5px; color: #B0ACA5; white-space: nowrap">Created 2 Nov · last used 3 days ago</span>
+        </span>
+        <button type="button" aria-label="Revoke token Laptop script" style="flex: none; height: 36px; border-radius: 18px; border: 1px solid #3A3B40; background: none; padding: 0 14px; font-size: 13px; font-weight: 600; color: #F4F2EE; cursor: pointer">Revoke</button>
+      </li>
+    </ul>
+
+    <section aria-labelledby="h-can" style="margin-top: 16px; border-radius: 18px; background: #1A1B1D; border: 1px solid #2C2D31; padding: 12px 14px">
+      <h2 id="h-can" style="margin: 0; font-size: 13px; font-weight: 600; color: #B0ACA5">What agents can do</h2>
+      <ul style="list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+        <li style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.4; color: #D4D0C9">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5FD38D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 1px"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+          <span>Read your days, foods, recipes and targets</span>
+        </li>
+        <li style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.4; color: #D4D0C9">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5FD38D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 1px"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+          <span>Log and edit entries. Edits are checked against what the agent saw, so your newer changes are never overwritten.</span>
+        </li>
+        <li style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.4; color: #D4D0C9">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B0ACA5" stroke-width="2.4" stroke-linecap="round" style="flex: none; margin-top: 1px"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+          <span>Delete your account or change sync settings</span>
+        </li>
+      </ul>
+    </section>
+  </main>
+
+  <div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 16px 34px; background: #141517; border-top: 1px solid #232427; box-shadow: 0 -16px 24px #141517">
+    <button type="button" style="width: 100%; height: 56px; border-radius: 18px; border: 0; padding: 0; background: #F6B84D; color: #2B1B00; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 700; cursor: pointer">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2B1B00" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+      New token
+    </button>
+  </div>
+</div>
+</body>
+</html>

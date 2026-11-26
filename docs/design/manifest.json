@@ -1,0 +1,281 @@
+[
+  {
+    "file": "r14-A-Slim.dc.html",
+    "page": "chosen",
+    "title": "Today ✓ final",
+    "alt": false,
+    "x": 470,
+    "y": 0,
+    "out": "t1-Today.html"
+  },
+  {
+    "file": "s1-Listening.dc.html",
+    "page": "logging",
+    "title": "1 · Listening",
+    "alt": false,
+    "x": 0,
+    "y": 0,
+    "out": "s1-Listening.html"
+  },
+  {
+    "file": "s6-Type.dc.html",
+    "page": "logging",
+    "title": "1b · Typing",
+    "alt": false,
+    "x": 470,
+    "y": 0,
+    "out": "s6-Type.html"
+  },
+  {
+    "file": "s1c-Reading.dc.html",
+    "page": "logging",
+    "title": "1c · Edo reads it",
+    "alt": false,
+    "x": 940,
+    "y": 0,
+    "out": "s1c-Reading.html"
+  },
+  {
+    "file": "s2-Review.dc.html",
+    "page": "logging",
+    "title": "2 · Review ✓ tint",
+    "alt": false,
+    "x": 1410,
+    "y": 0,
+    "out": "s2-Review.html"
+  },
+  {
+    "file": "s3-Amount.dc.html",
+    "page": "logging",
+    "title": "3 · Check amount",
+    "alt": false,
+    "x": 1880,
+    "y": 0,
+    "out": "s3-Amount.html"
+  },
+  {
+    "file": "s4-Swap.dc.html",
+    "page": "logging",
+    "title": "4 · Swap match",
+    "alt": false,
+    "x": 2350,
+    "y": 0,
+    "out": "s4-Swap.html"
+  },
+  {
+    "file": "s5-Logged.dc.html",
+    "page": "logging",
+    "title": "5 · Logged + undo",
+    "alt": false,
+    "x": 2820,
+    "y": 0,
+    "out": "s5-Logged.html"
+  },
+  {
+    "file": "s2b-Review-Underline.dc.html",
+    "page": "logging",
+    "title": "Review · underline (not chosen)",
+    "alt": true,
+    "x": 0,
+    "y": 1184,
+    "out": "s2b-Review-Underline.html"
+  },
+  {
+    "file": "s8-Review-DE.dc.html",
+    "page": "logging",
+    "title": "Review · Deutsch",
+    "alt": false,
+    "x": 470,
+    "y": 1184,
+    "out": "s8-Review-DE.html"
+  },
+  {
+    "file": "s7-Search.dc.html",
+    "page": "logging",
+    "title": "Search",
+    "alt": false,
+    "x": 1100,
+    "y": 1184,
+    "out": "s7-Search.html"
+  },
+  {
+    "file": "s7b-Food.dc.html",
+    "page": "logging",
+    "title": "Food · bars (not chosen)",
+    "alt": true,
+    "x": 1570,
+    "y": 1184,
+    "out": "s7b-Food.html"
+  },
+  {
+    "file": "s7c-Food-Rings.dc.html",
+    "page": "logging",
+    "title": "Food + amount ✓ rings",
+    "alt": false,
+    "x": 2040,
+    "y": 1184,
+    "out": "s7c-Food-Rings.html"
+  },
+  {
+    "file": "s2c-Review-Rings.dc.html",
+    "page": "logging",
+    "title": "Review + day rings",
+    "alt": false,
+    "x": 0,
+    "y": 2368,
+    "out": "s2c-Review-Rings.html"
+  },
+  {
+    "file": "s7d-Food-Over.dc.html",
+    "page": "logging",
+    "title": "Food · over target",
+    "alt": false,
+    "x": 470,
+    "y": 2368,
+    "out": "s7d-Food-Over.html"
+  },
+  {
+    "file": "p1-Camera.dc.html",
+    "page": "logging",
+    "title": "1 · Camera",
+    "alt": false,
+    "x": 0,
+    "y": 3552,
+    "out": "p1-Camera.html"
+  },
+  {
+    "file": "p2-Reading.dc.html",
+    "page": "logging",
+    "title": "2 · Edo looks",
+    "alt": false,
+    "x": 470,
+    "y": 3552,
+    "out": "p2-Reading.html"
+  },
+  {
+    "file": "p3-Review.dc.html",
+    "page": "logging",
+    "title": "3 · Review",
+    "alt": false,
+    "x": 940,
+    "y": 3552,
+    "out": "p3-Review.html"
+  },
+  {
+    "file": "b1-Scanner.dc.html",
+    "page": "logging",
+    "title": "1 · Scanner",
+    "alt": false,
+    "x": 1570,
+    "y": 3552,
+    "out": "b1-Scanner.html"
+  },
+  {
+    "file": "b2-Found.dc.html",
+    "page": "logging",
+    "title": "2 · Found",
+    "alt": false,
+    "x": 2040,
+    "y": 3552,
+    "out": "b2-Found.html"
+  },
+  {
+    "file": "b3-NotFound.dc.html",
+    "page": "logging",
+    "title": "3 · Not found",
+    "alt": false,
+    "x": 2510,
+    "y": 3552,
+    "out": "b3-NotFound.html"
+  },
+  {
+    "file": "b4-Multiple.dc.html",
+    "page": "logging",
+    "title": "2b · Several matches",
+    "alt": false,
+    "x": 2980,
+    "y": 3552,
+    "out": "b4-Multiple.html"
+  },
+  {
+    "file": "f1-Foods.dc.html",
+    "page": "foods",
+    "title": "My foods",
+    "alt": false,
+    "x": 0,
+    "y": 0,
+    "out": "f1-Foods.html"
+  },
+  {
+    "file": "f1b-Recipes.dc.html",
+    "page": "foods",
+    "title": "Recipes",
+    "alt": false,
+    "x": 470,
+    "y": 0,
+    "out": "f1b-Recipes.html"
+  },
+  {
+    "file": "f2-Recipe.dc.html",
+    "page": "foods",
+    "title": "Recipe editor",
+    "alt": false,
+    "x": 940,
+    "y": 0,
+    "out": "f2-Recipe.html"
+  },
+  {
+    "file": "f3-CreateFood.dc.html",
+    "page": "foods",
+    "title": "Create food",
+    "alt": false,
+    "x": 1410,
+    "y": 0,
+    "out": "f3-CreateFood.html"
+  },
+  {
+    "file": "g1-Progress.dc.html",
+    "page": "progress",
+    "title": "Progress",
+    "alt": false,
+    "x": 0,
+    "y": 0,
+    "out": "g1-Progress.html"
+  },
+  {
+    "file": "g2-Weight.dc.html",
+    "page": "progress",
+    "title": "Add weight",
+    "alt": false,
+    "x": 470,
+    "y": 0,
+    "out": "g2-Weight.html"
+  },
+  {
+    "file": "h1-Profile.dc.html",
+    "page": "progress",
+    "title": "Profile",
+    "alt": false,
+    "x": 1100,
+    "y": 0,
+    "out": "h1-Profile.html"
+  },
+  {
+    "file": "h2-Targets.dc.html",
+    "page": "progress",
+    "title": "Targets",
+    "alt": false,
+    "x": 1570,
+    "y": 0,
+    "out": "h2-Targets.html"
+  },
+  {
+    "file": "h3-Agents.dc.html",
+    "page": "progress",
+    "title": "MCP access",
+    "alt": false,
+    "x": 2040,
+    "y": 0,
+    "out": "h3-Agents.html"
+  }
+]
