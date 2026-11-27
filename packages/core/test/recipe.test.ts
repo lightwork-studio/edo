@@ -81,6 +81,25 @@ describe("recipe portions", () => {
     },
   );
 
+  it("keeps equivalent display rounding across repeated small ingredient contributions", () => {
+    const quantities = [8.17, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04];
+    const ingredients = quantities.map((proteinG, index) =>
+      createDiaryItem(
+        `ingredient-${index}`,
+        {
+          ...oats,
+          nutrition: { ...oats.nutrition, nutrients: { ...oats.nutrition.nutrients, proteinG } },
+        },
+        { amount: 100, unit: "g" },
+      ),
+    );
+    const food = foodForRecipe({ ...recipe, ingredients, cookedWeightG: 499, servings: 7 });
+    const servings = createDiaryItem("servings", food, { amount: 7, unit: "portion" });
+    const weighed = createDiaryItem("weighed", food, { amount: 499, unit: "g" });
+    expect(roundNutritionForDisplay(servings.nutrients).proteinG).toBe(8.5);
+    expect(roundNutritionForDisplay(weighed.nutrients).proteinG).toBe(8.5);
+  });
+
   it("keeps logged nutrition and portion edits independent of recipe changes or source removal", () => {
     const original = foodForRecipe(recipe);
     const logged = createDiaryItem("meal-entry", original, { amount: 120, unit: "g" });

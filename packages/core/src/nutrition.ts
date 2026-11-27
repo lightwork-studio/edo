@@ -129,12 +129,20 @@ export function sumNutrition(values: readonly Nutrients[]): Nutrients {
     fatG: 0,
     fiberG: 0,
   };
+  const compensation = new Map<NutrientName, number>();
   for (const nutrients of values) {
     for (const name of nutrientNames) {
       const value = nutrients[name];
       const total = totals[name];
       if (value !== null) checkedNutrient(value, name);
-      totals[name] = value === null || total === null ? null : total + value;
+      if (value === null || total === null) {
+        totals[name] = null;
+        continue;
+      }
+      const adjusted = value - (compensation.get(name) ?? 0);
+      const next = total + adjusted;
+      compensation.set(name, next - total - adjusted);
+      totals[name] = next;
     }
   }
   return mapNutrients(totals, (value) => value);
