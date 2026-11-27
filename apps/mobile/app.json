@@ -6,7 +6,18 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "platforms": ["ios", "android"],
-    "plugins": [["expo-localization", { "supportedLocales": ["en", "de"] }]],
+    "plugins": [
+      ["expo-localization", { "supportedLocales": ["en", "de"] }],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Edo to read food barcodes using your camera.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ]
+    ],
     "ios": {
       "bundleIdentifier": "studio.lightwork.edo"
     },

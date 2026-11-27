@@ -1,24 +1,8 @@
 import { Asset } from "expo-asset";
 import { File } from "expo-file-system";
 import { deserializeDatabaseAsync } from "expo-sqlite";
+import { httpsOrigin } from "./catalog-origin";
 import { blsSeedAsset } from "./catalog-seed";
-
-function httpsOrigin(value: string | undefined) {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" &&
-      !url.username &&
-      !url.password &&
-      url.pathname === "/" &&
-      !url.search &&
-      !url.hash
-      ? url.origin
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 const previewOrigin = httpsOrigin(process.env.EXPO_PUBLIC_EDO_BLS_PREVIEW_ORIGIN);
 const previewDigest = process.env.EXPO_PUBLIC_EDO_BLS_PREVIEW_SHA256;

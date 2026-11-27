@@ -58,20 +58,33 @@ export function FoodDetail({
   onBack: () => void;
   onSave: (portion: Portion) => void;
 }) {
-  const unit = originalItem?.portion.unit ?? "g";
+  const initialUnit =
+    originalItem?.portion.unit ??
+    (food.nutrition.basis === "per-100-ml"
+      ? "ml"
+      : food.nutrition.basis === "per-portion"
+        ? "portion"
+        : "g");
+  const [unit, setUnit] = useState<Portion["unit"]>(initialUnit);
   const unitLabel = unit === "portion" ? t.portion : unit;
-  const initial = originalItem?.portion.amount ?? 100;
+  const initial = originalItem?.portion.amount ?? (initialUnit === "portion" ? 1 : 100);
   const initialText = displayAmount(initial, locale);
   const [value, setValue] = useState(initialText);
   const [error, setError] = useState<"invalid" | "save" | null>(null);
   const submitted = useRef(false);
-  const amount = value === initialText ? initial : readAmount(value);
+  const amount = unit === initialUnit && value === initialText ? initial : readAmount(value);
   const preview =
-    originalItem && amount === originalItem.portion.amount
+    originalItem && unit === initialUnit && amount === originalItem.portion.amount
       ? roundNutritionForDisplay(originalItem.nutrients)
       : previewNutrition(food, amount, unit);
   const values = [{ label: "energy", nutrient: "kcal", color: colors.accent } as const, ...macros];
   const base = roundNutritionForDisplay(food.nutrition.nutrients);
+  const noPackagedNutrition =
+    food.id.provider === "open-food-facts" &&
+    Object.values(food.nutrition.nutrients).every((value) => value === null);
+  const units = (["g", "ml", "portion"] as const).filter(
+    (candidate) => candidate === initialUnit || previewNutrition(food, 1, candidate) !== null,
+  );
 
   function submit() {
     if (submitted.current) return;
@@ -107,14 +120,38 @@ export function FoodDetail({
           <Text accessibilityRole="header" style={styles.heading}>
             {food.name}
           </Text>
-          {food.id.provider === "bls" && (
+          {(food.id.provider === "bls" || food.id.provider === "open-food-facts") && (
             <Text style={styles.meta}>
-              {t.bls} · {t[reference[food.nutrition.basis]]}
+              {food.id.provider === "bls" ? t.bls : t.openFoodFactsCredit}
+              {!noPackagedNutrition && ` · ${t[reference[food.nutrition.basis]]}`}
             </Text>
           )}
         </View>
         <View style={styles.card}>
           <Text style={styles.meta}>{t.amount}</Text>
+          {units.length > 1 && (
+            <View style={local.presets}>
+              {units.map((candidate) => (
+                <Pressable
+                  key={candidate}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: unit === candidate }}
+                  onPress={() => {
+                    if (unit === candidate) return;
+                    setUnit(candidate);
+                    const next =
+                      candidate === initialUnit ? initial : candidate === "portion" ? 1 : 100;
+                    change(displayAmount(next, locale));
+                  }}
+                  style={[local.preset, unit === candidate && local.selected]}
+                >
+                  <Text style={unit === candidate ? styles.actionText : styles.body}>
+                    {candidate === "portion" ? t.portion : candidate}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           <View style={local.amount}>
             <TextInput
               accessibilityLabel={`${t.amount} (${unitLabel})`}
@@ -185,7 +222,9 @@ export function FoodDetail({
         )}
         <View style={styles.card}>
           <Text accessibilityRole="header" style={styles.meta}>
-            {t.nutritionBasis} · {t[reference[food.nutrition.basis]]}
+            {noPackagedNutrition
+              ? t.barcodeNutritionUnavailable
+              : `${t.nutritionBasis} · ${t[reference[food.nutrition.basis]]}`}
           </Text>
           {[...values, { label: "fibre", nutrient: "fiberG" } as const].map(
             ({ label, nutrient }) => (
