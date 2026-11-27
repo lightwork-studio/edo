@@ -10,7 +10,7 @@ export const barcodeRows = `
   SELECT food.source_id, food.name, food.alternate_name, food.preparation,
     food.nutrition_basis, food.kcal, food.protein_g, food.available_carbohydrates_g, food.fat_g,
     food.fiber_g, food.portion_amount, food.portion_unit, barcode.code, barcode.lookup_code
-  FROM barcode JOIN food USING (source_id)
+  FROM barcode JOIN food ON food.source_id COLLATE BINARY = barcode.source_id COLLATE BINARY
 `;
 
 function requiredText(value: SQLOutputValue | undefined): string {

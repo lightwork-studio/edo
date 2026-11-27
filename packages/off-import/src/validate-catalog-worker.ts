@@ -21,8 +21,15 @@ for (const table of ["food", "barcode"]) {
   const entry = database
     .prepare("SELECT type FROM pragma_table_list WHERE schema = 'main' AND name = ?")
     .get(table);
-  const keys = database.prepare("SELECT name FROM pragma_table_info(?) WHERE pk > 0").all(table);
-  if (entry?.type !== "table" || keys.length !== 1 || keys[0]?.name !== "source_id") {
+  const keys = database
+    .prepare("SELECT name, type FROM pragma_table_info(?) WHERE pk > 0")
+    .all(table);
+  if (
+    entry?.type !== "table" ||
+    keys.length !== 1 ||
+    keys[0]?.name !== "source_id" ||
+    keys[0]?.type !== "TEXT"
+  ) {
     throw new Error("Unexpected Open Food Facts table structure");
   }
 }
@@ -42,6 +49,9 @@ if (
 ) {
   throw new Error("Unexpected Open Food Facts barcode structure");
 }
+if (database.prepare("PRAGMA foreign_key_check").get()) {
+  throw new Error("Open Food Facts catalog has unresolved barcode references");
+}
 
 const { accepted } = manifest.counts;
 const counts = database
@@ -52,8 +62,18 @@ if (counts?.food !== accepted || counts?.barcode !== accepted) {
 }
 
 let rows = 0;
-for (const row of database.prepare(barcodeRows).iterate()) {
+const candidates = database.prepare(`
+  SELECT candidate.*, CAST(candidate.source_id AS BLOB) AS source_id_bytes
+  FROM (${barcodeRows}) AS candidate
+`);
+for (const row of candidates.iterate()) {
   const product = readProduct(row, manifest.source.release);
+  if (
+    !(row.source_id_bytes instanceof Uint8Array) ||
+    !Buffer.from(product.id.sourceId).equals(row.source_id_bytes)
+  ) {
+    throw new Error("Open Food Facts catalog provider IDs must be valid UTF-8");
+  }
   const lookupCode = normalizeLookupCode(product.barcode);
   if (!lookupCode || lookupCode !== row.lookup_code) {
     throw new Error("Invalid Open Food Facts barcode index");

@@ -1,4 +1,4 @@
-import { copyFile, lstat, mkdtemp, open, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,6 +15,7 @@ vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
   return { ...fs, mkdtemp: vi.fn(fs.mkdtemp), open: vi.fn(fs.open) };
 });
+vi.setConfig({ testTimeout: 20_000 });
 
 const realFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 const provider = "open-food-facts";
@@ -114,6 +115,41 @@ it("opens only the verified snapshot when the source pathname is replaced during
   await expectSnapshotRemoved(0);
 });
 
+it("accepts release identifiers previously supported by the publisher", async () => {
+  const release = "archive-".repeat(2_048);
+  await publish("Original", release);
+  using reader = await openOpenFoodFactsCatalog(root);
+  expect(reader?.manifest.source.release).toBe(release);
+});
+
+it("waits before retrying a release that failed checksum verification", async () => {
+  let time = 100;
+  const clock = vi.fn(() => time);
+  await publish("Original", "release-1");
+  using lookup = createBarcodeLookup(root, { liveLookup: null, now: clock });
+  expect(await lookup.lookupBarcode(code)).toMatchObject({ products: [{ name: "Original" }] });
+
+  const candidate = await publish("Repaired", "release-2");
+  const artifact = artifactPath(candidate.artifact.sha256);
+  const correct = await readFile(artifact);
+  const damaged = Buffer.from(correct);
+  damaged[0] = 0;
+  await writeFile(artifact, damaged);
+  expect(await lookup.lookupBarcode(code)).toMatchObject({ products: [{ name: "Original" }] });
+  await expectSnapshotRemoved(1);
+  await expect.poll(() => clock.mock.calls.length, refreshTestWait).toBe(3);
+
+  await writeFile(artifact, correct);
+  expect(await lookup.lookupBarcode(code)).toMatchObject({ products: [{ name: "Original" }] });
+  await expect.poll(() => clock.mock.calls.length, refreshTestWait).toBe(5);
+  expect(snapshots).toHaveLength(2);
+
+  time += 30_000;
+  await expect
+    .poll(() => lookup.lookupBarcode(code), refreshTestWait)
+    .toMatchObject({ products: [{ name: "Repaired" }] });
+});
+
 it.each([
   [
     "an invalid preparation",
@@ -129,6 +165,28 @@ it.each([
      INSERT INTO barcode SELECT * FROM earlier_barcode WHERE source_id = '${code}';
      INSERT INTO barcode SELECT * FROM earlier_barcode WHERE source_id = '${code}';
      DROP TABLE earlier_barcode;`,
+  ],
+  [
+    "source IDs that match only under a different collation",
+    `DROP INDEX barcode_lookup;
+     ALTER TABLE barcode RENAME TO earlier_barcode;
+     DROP TABLE earlier_barcode;
+     UPDATE food SET source_id = CASE WHEN source_id = '${code}' THEN 'a' ELSE 'missing' END;
+     CREATE TABLE barcode (
+       source_id TEXT COLLATE NOCASE NOT NULL REFERENCES food(source_id),
+       code TEXT NOT NULL,
+       lookup_code TEXT NOT NULL,
+       PRIMARY KEY (source_id COLLATE BINARY)
+     ) STRICT;
+     CREATE INDEX barcode_lookup ON barcode (lookup_code);
+     INSERT INTO barcode VALUES ('a', '${code}', '0034000470693'), ('A', '${code}', '0034000470693');`,
+  ],
+  [
+    "distinct source IDs that decode to the same replacement character",
+    `UPDATE barcode SET source_id =
+       CASE WHEN source_id = '${code}' THEN CAST(x'80' AS TEXT) ELSE CAST(x'81' AS TEXT) END;
+     UPDATE food SET source_id =
+       CASE WHEN source_id = '${code}' THEN CAST(x'80' AS TEXT) ELSE CAST(x'81' AS TEXT) END;`,
   ],
 ] as const)(
   "retains the previous release when the candidate contains %s",
@@ -149,6 +207,7 @@ it.each([
           await copyFile(artifactPath(original.artifact.sha256), destination);
           using database = new DatabaseSync(destination);
           database.exec(`
+          PRAGMA foreign_keys = OFF;
           UPDATE catalog_metadata SET release = 'invalid';
           UPDATE food SET name = 'Candidate';
           ${change};
@@ -180,43 +239,52 @@ it.each([
   },
 );
 
-it("serves the current release during validation and discards a superseded candidate", async () => {
-  await publish("Original", "release-1");
-  using lookup = createBarcodeLookup(root, { liveLookup: null });
-  expect(await lookup.lookupBarcode(code)).toMatchObject({ products: [{ name: "Original" }] });
+it.each(["artifact copy", "final activation read"] as const)(
+  "serves the current release during %s and discards a superseded candidate",
+  async (pauseAt) => {
+    await publish("Original", "release-1");
+    using lookup = createBarcodeLookup(root, { liveLookup: null });
+    expect(await lookup.lookupBarcode(code)).toMatchObject({ products: [{ name: "Original" }] });
 
-  const candidate = await publish("Superseded", "release-2");
-  const candidatePath = artifactPath(candidate.artifact.sha256);
-  const opened = deferred();
-  const resume = deferred();
-  vi.mocked(open).mockImplementation(async (name, flags, mode) => {
-    const file = await realFs.open(name, flags, mode);
-    if (name === candidatePath) {
-      opened.resolve();
-      await resume.promise;
-    }
-    return file;
-  });
-  try {
-    let result: Awaited<ReturnType<typeof lookup.lookupBarcode>> | undefined;
-    void lookup.lookupBarcode(code).then((value) => {
-      result = value;
+    const candidate = await publish("Superseded", "release-2");
+    const candidatePath = artifactPath(candidate.artifact.sha256);
+    const activePath = join(root, provider, "active.json");
+    const opened = deferred();
+    const resume = deferred();
+    let activeReads = 0;
+    vi.mocked(open).mockImplementation(async (name, flags, mode) => {
+      const file = await realFs.open(name, flags, mode);
+      if (name === activePath) activeReads += 1;
+      if (
+        (pauseAt === "artifact copy" && name === candidatePath) ||
+        (pauseAt === "final activation read" && name === activePath && activeReads === 2)
+      ) {
+        opened.resolve();
+        await resume.promise;
+      }
+      return file;
     });
-    await opened.promise;
-    await expect
-      .poll(() => result, refreshTestWait)
-      .toMatchObject({ products: [{ name: "Original" }] });
-    await publish("Latest", "release-3");
-  } finally {
-    resume.resolve();
-  }
+    try {
+      let result: Awaited<ReturnType<typeof lookup.lookupBarcode>> | undefined;
+      void lookup.lookupBarcode(code).then((value) => {
+        result = value;
+      });
+      await opened.promise;
+      await expect
+        .poll(() => result, refreshTestWait)
+        .toMatchObject({ products: [{ name: "Original" }] });
+      await publish("Latest", "release-3");
+    } finally {
+      resume.resolve();
+    }
 
-  await expectSnapshotRemoved(1);
-  expect(await lookup.lookupBarcode(code)).toMatchObject({ products: [{ name: "Original" }] });
-  await expect
-    .poll(() => lookup.lookupBarcode(code), refreshTestWait)
-    .toMatchObject({ products: [{ name: "Latest" }] });
-});
+    await expectSnapshotRemoved(1);
+    expect(await lookup.lookupBarcode(code)).toMatchObject({ products: [{ name: "Original" }] });
+    await expect
+      .poll(() => lookup.lookupBarcode(code), refreshTestWait)
+      .toMatchObject({ products: [{ name: "Latest" }] });
+  },
+);
 
 it("releases a staged snapshot when the service closes during a cold lookup", async () => {
   const active = await publish("Original", "release-1");

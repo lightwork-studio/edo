@@ -1,31 +1,51 @@
 import { createHash } from "node:crypto";
 import { constants, createWriteStream } from "node:fs";
-import { open } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { Worker } from "node:worker_threads";
 import type { CatalogManifest } from "@edo/catalog-import";
 
 async function openCatalogFile(path: string, label: "manifest" | "artifact") {
   const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
-  return open(path, flags).catch((error: unknown) => {
+  const invalid = `Open Food Facts catalog ${label} must be a regular file`;
+  const entry = await lstat(path, { bigint: true });
+  if (!entry.isFile()) throw new Error(invalid);
+  const file = await open(path, flags).catch((error: unknown) => {
     if (error instanceof Error && "code" in error && error.code === "ELOOP") {
-      throw new Error(`Open Food Facts catalog ${label} must be a regular file`, { cause: error });
+      throw new Error(invalid, { cause: error });
     }
     throw error;
   });
+  try {
+    const opened = await file.stat({ bigint: true });
+    if (!opened.isFile() || opened.ino !== entry.ino || opened.dev !== entry.dev) {
+      throw new Error(invalid);
+    }
+    return file;
+  } catch (error) {
+    await file.close();
+    throw error;
+  }
 }
 
 export async function readCatalogManifestFile(path: string): Promise<Buffer> {
   await using file = await openCatalogFile(path, "manifest");
-  const metadata = await file.stat();
+  const metadata = await file.stat({ bigint: true });
   if (!metadata.isFile())
     throw new Error("Open Food Facts catalog manifest must be a regular file");
-  if (metadata.size <= 0 || metadata.size > 16 * 1024) {
+  if (metadata.size <= 0n) {
     throw new Error("Open Food Facts catalog manifest has invalid size");
   }
-  const buffer = Buffer.alloc(metadata.size + 1);
+  const buffer = Buffer.alloc(Number(metadata.size) + 1);
   const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-  if (bytesRead !== metadata.size) {
+  const current = await lstat(path, { bigint: true });
+  if (
+    BigInt(bytesRead) !== metadata.size ||
+    !current.isFile() ||
+    current.dev !== metadata.dev ||
+    current.ino !== metadata.ino ||
+    current.mtimeNs !== metadata.mtimeNs
+  ) {
     throw new Error("Open Food Facts catalog manifest changed while being read");
   }
   return buffer.subarray(0, bytesRead);
