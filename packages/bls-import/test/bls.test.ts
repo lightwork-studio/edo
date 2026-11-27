@@ -195,6 +195,18 @@ describe("BLS 4.0 workbook import", () => {
         withNames("S", "Auster, gratiniert im Ofen", "Oyster gratinated in oven"),
         withNames("T", "Wurst, gebrüht", "Sausage scalded"),
         withNames("U", "Rinderbraten", "Braised beef roast"),
+        withNames("V", "Kartoffel geschält, druckgedämpft", "Peeled potato, pressure-steamed"),
+        withNames("W", "Zwiebelwurst", "Cooked sausage with onions"),
+        withNames("X", "Ofenkartoffeln mit Zwiebeln", "Baked potatoes with onions"),
+        withNames("Y", "Brathering Konserve", "Fried herring canned"),
+        withNames("Z", "Beispiel roh", "Cooked sausage"),
+        withNames("ZA", "Milchreis mit Banane roh", "Rice pudding with milk and raw banana"),
+        withNames(
+          "ZB",
+          "Grießbrei mit Erdbeersauce roh",
+          "Semolina pudding with raw strawberry sauce",
+        ),
+        withNames("ZC", "Reismischung mit Wildreis, roh", "Rice mix with wild rice, raw"),
       ]),
     );
     const foods = await readBlsWorkbook(path, "4.0-synthetic");
@@ -220,6 +232,14 @@ describe("BLS 4.0 workbook import", () => {
       "cooked",
       "cooked",
       "cooked",
+      "cooked",
+      "cooked",
+      "cooked",
+      "cooked",
+      "unknown",
+      "unknown",
+      "unknown",
+      "raw",
     ]);
   });
 
@@ -258,7 +278,7 @@ describe("BLS SQLite seed", () => {
     const path = fileURLToPath(new URL("../../../apps/mobile/assets/bls.sqlite", import.meta.url));
     const bytes = await readFile(path);
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "81bb9e03b71dd5c76310aea9484032f935d39039ef084c8c6b3044a22d246b5f",
+      "de019d3c43f8836e678d6eb32584ba1280fc2b0fe9c2ee6fb033af73c17cdf05",
     );
     using db = new DatabaseSync(path, { readOnly: true });
     expect(db.prepare("PRAGMA integrity_check").get()?.integrity_check).toBe("ok");

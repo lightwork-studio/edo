@@ -9,7 +9,7 @@ pnpm --filter @edo/bls-import run import /absolute/path/to/BLS_4_0_2025_DE.zip /
 The importer verifies the reviewed archive checksum and requires 7,140 foods. A successful import publishes a standalone SQLite file in `bls/artifacts` and its manifest in `bls/active.json` under the catalog root.
 
 The [mobile seed](../../apps/mobile/assets/bls.sqlite) comes from the pinned release. Its
-SHA-256 is `81bb9e03b71dd5c76310aea9484032f935d39039ef084c8c6b3044a22d246b5f`.
+SHA-256 is `de019d3c43f8836e678d6eb32584ba1280fc2b0fe9c2ee6fb033af73c17cdf05`.
 The seed was generated with Node.js 24.22.3 and SQLite 3.54.1.
 
 The revision, source and attribution are available in `catalog_metadata`. `food` contains the source ID, German `name`, English `alternate_name` and nutrients per 100 g edible portion. Open the file read-only and search both names with `food_search`:

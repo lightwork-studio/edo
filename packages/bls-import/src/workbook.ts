@@ -89,14 +89,16 @@ function nutrientValue(value: unknown, code: string): number | null {
 }
 
 function preparationOf(german: string, english: string): BlsFood["preparation"] {
+  // The translation can identify a trailing German qualifier as belonging to an ingredient.
+  const rawIngredient = /\bwith\s+[^,()]*\braw\s+\p{L}/iu.test(english);
   const raw =
-    /(?:^|[\s,])roh$|\(roh\)/iu.test(german) ||
+    (!rawIngredient && /(?:^|[\s,])roh$|\(roh\)/iu.test(german)) ||
     /(?:^|[\s,])raw$|\(raw\)|^(?:certified )?raw milk(?:$|[\s,(])/iu.test(english);
   const cooked =
-    /(?:^|[\s,(])(?:gekocht|gegart|gedämpft|gedünstet|gegrillt|gebacken|gebraten|geröstet|frittiert|pochiert|gar\s*gezogen|gratiniert|überbacken|gebrüht)(?=$|\s*[,()]|\s+(?:in|im|mit|ohne|auf|am|bei)\b|\s+\p{L}+(?:-\p{L}+)?\s+Art\b)/iu.test(
+    /(?:^|[\s,(])(?:gekocht|gegart|gedämpft|druckgedämpft|gedünstet|gegrillt|gebacken|gebraten|geröstet|frittiert|pochiert|gar\s*gezogen|gratiniert|überbacken|gebrüht)(?=$|\s*[,()]|\s+(?:in|im|mit|ohne|auf|am|bei)\b|\s+\p{L}+(?:-\p{L}+)?\s+Art\b)/iu.test(
       german,
     ) ||
-    /(?:^|[\s,(])(?:cooked|boiled|steamed|braised|grilled|baked|roasted|fried|deep-fried|poached|gratinated|scalded)(?=$|\s*[,()]|\s+(?:in|with|without|on|over|at)\b|\s+\p{L}+(?:-\p{L}+)?\s+style\b)|^(?:fried potatoes|braised (?:beef|lamb) roast)(?:$|[\s,(])/iu.test(
+    /(?:^|[\s,(])(?:cooked|boiled|steamed|pressure-steamed|braised|grilled|baked|roasted|fried|deep-fried|poached|gratinated|scalded)(?=$|\s*[,()]|\s+(?:in|with|without|on|over|at)\b|\s+\p{L}+(?:-\p{L}+)?\s+style\b)|^(?:cooked|boiled|baked|braised|fried|scalded)\s+\p{L}/iu.test(
       english,
     );
   if (raw === cooked) return "unknown";
