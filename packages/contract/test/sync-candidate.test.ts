@@ -139,7 +139,7 @@ describe("local candidate compatibility", () => {
       },
       { state: "unavailable", revision: 7, kind: "recipe", id: "recipe-1" },
     ];
-    const incoming = { ...scope, cursor: 9, hasMore: false, changes };
+    const incoming = { ...scope, cursor: 7, hasMore: false, changes };
     const page = decodePullResponse(incoming, request, client);
     expect(page.changes).toEqual(changes);
     expect(isKnownRecordKind(page.changes[1]?.kind ?? "")).toBe(false);
@@ -172,6 +172,9 @@ test("hello carries authenticated scope and detects responses from another bindi
   expect(() => acceptHello(hello, { ...response, lineage: "new" }, history)).toThrow(
     expect.objectContaining({ code: "lineage-changed" }),
   );
+  expect(() =>
+    acceptHello(hello, { ...response, revision: history.revision - 1 }, history),
+  ).toThrow(expect.objectContaining({ code: "cursor-reset" }));
   expect(() => acceptHello(hello, { ...response, features: ["unexpected"] }, history)).toThrow(
     expect.objectContaining({ code: "invalid-request" }),
   );
@@ -231,6 +234,16 @@ test("push decodes all outcomes with one result per stable submission ID", () =>
     ...results[1],
     current: { state: "deleted", kind: "recipe", id: "other", revision: 9 },
   };
+  expect(() =>
+    decodePushResponse(
+      { ...scope, results: [{ ...results[0], revision: 1 }, ...results.slice(1)] },
+      {
+        ...request,
+        submissions: [{ ...meal, op: "put", baseRevision: 3 }, ...request.submissions.slice(1)],
+      },
+      client,
+    ),
+  ).toThrow(expect.objectContaining({ code: "invalid-request" }));
   expect(() =>
     decodePushResponse(
       { ...scope, results: [results[0], unrelated, ...results.slice(2)] },
@@ -296,11 +309,8 @@ test("pull pages validate cursors, revisions, progression and limits", () => {
   const request = decodePullRequest({ ...scope, cursor: 4, limit: 2 }, client);
   const current = { state: "deleted", kind: "meal", id: "meal-1", revision: 5 };
   expect(
-    decodePullResponse({ ...scope, cursor: 7, hasMore: true, changes: [current] }, request, client),
-  ).toEqual({ ...scope, cursor: 7, hasMore: true, changes: [current] });
-  expect(
-    decodePullResponse({ ...scope, cursor: 7, hasMore: true, changes: [] }, request, client).cursor,
-  ).toBe(7);
+    decodePullResponse({ ...scope, cursor: 5, hasMore: true, changes: [current] }, request, client),
+  ).toEqual({ ...scope, cursor: 5, hasMore: true, changes: [current] });
   expect(
     decodePullResponse({ ...scope, cursor: 4, hasMore: false, changes: [] }, request, client)
       .cursor,
@@ -312,6 +322,8 @@ test("pull pages validate cursors, revisions, progression and limits", () => {
     expect.objectContaining({ code: "invalid-request" }),
   );
   for (const page of [
+    { cursor: 7, hasMore: true, changes: [current] },
+    { cursor: 7, hasMore: true, changes: [] },
     { cursor: 4, hasMore: true, changes: [] },
     { cursor: 3, hasMore: false, changes: [] },
     { cursor: 7, hasMore: false, changes: [{ ...current, revision: 9 }] },

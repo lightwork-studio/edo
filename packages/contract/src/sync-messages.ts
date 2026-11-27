@@ -253,6 +253,13 @@ export function decodePushResponse(
       return invalid("submission result ID or order");
     }
     if (
+      result.status === "accepted" &&
+      submission.baseRevision !== null &&
+      result.revision < submission.baseRevision
+    ) {
+      return invalid("accepted revision before the submission base");
+    }
+    if (
       result.status === "conflict" &&
       result.current &&
       (result.current.kind !== submission.kind || result.current.id !== submission.id)
@@ -307,5 +314,6 @@ export function decodePullResponse(
       return invalid("pull change revision or order");
     last = change.revision;
   }
+  if (last !== cursor) return invalid("unrepresented pull revisions");
   return { ...scope, cursor, hasMore, changes };
 }

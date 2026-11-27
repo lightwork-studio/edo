@@ -185,7 +185,7 @@ export function negotiateHello(
 export function acceptHello(
   request: HelloRequest,
   input: unknown,
-  previous?: Pick<AuthenticatedHistory, "accountBinding" | "lineage">,
+  previous?: Pick<AuthenticatedHistory, "accountBinding" | "lineage" | "revision">,
   releases: readonly SyncRelease[] = [syncCandidate],
 ): NegotiatedSync {
   const hello = decodeHelloRequest(request);
@@ -206,6 +206,9 @@ export function acceptHello(
   }
   if (previous && response.lineage !== previous.lineage) {
     throw new SyncWireError("lineage-changed", "The authenticated account history changed");
+  }
+  if (previous && response.revision < readRevision(previous.revision, "observed revision", true)) {
+    throw new SyncWireError("cursor-reset", "The account revision moved backwards");
   }
   return sessionFor(response, release);
 }
