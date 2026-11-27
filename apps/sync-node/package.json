@@ -6,5 +6,8 @@
   "scripts": {
     "start": "node src/index.ts",
     "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@edo/catalog-import": "workspace:*"
   }
 }

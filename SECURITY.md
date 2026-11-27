@@ -4,5 +4,5 @@ Use GitHub's private vulnerability reporting for this repository when available,
 maintainer privately. Include the affected commit, the conditions needed to reproduce the issue
 and its impact. Use synthetic records and omit credentials and personal data.
 
-The Node app in this scaffold is a local health-check server. It binds to loopback and has no
-data or account endpoints.
+The Node development server binds to loopback and provides a health check and an optional
+preview for public BLS catalog files.
