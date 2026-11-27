@@ -55,6 +55,17 @@ it("rounds exact half-kcal estimates before checking the macro budget", () => {
       },
       1546,
     ],
+    [
+      {
+        ...input,
+        weightKg: 60.25,
+        heightCm: 160,
+        goalAdjustmentKcal: -1800,
+        proteinG: 26.5,
+        fatG: 15,
+      },
+      241,
+    ],
   ] as const) {
     expect(calculateNutritionTarget({ ...sample, activityFactor: 1.4 })).toEqual({
       kcal,

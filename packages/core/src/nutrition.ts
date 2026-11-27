@@ -148,20 +148,23 @@ export function sumNutrition(values: readonly Nutrients[]): Nutrients {
   return mapNutrients(totals, (value) => value);
 }
 
-function roundNutrient(value: number, multiplier: number): number {
+function roundNutrient(value: number, multiplier: number, arithmeticScale = value): number {
   const scaled = value * multiplier;
   if (scaled >= Number.MAX_SAFE_INTEGER) return value;
   if (Number.isInteger(scaled)) return scaled / multiplier;
 
   // Equivalent calculations can accumulate error across several divisions and multiplications.
   const midpoint = Math.floor(scaled) + 0.5;
-  const tolerance = Math.min(4 * scaled * Number.EPSILON, 1e-7);
+  const tolerance = Math.min(
+    4 * Number.EPSILON * Math.max(scaled, arithmeticScale * multiplier),
+    1e-7,
+  );
   const atMidpoint = midpoint > scaled && midpoint - scaled <= tolerance;
   return Math.round(atMidpoint ? midpoint : scaled) / multiplier;
 }
 
-export function roundEnergyKcal(value: number): number {
-  return roundNutrient(checkedNutrient(value, "kcal"), 1);
+export function roundEnergyKcal(value: number, arithmeticScale = value): number {
+  return roundNutrient(checkedNutrient(value, "kcal"), 1, checkedNutrient(arithmeticScale, "kcal"));
 }
 
 /** Round whole kcal and tenths of a gram after scaling or summing. */

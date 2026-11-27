@@ -70,9 +70,10 @@ export function calculateNutritionTarget(input: CalculatedTargetInput): DailyNut
   const restingKcal =
     10 * weightKg + 6.25 * heightCm - 5 * ageYears + (formulaSex === "male" ? 5 : -161);
   requirePositive(restingKcal, "Estimated resting energy");
-  const dailyEstimate = restingKcal * activityFactor + goalAdjustmentKcal;
+  const activityKcal = restingKcal * activityFactor;
+  const dailyEstimate = activityKcal + goalAdjustmentKcal;
   requirePositive(dailyEstimate, "Energy target");
-  const kcal = roundEnergyKcal(dailyEstimate);
+  const kcal = roundEnergyKcal(dailyEstimate, activityKcal);
   const { proteinG, fatG } = input;
   return manualNutritionTarget({ kcal, proteinG, fatG });
 }
