@@ -15,14 +15,20 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   type CatalogBuilder,
   type CatalogImportInput,
   clearPreparedCatalogSource,
+  listPublishedCatalogReleases,
   publishCatalog,
 } from "../src/index.ts";
 import { compatibleCatalog } from "../src/manifest.ts";
+
+vi.mock("node:fs/promises", async (original) => {
+  const fs = await original<typeof import("node:fs/promises")>();
+  return { ...fs, rename: vi.fn(fs.rename) };
+});
 
 let directory: string;
 let input: CatalogImportInput;
@@ -87,6 +93,43 @@ it("publishes a readable SQLite artifact and reproducible manifest without dupli
   expect(await readdir(join(providerRoot, "releases"))).toHaveLength(1);
   using database = new DatabaseSync(artifactPath, { readOnly: true });
   expect(database.prepare("SELECT name FROM food").get()).toMatchObject({ name: "Sample food" });
+});
+
+it("archives only releases that reached the activation commit point", async () => {
+  const digestOf = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const root = join(input.root, input.provider);
+  const activation = join(root, "active.json");
+  await publishCatalog(input, builder);
+  const first = digestOf(await readFile(activation));
+  expect(await listPublishedCatalogReleases(input.root, input.provider)).toEqual([first]);
+  expect(await listPublishedCatalogReleases(input.root, "open-food-facts")).toEqual([]);
+
+  await writeFile(input.inputPath, "Next published food");
+  const next = { ...input, source: { ...input.source, release: "fixture-2" } };
+  const { rename: move } =
+    await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  vi.mocked(rename).mockImplementation(async (source, destination) => {
+    if (destination === activation) throw new Error("Interrupted before activation");
+    await move(source, destination);
+  });
+  try {
+    await expect(publishCatalog(next, builder)).rejects.toThrow("Interrupted before activation");
+  } finally {
+    vi.mocked(rename).mockImplementation(move);
+  }
+  const stored = await readdir(join(root, "releases"));
+  expect(stored).toHaveLength(2);
+  expect(await readdir(join(root, "artifacts"))).toHaveLength(2);
+  expect(digestOf(await readFile(activation))).toBe(first);
+  expect(await listPublishedCatalogReleases(input.root, input.provider)).toEqual([first]);
+
+  await publishCatalog(next, builder);
+  const second = digestOf(await readFile(activation));
+  expect(second).not.toBe(first);
+  expect(new Set(await listPublishedCatalogReleases(input.root, input.provider))).toEqual(
+    new Set([first, second]),
+  );
+  expect(await readFile(join(root, "published", `${first}.sha256`), "utf8")).toBe(`${first}\n`);
 });
 
 it.each(["artifact", "manifest"] as const)(

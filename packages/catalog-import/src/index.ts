@@ -18,8 +18,10 @@ import {
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type CatalogManifest, isCatalogManifest, isCatalogProvider } from "./manifest.ts";
+import { archiveCurrentCatalogRelease } from "./publication-history.ts";
 
 export * from "./manifest.ts";
+export { listPublishedCatalogReleases } from "./publication-history.ts";
 
 interface CatalogImportMetadata
   extends Pick<CatalogManifest, "provider" | "schemaVersion" | "importerVersion" | "attribution"> {
@@ -152,6 +154,7 @@ async function activateManifest(root: string, stage: string, manifest: CatalogMa
     join(releases, `${releaseDigest.sha256}.json`),
     releaseDigest,
   );
+  await archiveCurrentCatalogRelease(root, stage, manifest.provider, releaseDigest.sha256);
 
   const activation = join(stage, "active.json");
   await writeFile(activation, manifestText, { flush: true });
