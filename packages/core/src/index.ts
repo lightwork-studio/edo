@@ -4,3 +4,5 @@ export * from "./food.ts";
 export * from "./nutrition.ts";
 export * from "./packaged-food.ts";
 export * from "./recipe.ts";
+export * from "./targets.ts";
+export * from "./weight.ts";
