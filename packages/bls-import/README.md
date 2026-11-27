@@ -28,7 +28,8 @@ LIMIT ?;
 For a development build, set `EXPO_PUBLIC_EDO_BLS_PREVIEW_ORIGIN` to the HTTPS origin
 serving `/catalog-preview/bls`, and set `EXPO_PUBLIC_EDO_BLS_PREVIEW_SHA256` to the exact
 SQLite digest from the reviewed published manifest. The development server itself listens
-on loopback. A physical device needs an HTTPS route to that preview.
+on loopback. A physical device needs an HTTPS route that preserves the uncompressed
+response body and its `Content-Length`.
 
 Search opens the bundled catalog immediately when the approved preview is absent or damaged.
 The refresh runs in the background. Restart the app to use a successfully downloaded copy.

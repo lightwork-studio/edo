@@ -38,6 +38,9 @@ importers:
       expo-asset:
         specifier: ~58.0.21
         version: 58.0.21(expo@58.1.0)(react-native@0.88.1(@babel/core@7.29.13)(@types/react@19.3.3)(react@19.3.0))(react@19.3.0)(typescript@7.0.2)
+      expo-crypto:
+        specifier: ~58.0.9
+        version: 58.0.9(expo@58.1.0)
       expo-file-system:
         specifier: ~58.0.15
         version: 58.0.15(expo@58.1.0)(react-native@0.88.1(@babel/core@7.29.13)(@types/react@19.3.3)(react@19.3.0))
@@ -1508,6 +1511,11 @@ packages:
     peerDependencies:
       expo: '*'
       react-native: '*'
+
+  expo-crypto@58.0.9:
+    resolution: {integrity: sha512-+3IFQfHZKpGBxdtKQuCGB24HfnL7ZPq1HAVTjlO5LXwu+cqt4dvgRIDrCs07HPMj+a+ZRQnVrKDbXoo1Yq+PxQ==}
+    peerDependencies:
+      expo: '*'
 
   expo-file-system@58.0.15:
     resolution: {integrity: sha512-Mu+JF5xV7NovtTHpQSA59felqhODUDI5BvzsS3KK1Kj3W/kZw3LHrXCB9NuhqnzUWyhIFminifrtQlSDQiMyIA==}
@@ -4227,6 +4235,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
       - typescript
+
+  expo-crypto@58.0.9(expo@58.1.0):
+    dependencies:
+      expo: 58.1.0(@babel/core@7.29.13)(@expo/dom-webview@58.0.2)(react-native@0.88.1(@babel/core@7.29.13)(@types/react@19.3.3)(react@19.3.0))(react@19.3.0)(typescript@7.0.2)
 
   expo-file-system@58.0.15(expo@58.1.0)(react-native@0.88.1(@babel/core@7.29.13)(@types/react@19.3.3)(react@19.3.0)):
     dependencies:

@@ -9,8 +9,13 @@ const sdk = vi.hoisted(() => ({
   files: new Map<string, Uint8Array<ArrayBuffer>>(),
   directories: new Set<string>(),
   fetch: vi.fn<(url: string, options: RequestInit) => Promise<Response>>(),
+  digest: vi.fn<(algorithm: string, bytes: Uint8Array) => Promise<ArrayBuffer>>(),
 }));
 
+vi.mock("expo-crypto", () => ({
+  CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+  digest: sdk.digest,
+}));
 vi.mock("expo/fetch", () => ({ fetch: sdk.fetch }));
 vi.mock("expo-asset", () => ({
   Asset: { loadAsync: async () => [{ localUri: "asset:/bls.sqlite" }] },
@@ -63,8 +68,16 @@ vi.mock("expo-file-system", () => {
       if (!data) throw Error("File is missing");
       return data;
     }
-    async digest(_algorithm: string) {
-      return sha256(await this.bytes());
+    open() {
+      const data = sdk.files.get(this.uri);
+      if (!data) throw Error("File is missing");
+      return {
+        size: data.byteLength,
+        async readBytes(length: number) {
+          return data.slice(0, length);
+        },
+        close() {},
+      };
     }
     delete() {
       sdk.files.delete(this.uri);
@@ -76,7 +89,7 @@ vi.mock("expo-file-system", () => {
       this.uri = destination.uri;
     }
   }
-  return { Directory, File, Paths: { cache: "cache:" } };
+  return { Directory, File, FileMode: { ReadOnly: "r" }, Paths: { cache: "cache:" } };
 });
 
 vi.mock("expo-sqlite", () => ({
@@ -194,6 +207,11 @@ beforeEach(() => {
   sdk.files.set("asset:/bls.sqlite", bundled);
   sdk.directories.clear();
   sdk.fetch.mockReset();
+  sdk.digest.mockReset();
+  sdk.digest.mockImplementation(
+    async (_algorithm, bytes) =>
+      Uint8Array.from(createHash("sha256").update(bytes).digest()).buffer,
+  );
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -227,6 +245,26 @@ it("skips the network when the approved file is already bundled", async () => {
   await refreshBlsPreview({ origin, digest: bundleSha256 });
   expect(sdk.fetch).not.toHaveBeenCalled();
   expect(sdk.directories.size).toBe(0);
+});
+
+it("passes the byte snapshot checked by SHA-256 to SQLite even if the cache path changes", async () => {
+  sdk.files.set(installed, artifact);
+  sdk.digest.mockImplementationOnce(async (_algorithm, bytes) => {
+    sdk.files.set(installed, bundled);
+    return Uint8Array.from(createHash("sha256").update(bytes).digest()).buffer;
+  });
+  const { openBlsPreview } = await import("../src/bls-preview-update");
+  const { searchBls } = await import("../src/catalog");
+  const approved = await openBlsPreview({ origin, digest });
+  if (!approved) throw new Error("Expected the verified preview");
+  try {
+    expect(await searchBls(approved.db, "Banane", "de")).toMatchObject([
+      { name: "Banane aus dem Preview" },
+    ]);
+  } finally {
+    await approved.close();
+  }
+  expect(await openBlsPreview({ origin, digest })).toBeNull();
 });
 
 it("keeps the open bundled connection, stages once, and opens the verified download after reopening offline", async () => {

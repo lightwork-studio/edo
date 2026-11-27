@@ -1,6 +1,7 @@
 import { compatibleCatalog } from "@edo/catalog-import/manifest";
 import { fetch } from "expo/fetch";
-import { Directory, File, Paths } from "expo-file-system";
+import { CryptoDigestAlgorithm, digest as digestBytes } from "expo-crypto";
+import { Directory, File, FileMode, Paths } from "expo-file-system";
 import { deserializeDatabaseAsync } from "expo-sqlite";
 import { searchBls } from "./catalog";
 
@@ -98,14 +99,29 @@ async function readBounded(
   }
 }
 
-async function hasApprovedBytes(file: File, digest: string) {
-  const size = file.size;
-  return size > 0 && size <= maxArtifactBytes && (await file.digest("SHA-256")) === digest;
+async function readApprovedBytes(
+  file: File,
+  expected: string,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  const handle = file.open(FileMode.ReadOnly);
+  let bytes: Uint8Array<ArrayBuffer>;
+  try {
+    const size = handle.size;
+    if (!size || size > maxArtifactBytes) return null;
+    bytes = await handle.readBytes(size + 1);
+    if (bytes.byteLength !== size) return null;
+  } finally {
+    handle.close();
+  }
+  const checksum = new Uint8Array(await digestBytes(CryptoDigestAlgorithm.SHA256, bytes));
+  const hex = Array.from(checksum, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return hex === expected ? bytes : null;
 }
 
 async function openCheckedCatalog(file: File, digest: string) {
-  if (!(await hasApprovedBytes(file, digest))) throw new Error("BLS preview checksum mismatch");
-  const db = await deserializeDatabaseAsync(await file.bytes());
+  const bytes = await readApprovedBytes(file, digest);
+  if (!bytes) throw new Error("BLS preview checksum mismatch");
+  const db = await deserializeDatabaseAsync(bytes);
   try {
     await db.execAsync("PRAGMA trusted_schema = OFF; PRAGMA query_only = ON");
     const version = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
@@ -156,7 +172,7 @@ async function installPreview({ origin, digest }: PreviewConfig) {
   const installed = new File(directory, installedName);
   const staged = new File(directory, stagedName);
   if (staged.exists) staged.delete();
-  if (installed.exists && (await hasApprovedBytes(installed, digest))) return;
+  if (installed.exists && (await readApprovedBytes(installed, digest))) return;
 
   const endpoint = `${origin}/catalog-preview/bls`;
   const manifestBytes = await readBounded(
