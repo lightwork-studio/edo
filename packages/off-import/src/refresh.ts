@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream } from "node:fs";
 import { lstat, open, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -146,6 +146,10 @@ async function downloadExport(
     if (response.status === 412) throw new Error("Open Food Facts export changed before download");
     verifySource(expected, readMetadata(response));
     if (!response.body) throw new Error("Open Food Facts export has no download body");
+    controller.signal.throwIfAborted();
+    // Open the file before starting the pipeline so publisher cleanup cannot race a pending open.
+    await using output = await open(inputPath, "wx", 0o600);
+    controller.signal.throwIfAborted();
     await pipeline(
       response.body,
       async function* (chunks: AsyncIterable<Uint8Array>) {
@@ -154,7 +158,7 @@ async function downloadExport(
           yield chunk;
         }
       },
-      createWriteStream(inputPath, { flags: "wx", mode: 0o600 }),
+      output.createWriteStream(),
       { signal: controller.signal },
     );
   } catch (error) {
