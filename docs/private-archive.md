@@ -37,6 +37,9 @@ the preview only after you select **Restore records**. The app validates up to 1
 across the top-level archive collections and batches SQLite reads and writes. Archive export
 and store-level recovery support larger archives.
 
+If a selected provider takes more than 45 seconds to respond, Edo stops waiting and lets
+you retry. Save a local copy if the provider keeps timing out.
+
 Sharing uses a temporary copy in the application cache. The app clears expired staging copies
 on startup, on resume or when another archive is shared. The staging window is one day to
 give the receiving app time to read the file.

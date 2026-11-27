@@ -13,11 +13,13 @@ import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -128,9 +130,31 @@ private fun readSelection(resolver: ContentResolver, uri: Uri, signal: Cancellat
     return mapOf("status" to "too-large")
   }
   signal.throwIfCanceled()
-  val source = requireNotNull(resolver.openAssetFileDescriptor(uri, "r", signal)).use { descriptor ->
-    descriptor.createInputStream().use { readArchive(it, checkCancellation = signal::throwIfCanceled) }
+  val descriptor = requireNotNull(resolver.openAssetFileDescriptor(uri, "r", signal))
+  val input = try {
+    descriptor.createInputStream()
+  } catch (error: Exception) {
+    runCatching { descriptor.close() }
+    throw error
   }
+  val source = readCancellableArchive(input, signal)
   return if (source == null) mapOf("status" to "too-large")
   else mapOf("status" to "selected", "source" to source)
+}
+
+internal fun readCancellableArchive(input: InputStream, signal: CancellationSignal): String? {
+  val closed = AtomicBoolean()
+  fun closeInput() {
+    if (closed.compareAndSet(false, true)) input.close()
+  }
+  // After openAssetFileDescriptor returns, the provider no longer handles its cancellation
+  // signal. Closing the owned stream releases its descriptor and interrupts Android pipe reads.
+  signal.setOnCancelListener { runCatching { closeInput() } }
+  try {
+    signal.throwIfCanceled()
+    return readArchive(input, checkCancellation = signal::throwIfCanceled)
+  } finally {
+    signal.setOnCancelListener(null)
+    closeInput()
+  }
 }
