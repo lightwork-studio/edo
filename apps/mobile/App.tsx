@@ -7,7 +7,13 @@ import {
   type Recipe,
   sevenDayWeightAverage,
 } from "@edo/core";
-import type { DiaryMeal, DiaryProgressStore, DiaryStore } from "@edo/storage";
+import {
+  type DiaryMeal,
+  type DiaryProgressStore,
+  type DiaryStore,
+  mealFromTemplate,
+  type SavedMealTemplate,
+} from "@edo/storage";
 import { randomUUID } from "expo-crypto";
 import { getLocales } from "expo-localization";
 import { useEffect, useMemo, useState } from "react";
@@ -41,10 +47,12 @@ import { FoodDetail } from "./src/food-detail";
 import { openLocalCatalog } from "./src/local-catalog";
 import { openLocalDiary } from "./src/local-diary";
 import { openLocalPackagedCache } from "./src/local-packaged-cache";
+import { type MealTemplateOption, mealTemplateOptions } from "./src/meal-template-form";
 import { ProgressScreen } from "./src/progress";
 import { type ProgressRange, recentWeightEnd, weightWindowStart } from "./src/progress-data";
 import { RecipeEditor } from "./src/recipe-editor";
 import { RecipeList } from "./src/recipe-list";
+import { SavedMealEditor, SavedMealList } from "./src/saved-meals";
 import { SearchScreen } from "./src/search";
 import { appLocale, type Language, strings } from "./src/strings";
 import { TargetsScreen } from "./src/targets-screen";
@@ -61,6 +69,7 @@ type Route =
   | { kind: "progress" }
   | { kind: "weigh-in" }
   | { kind: "targets" }
+  | { kind: "save-meal-template"; day: string; templateId: string; options: MealTemplateOption[] }
   | ({ kind: "search" } & SearchContext)
   | ({ kind: "barcode"; state: BarcodeState } & SearchContext)
   | ({ kind: "my-foods" } & SearchContext)
@@ -159,7 +168,10 @@ function DiaryApp({
   const [progressRange, setProgressRange] = useState<ProgressRange>(30);
   const [savedWeightDay, setSavedWeightDay] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const [feedback, setFeedback] = useState<{ day: string; kind: "saved" | "updated" } | null>(null);
+  const [feedback, setFeedback] = useState<{
+    day: string;
+    kind: "saved" | "updated" | "loggedMealTemplateSaved";
+  } | null>(null);
   const catalog = useDatabase(openLocalCatalog, false);
   const packagedCache = useDatabase(openLocalPackagedCache, false);
   const t = strings[language];
@@ -270,6 +282,14 @@ function DiaryApp({
             setRoute({ kind: "edit", day: meal.localDay, mealId, itemId, item });
           }
         }}
+        onSaveMeal={(meal) =>
+          setRoute({
+            kind: "save-meal-template",
+            day: meal.localDay,
+            templateId: randomUUID(),
+            options: mealTemplateOptions(meal, meals ?? []),
+          })
+        }
         onRetry={() => setRefresh((revision) => revision + 1)}
       />
     );
@@ -338,6 +358,22 @@ function DiaryApp({
   }
 
   const date = showDay(route.day, locale, today);
+  if (route.kind === "save-meal-template") {
+    return (
+      <SavedMealEditor
+        t={t}
+        locale={locale}
+        date={date}
+        options={route.options}
+        onBack={goBack}
+        onSave={(template) => {
+          diary.saveMealTemplate({ ...template, id: route.templateId });
+          setFeedback({ day: route.day, kind: "loggedMealTemplateSaved" });
+          setRoute({ kind: "diary" });
+        }}
+      />
+    );
+  }
   const cachedProducts = packagedCache.value === "error" ? null : packagedCache.value?.cache;
   function setFavorite(id: FoodId, enabled: boolean) {
     diary.setFavorite(id, enabled);
@@ -380,6 +416,12 @@ function DiaryApp({
     } catch {
       // An unavailable recipe collection should leave custom foods usable.
     }
+    let templates: SavedMealTemplate[] | null = null;
+    try {
+      templates = diary.listMealTemplates();
+    } catch {
+      // An unavailable template collection should leave other library items usable.
+    }
     return (
       <CustomFoodList
         t={t}
@@ -410,6 +452,31 @@ function DiaryApp({
               }}
             />
           ) : undefined
+        }
+        savedMeals={
+          <SavedMealList
+            t={t}
+            locale={locale}
+            templates={templates}
+            onRetry={() => setRefresh((revision) => revision + 1)}
+            onLog={(template) => {
+              const meal = mealFromTemplate(
+                template,
+                {
+                  id: randomUUID(),
+                  localDay: route.day,
+                  occurredAt: route.occurredAt,
+                  utcOffsetMinutes: route.utcOffsetMinutes,
+                },
+                randomUUID,
+              );
+              diary.saveMeal(meal);
+              setSelectedDay(meal.localDay === localDay(new Date()) ? null : meal.localDay);
+              setFeedback({ day: meal.localDay, kind: "saved" });
+              setRefresh((revision) => revision + 1);
+              setRoute({ kind: "diary" });
+            }}
+          />
         }
         recipes={
           <RecipeList
