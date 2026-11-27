@@ -8,6 +8,7 @@ import { openDiary } from "@edo/storage";
 import { expect, test } from "vitest";
 import { type CatalogDatabase, searchBls } from "../src/catalog";
 import {
+  diaryDayLimit,
   entryTime,
   localDay,
   mondayOf,
@@ -100,6 +101,26 @@ test("searches both BLS name columns offline and localizes the displayed food na
   ]);
   await expect(searchBls(catalog, 'zzedounmatched OR "apple"*', "en")).resolves.toEqual([]);
   await expect(searchBls(catalog, '"*-!', "de")).resolves.toEqual([]);
+});
+
+test("keeps a saved day reachable when the device calendar moves back a week boundary", async () => {
+  using database = new DatabaseSync(":memory:");
+  const diary = await diaryConnection(database);
+  const today = "2026-11-29";
+  expect(diaryDayLimit(diary, today)).toBe(today);
+
+  const loggedDay = "2026-11-30";
+  diary.saveMeal({
+    id: "tokyo-breakfast",
+    localDay: loggedDay,
+    occurredAt: Date.parse("2026-11-29T15:15:00Z"),
+    utcOffsetMinutes: 540,
+    items: [],
+  });
+  expect(mondayOf(diaryDayLimit(diary, today))).toBe(loggedDay);
+  expect(diary.listMeals(diaryDayLimit(diary, today))[0]?.id).toBe("tokyo-breakfast");
+  diary.deleteMeal("tokyo-breakfast");
+  expect(diaryDayLimit(diary, today)).toBe(today);
 });
 
 test("logs a past day, switches the default date at midnight and edits a reopened snapshot", async () => {
@@ -239,6 +260,12 @@ test("keeps the historical day and the captured clock time across time zones", (
         assert.equal(showTime({ occurredAt, utcOffsetMinutes: 60 }, "de-DE"), "09:05");
         assert.equal(showTime({ occurredAt, utcOffsetMinutes: 0 }, "de-DE"), "08:05");
         assert.equal(showTime({ occurredAt }, "de-DE"), "06:05");
+        process.env.TZ = "Pacific/Apia";
+        const skipped = entryTime("2011-12-30", new Date(2026, 10, 27, 8));
+        assert.equal(skipped.occurredAt, Date.parse("2011-12-30T12:00:00Z"));
+        assert.equal(skipped.utcOffsetMinutes, 0);
+        process.env.TZ = "Europe/Berlin";
+        assert.equal(showTime(skipped, "de-DE"), "12:00");
       `,
     ],
     { env: { ...process.env, TZ: "America/Nuuk" } },

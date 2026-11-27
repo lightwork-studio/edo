@@ -35,6 +35,15 @@ export function mondayOf(day: string): string {
   return addDays(day, -((weekday + 6) % 7));
 }
 
+export function diaryDayLimit(diary: DiaryStore, today: string): string {
+  try {
+    const lastLoggedDay = diary.latestMealDay();
+    return lastLoggedDay && lastLoggedDay > today ? lastLoggedDay : today;
+  } catch {
+    return today;
+  }
+}
+
 export type EntryTime = { day: string; occurredAt: number; utcOffsetMinutes?: number };
 
 export function entryTime(selectedDay: string | null, now: Date): EntryTime {
@@ -51,7 +60,9 @@ export function entryTime(selectedDay: string | null, now: Date): EntryTime {
       event.setHours(12, 0, 0, 0);
       event.setFullYear(...selectedDate);
       // Some time zones skipped an entire day. Keep the chosen diary day and use UTC noon.
-      if (localDay(event) !== day) return { day, occurredAt: date.setUTCHours(12) };
+      if (localDay(event) !== day) {
+        return { day, occurredAt: date.setUTCHours(12), utcOffsetMinutes: 0 };
+      }
     }
   }
   return { day, occurredAt: event.getTime(), utcOffsetMinutes: -event.getTimezoneOffset() || 0 };

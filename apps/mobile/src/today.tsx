@@ -23,6 +23,7 @@ export function TodayScreen({
   t,
   locale,
   today,
+  lastDay,
   day,
   week,
   meals,
@@ -36,20 +37,21 @@ export function TodayScreen({
   t: Strings;
   locale: string;
   today: string;
+  lastDay: string;
   day: string;
   week: WeekDay[];
   meals: DiaryMeal[] | null;
   feedback: string | null;
   onDay: (day: string) => void;
   onWeek: (offset: number) => void;
-  onAdd: () => void;
+  onAdd?: () => void;
   onEdit: (mealId: string, itemId: string) => void;
   onRetry: () => void;
 }) {
   const nutrition = meals && totalNutrition(meals);
   const total = nutrition && roundNutritionForDisplay(nutrition);
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
-  const includesToday = week.some((entry) => entry.day === today);
+  const includesLastDay = week.some((entry) => entry.day === lastDay);
   return (
     <>
       <View style={styles.header}>
@@ -66,14 +68,14 @@ export function TodayScreen({
           label={t.nextWeek}
           glyph="›"
           onPress={() => onWeek(7)}
-          disabled={includesToday}
+          disabled={includesLastDay}
         />
       </View>
       <View style={local.week}>
         {week.map((entry) => {
           const selected = entry.day === day;
           const isToday = entry.day === today;
-          const future = entry.day > today;
+          const unavailable = entry.day > lastDay;
           const date = calendarDate(entry.day);
           const color = selected || isToday ? colors.accent : colors.border;
           const kcal = entry.kcal === null ? "—" : displayNumber(entry.kcal, locale, 0);
@@ -82,10 +84,10 @@ export function TodayScreen({
               key={entry.day}
               accessibilityRole="button"
               accessibilityLabel={`${showDay(entry.day, locale, today)}, ${entry.kcal === null ? t.unavailable : `${kcal} kcal`}`}
-              accessibilityState={{ selected, disabled: future }}
-              disabled={future}
+              accessibilityState={{ selected, disabled: unavailable }}
+              disabled={unavailable}
               onPress={() => onDay(entry.day)}
-              style={[local.day, future && styles.faded]}
+              style={[local.day, unavailable && styles.faded]}
             >
               <Text style={[styles.meta, isToday && styles.actionText]}>
                 {weekday.format(date)}
@@ -96,7 +98,7 @@ export function TodayScreen({
                 </Text>
               </Ring>
               <Text style={local.dayTotal} numberOfLines={1}>
-                {future ? " " : kcal}
+                {unavailable ? " " : kcal}
               </Text>
             </Pressable>
           );
@@ -191,9 +193,11 @@ export function TodayScreen({
           </>
         )}
       </ScrollView>
-      <View style={styles.footer}>
-        <PrimaryButton title={`+  ${t.addFood}`} onPress={onAdd} />
-      </View>
+      {onAdd && (
+        <View style={styles.footer}>
+          <PrimaryButton title={`+  ${t.addFood}`} onPress={onAdd} />
+        </View>
+      )}
     </>
   );
 }

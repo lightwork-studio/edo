@@ -24,6 +24,7 @@ export interface DiaryStore {
   deleteMeal(id: string): void;
   getMeal(id: string): DiaryMeal | null;
   listMeals(localDay: string): DiaryMeal[];
+  latestMealDay(): string | null;
 }
 
 export interface OpenDiaryOptions {
@@ -184,5 +185,10 @@ export async function openDiary({
           ),
         ),
       ),
+    latestMealDay: () =>
+      inCurrentDiary(db, "BEGIN", () => {
+        const row = db.get("SELECT local_day FROM diary_meals ORDER BY local_day DESC LIMIT 1");
+        return row ? readDay(row.local_day) : null;
+      }),
   };
 }

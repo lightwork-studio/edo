@@ -13,6 +13,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
   addDays,
+  diaryDayLimit,
   type EntryTime,
   entryTime,
   localDay,
@@ -114,17 +115,19 @@ function DiaryApp({
   const [feedback, setFeedback] = useState<{ day: string; kind: "saved" | "updated" } | null>(null);
   const catalog = useDatabase(openLocalCatalog, false);
   const t = strings[language];
-  const day = selectedDay && selectedDay <= today ? selectedDay : today;
-  const monday = mondayOf(day);
   const { diary } = connection;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A committed write or retry invalidates the SQLite read.
+  const lastDay = useMemo(() => diaryDayLimit(diary, today), [diary, today, refresh]);
+  const day = selectedDay && selectedDay <= lastDay ? selectedDay : today;
+  const monday = mondayOf(day);
   // biome-ignore lint/correctness/useExhaustiveDependencies: A committed write or retry invalidates the SQLite read.
   const week = useMemo(() => {
     return Array.from({ length: 7 }, (_, index) => {
       const date = addDays(monday, index);
-      const meals = date > today ? null : readMeals(diary, date);
+      const meals = date > lastDay ? null : readMeals(diary, date);
       return { day: date, meals, kcal: meals ? (totalNutrition(meals)?.kcal ?? null) : null };
     });
-  }, [diary, monday, today, refresh]);
+  }, [diary, monday, lastDay, refresh]);
   const meals = week.find((entry) => entry.day === day)?.meals ?? null;
 
   function goBack() {
@@ -155,6 +158,7 @@ function DiaryApp({
         t={t}
         locale={locale}
         today={today}
+        lastDay={lastDay}
         day={day}
         week={week}
         meals={meals}
@@ -162,13 +166,18 @@ function DiaryApp({
         onDay={chooseDay}
         onWeek={(offset) => {
           const next = addDays(day, offset);
-          chooseDay(next > today ? today : next);
+          const withinDiary = next <= lastDay;
+          chooseDay(withinDiary ? next : lastDay);
         }}
-        onAdd={() => {
-          catalog.start();
-          setFeedback(null);
-          setRoute({ kind: "search", ...entryTime(selectedDay, new Date()), query: "" });
-        }}
+        onAdd={
+          day <= today
+            ? () => {
+                catalog.start();
+                setFeedback(null);
+                setRoute({ kind: "search", ...entryTime(selectedDay, new Date()), query: "" });
+              }
+            : undefined
+        }
         onEdit={(mealId, itemId) => {
           const meal = meals?.find((entry) => entry.id === mealId);
           const item = meal?.items.find((entry) => entry.id === itemId);
