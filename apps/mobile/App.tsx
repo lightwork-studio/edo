@@ -396,11 +396,8 @@ function DiaryApp({
             <FavoriteFoodList
               t={t}
               ids={favorites}
-              localFoods={
-                foods === null && recipes === null
-                  ? null
-                  : [...(foods ?? []), ...(recipes ?? []).map(foodForRecipe)]
-              }
+              localFoods={foods}
+              recipeFoods={recipes?.map(foodForRecipe) ?? null}
               catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
               cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
               language={language}
@@ -461,7 +458,8 @@ function DiaryApp({
         locale={locale}
         current={route.current}
         customFoods={customFoods}
-        catalog={catalog.value === "error" ? null : (catalog.value?.db ?? null)}
+        catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
+        onCatalogRetry={catalog.retry}
         newItemId={randomUUID}
         onBack={goBack}
         onSave={(draft) => {

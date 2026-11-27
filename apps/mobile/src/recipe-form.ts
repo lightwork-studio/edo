@@ -59,6 +59,10 @@ export function recipeIngredient({ original, amount, unit }: IngredientDraft): D
   }
 }
 
+export function recipeIngredientNutrition({ food, portion }: DiaryItem) {
+  return nutritionForPortion(food.nutrition, portion);
+}
+
 export function previewRecipe(
   name: string,
   ingredients: readonly DiaryItem[],
@@ -77,9 +81,7 @@ export function previewRecipe(
     return {
       draft,
       portion: nutrition,
-      batch: sumNutrition(
-        ingredients.map(({ food, portion }) => nutritionForPortion(food.nutrition, portion)),
-      ),
+      batch: sumNutrition(ingredients.map(recipeIngredientNutrition)),
     };
   } catch (error) {
     if (!(error instanceof RangeError)) throw error;

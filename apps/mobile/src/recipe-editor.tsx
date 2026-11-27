@@ -10,6 +10,7 @@ import {
   newRecipeIngredient,
   previewRecipe,
   recipeIngredient,
+  recipeIngredientNutrition,
 } from "./recipe-form";
 import { type Language, strings } from "./strings";
 import {
@@ -88,6 +89,7 @@ export function RecipeEditor({
   current,
   customFoods,
   catalog,
+  onCatalogRetry,
   newItemId,
   onBack,
   onSave,
@@ -96,7 +98,8 @@ export function RecipeEditor({
   locale: string;
   current: Recipe | null;
   customFoods: readonly Food[];
-  catalog: CatalogDatabase | null;
+  catalog: CatalogDatabase | "error" | null;
+  onCatalogRetry: () => void;
   newItemId: () => string;
   onBack: () => void;
   onSave: (draft: Omit<Recipe, "id">) => void;
@@ -238,7 +241,7 @@ export function RecipeEditor({
               <IngredientRow
                 key={ingredient.original.id}
                 draft={ingredient}
-                kcal={items[index]?.nutrients.kcal ?? null}
+                kcal={items[index] ? recipeIngredientNutrition(items[index]).kcal : null}
                 language={language}
                 locale={locale}
                 onChange={(changes) =>
@@ -271,6 +274,7 @@ export function RecipeEditor({
         {searchOpen && (
           <IngredientSearch
             catalog={catalog}
+            onCatalogRetry={onCatalogRetry}
             customFoods={customFoods}
             language={language}
             onPick={addIngredient}
@@ -410,11 +414,13 @@ function IngredientRow({
 
 function IngredientSearch({
   catalog,
+  onCatalogRetry,
   customFoods,
   language,
   onPick,
 }: {
-  catalog: CatalogDatabase | null;
+  catalog: CatalogDatabase | "error" | null;
+  onCatalogRetry: () => void;
   customFoods: readonly Food[];
   language: Language;
   onPick: (food: Food) => void;
@@ -432,7 +438,7 @@ function IngredientSearch({
   }>();
   const term = query.trim();
   useEffect(() => {
-    if (!catalog || !term) return;
+    if (!catalog || catalog === "error" || !term) return;
     let active = true;
     const timer = setTimeout(() => {
       void searchBls(catalog, term, language).then(
@@ -490,8 +496,15 @@ function IngredientSearch({
           <Text style={styles.actionText}>+</Text>
         </Pressable>
       ))}
-      {term !== "" && !catalog && <Text style={styles.meta}>{words.catalogUnavailable}</Text>}
-      {term !== "" && catalog && bls === undefined && <Notice text={t.loading} pending />}
+      {term !== "" && catalog === "error" && (
+        <Notice
+          text={words.catalogUnavailable}
+          action={{ label: t.retry, onPress: onCatalogRetry }}
+        />
+      )}
+      {term !== "" && catalog !== "error" && bls === undefined && (
+        <Notice text={t.loading} pending />
+      )}
       {bls === null && (
         <Notice
           text={t.searchError}
@@ -548,7 +561,7 @@ const local = StyleSheet.create({
     paddingHorizontal: 8,
   },
   amountInput: {
-    width: 42,
+    width: 44,
     minHeight: 44,
     textAlign: "right",
     paddingVertical: 6,
@@ -556,7 +569,7 @@ const local = StyleSheet.create({
     color: colors.text,
     fontSize: 15,
   },
-  unit: { minHeight: 44, justifyContent: "center" },
+  unit: { minHeight: 44, minWidth: 44, justifyContent: "center", alignItems: "center" },
   units: { flexDirection: "row", justifyContent: "flex-end", gap: 8, paddingBottom: 8 },
   unitOption: {
     minHeight: 44,

@@ -11,6 +11,7 @@ export function FavoriteFoodList({
   t,
   ids,
   localFoods,
+  recipeFoods,
   catalog,
   cache,
   language,
@@ -21,6 +22,7 @@ export function FavoriteFoodList({
   t: Strings;
   ids: readonly FoodId[];
   localFoods: readonly Food[] | null;
+  recipeFoods: readonly Food[] | null;
   catalog: CatalogDatabase | "error" | null;
   cache: PackagedFoodCache | "error" | null;
   language: Language;
@@ -32,6 +34,7 @@ export function FavoriteFoodList({
   const [result, setResult] = useState<{
     ids: readonly FoodId[];
     localFoods: readonly Food[] | null;
+    recipeFoods: readonly Food[] | null;
     catalog: CatalogDatabase | "error" | null;
     cache: PackagedFoodCache | "error" | null;
     language: Language;
@@ -42,23 +45,24 @@ export function FavoriteFoodList({
     let active = true;
     void resolveFavoriteFoods({
       ids,
-      localFoods: localFoods ?? [],
+      localFoods: [...(localFoods ?? []), ...(recipeFoods ?? [])],
       catalog: catalog === "error" ? null : catalog,
       cache: cache === "error" ? null : cache,
       language,
       accessedAt: Date.now(),
     }).then((resolved) => {
-      if (active) setResult({ ids, localFoods, catalog, cache, language, resolved });
+      if (active) setResult({ ids, localFoods, recipeFoods, catalog, cache, language, resolved });
     });
     return () => {
       active = false;
     };
-  }, [ids, localFoods, catalog, cache, language]);
+  }, [ids, localFoods, recipeFoods, catalog, cache, language]);
 
   if (!ids.length) return null;
   const ready =
     result?.ids === ids &&
     result.localFoods === localFoods &&
+    result.recipeFoods === recipeFoods &&
     result.catalog === catalog &&
     result.cache === cache &&
     result.language === language;
@@ -77,11 +81,12 @@ export function FavoriteFoodList({
           if (!food && source === null) {
             return <Notice key={key} text={t.loading} pending />;
           }
+          const localSource = id.sourceId.startsWith("recipe:") ? recipeFoods : localFoods;
           if (
             !food &&
             (source === "error" ||
               result.resolved.failedProviders.has(id.provider) ||
-              (id.provider === "local" && localFoods === null))
+              (id.provider === "local" && localSource === null))
           ) {
             return (
               <Notice

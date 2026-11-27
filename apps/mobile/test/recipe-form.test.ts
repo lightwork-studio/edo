@@ -6,6 +6,7 @@ import {
   newRecipeIngredient,
   previewRecipe,
   recipeIngredient,
+  recipeIngredientNutrition,
 } from "../src/recipe-form.ts";
 
 const baseFood = {
@@ -101,6 +102,7 @@ it("uses the same captured food and portion for the batch and logged serving pre
   const legacy = { ...captured, nutrients: { ...captured.nutrients, kcal: 99 } };
   const preview = previewRecipe("Recipe", [legacy], 2, undefined);
   expect(preview?.draft.ingredients).toEqual([legacy]);
+  expect(recipeIngredientNutrition(legacy).kcal).toBe(captured.nutrients.kcal);
   expect(preview?.batch.kcal).toBe(captured.nutrients.kcal);
   expect(preview?.portion.nutrients.kcal).toBe((captured.nutrients.kcal ?? 0) / 2);
 });
