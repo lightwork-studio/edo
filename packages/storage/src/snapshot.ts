@@ -1,4 +1,4 @@
-import type { DiaryItem, Food, FoodNutrition, Nutrients, Portion } from "@edo/core";
+import type { DiaryItem, Food, FoodId, FoodNutrition, Nutrients, Portion } from "@edo/core";
 
 function object(value: unknown, name: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -38,6 +38,14 @@ export function readInstant(value: unknown): number {
     !Number.isFinite(new Date(value).getTime())
   ) {
     throw new TypeError("Invalid diary event time");
+  }
+  return value;
+}
+
+export function readUtcOffset(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || Math.abs(value) >= 24 * 60) {
+    throw new TypeError("Invalid diary UTC offset");
   }
   return value;
 }
@@ -100,9 +108,8 @@ function readFoodNutrition(input: unknown): FoodNutrition {
   };
 }
 
-function readFood(input: unknown): Food {
-  const { id, name, release, preparation, nutrition } = object(input, "food");
-  const { provider, sourceId } = object(id, "food ID");
+export function readFoodId(input: unknown): FoodId {
+  const { provider, sourceId } = object(input, "food ID");
   if (
     provider !== "bls" &&
     provider !== "open-food-facts" &&
@@ -111,6 +118,12 @@ function readFood(input: unknown): Food {
   ) {
     throw new TypeError("Invalid diary food provider");
   }
+  return { provider, sourceId: diaryText(sourceId, "food source ID") };
+}
+
+export function readFood(input: unknown): Food {
+  const { id, name, release, preparation, nutrition } = object(input, "food");
+  const identity = readFoodId(id);
   if (
     preparation !== "raw" &&
     preparation !== "cooked" &&
@@ -121,7 +134,7 @@ function readFood(input: unknown): Food {
     throw new TypeError("Invalid diary food preparation");
   }
   return {
-    id: { provider, sourceId: diaryText(sourceId, "food source ID") },
+    id: identity,
     name: diaryText(name, "food name"),
     release: release === null ? null : diaryText(release, "catalog release"),
     preparation,

@@ -58,6 +58,27 @@ export const diaryMigrations: readonly Migration[] = [
       CREATE INDEX diary_targets_by_day ON diary_targets (effective_day, save_order);
     `);
   },
+  (db) => {
+    db.exec(`
+      CREATE TABLE diary_custom_foods (
+        id TEXT PRIMARY KEY NOT NULL,
+        content TEXT NOT NULL CHECK (json_valid(content))
+      ) STRICT;
+      CREATE TABLE diary_recipes (
+        id TEXT PRIMARY KEY NOT NULL,
+        content TEXT NOT NULL CHECK (json_valid(content))
+      ) STRICT;
+      CREATE TABLE diary_meal_templates (
+        id TEXT PRIMARY KEY NOT NULL,
+        content TEXT NOT NULL CHECK (json_valid(content))
+      ) STRICT;
+      CREATE TABLE diary_favorites (
+        provider TEXT NOT NULL CHECK (provider IN ('bls', 'open-food-facts', 'usda', 'local')),
+        source_id TEXT NOT NULL,
+        PRIMARY KEY (provider, source_id)
+      ) WITHOUT ROWID, STRICT;
+    `);
+  },
 ];
 
 function storageVersion(db: DiarySqliteConnection): number {
@@ -145,6 +166,14 @@ async function verifyBackup(
         ? [
             "SELECT * FROM diary_weigh_ins ORDER BY id",
             "SELECT * FROM diary_targets ORDER BY save_order",
+          ]
+        : []),
+      ...(installed >= 4
+        ? [
+            "SELECT * FROM diary_custom_foods ORDER BY id",
+            "SELECT * FROM diary_recipes ORDER BY id",
+            "SELECT * FROM diary_meal_templates ORDER BY id",
+            "SELECT * FROM diary_favorites ORDER BY provider, source_id",
           ]
         : []),
     ]) {
