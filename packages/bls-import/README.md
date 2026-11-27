@@ -9,7 +9,7 @@ pnpm --filter @edo/bls-import run import /absolute/path/to/BLS_4_0_2025_DE.zip /
 The importer verifies the reviewed archive checksum and requires 7,140 foods. A successful import publishes a standalone SQLite file in `bls/artifacts` and its manifest in `bls/active.json` under the catalog root.
 
 The [mobile seed](../../apps/mobile/assets/bls.sqlite) comes from the pinned release. Its
-SHA-256 is `de6bc8954e0a020de26bcd33082d0d32b5ca5fd1efdec65eac3c0cdbf5713d7c`.
+SHA-256 is `81bb9e03b71dd5c76310aea9484032f935d39039ef084c8c6b3044a22d246b5f`.
 The seed was generated with Node.js 24.22.3 and SQLite 3.54.1.
 
 The revision, source and attribution are available in `catalog_metadata`. `food` contains the source ID, German `name`, English `alternate_name` and nutrients per 100 g edible portion. Open the file read-only and search both names with `food_search`:
@@ -27,4 +27,6 @@ LIMIT ?;
 
 Max Rubner-Institut (2025), Bundeslebensmittelschlüssel (BLS), Version 4.0. [Dataset DOI](https://doi.org/10.25826/Data20251217-134202-0) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
-Edo selects the German and English names and five published nutrient values per food. Missing or unquantified values become null, and explicitly named preparation states are extracted.
+Edo selects the German and English names and five published nutrient values per food. Missing or
+unquantified values become null. Edo uses preparation terms in the names and leaves unclear or
+conflicting cases unknown.

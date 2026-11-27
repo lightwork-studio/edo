@@ -89,12 +89,14 @@ function nutrientValue(value: unknown, code: string): number | null {
 }
 
 function preparationOf(german: string, english: string): BlsFood["preparation"] {
-  const raw = /(?:^|[\s,])roh$|\(roh\)/iu.test(german) || /(?:^|[\s,])raw$|\(raw\)/iu.test(english);
+  const raw =
+    /(?:^|[\s,])roh$|\(roh\)/iu.test(german) ||
+    /(?:^|[\s,])raw$|\(raw\)|^(?:certified )?raw milk(?:$|[\s,(])/iu.test(english);
   const cooked =
-    /(?:^|[\s,(])(?:gekocht|gegart|gedämpft|gedünstet|gegrillt|gebacken|gebraten|geröstet|frittiert)(?=$|\s*[,()]|\s+(?:in|im|mit|ohne|auf|am|bei)\b)/iu.test(
+    /(?:^|[\s,(])(?:gekocht|gegart|gedämpft|gedünstet|gegrillt|gebacken|gebraten|geröstet|frittiert|pochiert|gar\s*gezogen|gratiniert|überbacken|gebrüht)(?=$|\s*[,()]|\s+(?:in|im|mit|ohne|auf|am|bei)\b|\s+\p{L}+(?:-\p{L}+)?\s+Art\b)/iu.test(
       german,
     ) ||
-    /(?:^|[\s,(])(?:cooked|boiled|steamed|braised|grilled|baked|roasted|fried|deep-fried)(?=$|\s*[,()]|\s+(?:in|with|without|on|over|at)\b)/iu.test(
+    /(?:^|[\s,(])(?:cooked|boiled|steamed|braised|grilled|baked|roasted|fried|deep-fried|poached|gratinated|scalded)(?=$|\s*[,()]|\s+(?:in|with|without|on|over|at)\b|\s+\p{L}+(?:-\p{L}+)?\s+style\b)|^(?:fried potatoes|braised (?:beef|lamb) roast)(?:$|[\s,(])/iu.test(
       english,
     );
   if (raw === cooked) return "unknown";

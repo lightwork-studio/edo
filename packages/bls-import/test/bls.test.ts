@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { publishCatalog } from "@edo/catalog-import";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
@@ -181,6 +183,18 @@ describe("BLS 4.0 workbook import", () => {
         withNames("G", "Beispiel (roh) mit Öl", "Example (raw) with oil"),
         withNames("H", "Beispiel (gegart) mit Öl", "Example (cooked) with oil"),
         withNames("I", "Beispiel, gebacken (Ofen)", "Example, baked (oven)"),
+        withNames("J", "Lachs, pochiert", "Salmon, poached"),
+        withNames("K", "Kabeljau, gargezogen", "Cod in stock"),
+        withNames("L", "Bratkartoffeln aus rohen Kartoffeln", "Fried potatoes (of raw potatoes)"),
+        withNames("M", "Vorzugsmilch", "Certified raw milk"),
+        withNames("N", "Soße mit pochiertem Ei", "Sauce with poached egg"),
+        withNames("O", "Leber nach Berliner Art", "Liver fried Berlin style"),
+        withNames("P", "Tomaten nach provenzalischer Art", "Tomatoes baked Provencal style"),
+        withNames("Q", "Karpfen polnisch", "Carp poached Polish style"),
+        withNames("R", "Fisch, gebraten amerikanischer Art", "American fish"),
+        withNames("S", "Auster, gratiniert im Ofen", "Oyster gratinated in oven"),
+        withNames("T", "Wurst, gebrüht", "Sausage scalded"),
+        withNames("U", "Rinderbraten", "Braised beef roast"),
       ]),
     );
     const foods = await readBlsWorkbook(path, "4.0-synthetic");
@@ -192,6 +206,18 @@ describe("BLS 4.0 workbook import", () => {
       "cooked",
       "unknown",
       "raw",
+      "cooked",
+      "cooked",
+      "cooked",
+      "cooked",
+      "cooked",
+      "raw",
+      "unknown",
+      "cooked",
+      "cooked",
+      "cooked",
+      "cooked",
+      "cooked",
       "cooked",
       "cooked",
     ]);
@@ -228,6 +254,29 @@ describe("BLS 4.0 workbook import", () => {
 });
 
 describe("BLS SQLite seed", () => {
+  it("ships the reviewed release with readable bilingual search and preparation", async () => {
+    const path = fileURLToPath(new URL("../../../apps/mobile/assets/bls.sqlite", import.meta.url));
+    const bytes = await readFile(path);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      "81bb9e03b71dd5c76310aea9484032f935d39039ef084c8c6b3044a22d246b5f",
+    );
+    using db = new DatabaseSync(path, { readOnly: true });
+    expect(db.prepare("PRAGMA integrity_check").get()?.integrity_check).toBe("ok");
+    expect(db.prepare("SELECT count(*) AS n FROM food").get()?.n).toBe(7140);
+    expect(db.prepare("SELECT * FROM catalog_metadata").get()).toMatchObject({
+      provider: "bls",
+      release: "4.0-2025",
+      source_url: blsAttribution.sourceUrl,
+      license_url: blsAttribution.licenseUrl,
+    });
+    const search = db.prepare(`
+      SELECT preparation FROM food_search JOIN food ON food.rowid = food_search.rowid
+      WHERE food_search MATCH ? AND source_id = 'T410132'
+    `);
+    expect(search.get('"Lachs"*')).toMatchObject({ preparation: "cooked" });
+    expect(search.get('"Salmon"*')).toMatchObject({ preparation: "cooked" });
+  });
+
   it("reproduces its bytes and opens read-only with bilingual search and provenance", async () => {
     const source = await fixture(
       "release.zip",
