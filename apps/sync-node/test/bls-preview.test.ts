@@ -18,7 +18,7 @@ const realFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs
 const provider = "bls";
 const license = "https://creativecommons.org/licenses/by/4.0/";
 const source = "https://doi.org/10.25826/Data20251217-134202-0";
-const attribution = "Max Rubner-Institut";
+const attribution = "Max Rubner-Institut (2025), Bundeslebensmittelschlüssel (BLS), Version 4.0";
 const changes = "Indexed symmetric fixture labels";
 const prefix = "/catalog-preview/bls";
 let root: string;
