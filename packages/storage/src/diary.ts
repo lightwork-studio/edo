@@ -1,7 +1,15 @@
 import type { DiaryItem, DiaryMeal } from "@edo/core";
 import { type DiaryProgressStore, diaryProgress, verifyDiaryProgress } from "./diary-progress.ts";
 import { type DiaryBackup, diaryMigrations, inCurrentDiary, migrateDiary } from "./migrations.ts";
-import { decodeSnapshot, diaryId, readDay, readInstant, readSnapshot } from "./snapshot.ts";
+import { type MyFoodsStore, myFoods, verifyMyFoods } from "./my-foods.ts";
+import {
+  decodeSnapshot,
+  diaryId,
+  readDay,
+  readInstant,
+  readSnapshot,
+  readUtcOffset,
+} from "./snapshot.ts";
 import type { DiarySqliteConnection, SqlRow } from "./sqlite.ts";
 
 export type { DiaryMeal } from "@edo/core";
@@ -18,14 +26,6 @@ export interface OpenDiaryOptions {
   readonly connection: DiarySqliteConnection;
   /** Copy the diary through a separate connection and pass the preserved snapshot to verification. */
   readonly backupBeforeMigration: DiaryBackup;
-}
-
-function readUtcOffset(value: unknown): number | undefined {
-  if (value === null || value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isInteger(value) || Math.abs(value) >= 24 * 60) {
-    throw new TypeError("Invalid diary UTC offset");
-  }
-  return value;
 }
 
 const selectMeals = `
@@ -105,13 +105,15 @@ function saveMeal(db: DiarySqliteConnection, meal: DiaryMeal): void {
 export async function openDiary({
   connection: db,
   backupBeforeMigration,
-}: OpenDiaryOptions): Promise<DiaryStore & DiaryProgressStore> {
+}: OpenDiaryOptions): Promise<DiaryStore & DiaryProgressStore & MyFoodsStore> {
   await migrateDiary(db, diaryMigrations, backupBeforeMigration, (connection) => {
     readMeals(connection.all(selectMeals));
     verifyDiaryProgress(connection);
+    verifyMyFoods(connection);
   });
   return {
     ...diaryProgress(db),
+    ...myFoods(db),
     saveMeal: (meal) => saveMeal(db, meal),
     deleteMeal: (id) =>
       inCurrentDiary(db, "BEGIN IMMEDIATE", () => {

@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
-import { createDiaryItem, type Food } from "@edo/core";
+import { createDiaryItem, type Food, foodForRecipe, updateDiaryPortion } from "@edo/core";
 import {
   type DiaryMeal,
   type DiarySqliteConnection,
+  mealFromTemplate,
   type NutritionTargetRecord,
   type OpenDiaryOptions,
   openDiary,
@@ -222,9 +223,7 @@ test("migrates a version-one diary while preserving its snapshots and absent off
   expect(source.snapshots).toHaveLength(1);
 });
 
-test("upgrades a published version-two diary and can restore its verified recovery copy", async () => {
-  const current = createDatabase();
-  const { connection } = current.options;
+function initializePublishedV2(connection: DiarySqliteConnection) {
   // This is the published schema, including its identity and UTC offset field.
   connection.exec(`
     CREATE TABLE diary_meals (
@@ -246,6 +245,12 @@ test("upgrades a published version-two diary and can restore its verified recove
     PRAGMA application_id = 1162104644;
     PRAGMA user_version = 2;
   `);
+}
+
+test("upgrades a published version-two diary and can restore its verified recovery copy", async () => {
+  const current = createDatabase();
+  const { connection } = current.options;
+  initializePublishedV2(connection);
   const fallBack = [
     {
       ...meal,
@@ -284,7 +289,7 @@ test("upgrades a published version-two diary and can restore its verified recove
   );
 
   const upgraded = await current.start();
-  expect(connection.get("PRAGMA user_version")?.user_version).toBe(3);
+  expect(connection.get("PRAGMA user_version")?.user_version).toBe(currentVersion);
   expect(upgraded.getMeal(meal.id)).toEqual(meal);
   expect(upgraded.listMeals("2026-11-01")).toEqual(fallBack);
   expect(upgraded.listWeighIns("2026-10-31", "2026-11-01")).toEqual([]);
@@ -301,6 +306,100 @@ test("upgrades a published version-two diary and can restore its verified recove
   const restored = await createDatabase("restored-v2.db").start();
   expect(restored.getMeal(meal.id)).toEqual(meal);
   expect(restored.listMeals("2026-11-01")).toEqual(fallBack);
+});
+
+test("upgrades and restores a version-three diary with progress and captured meal values", async () => {
+  const source = createDatabase();
+  const { connection } = source.options;
+  initializePublishedV2(connection);
+  connection.exec(`
+    CREATE TABLE diary_weigh_ins (
+      id TEXT PRIMARY KEY NOT NULL,
+      local_day TEXT NOT NULL,
+      occurred_at INTEGER NOT NULL,
+      kg REAL NOT NULL CHECK (kg > 0)
+    ) STRICT;
+    CREATE INDEX diary_weigh_ins_by_day ON diary_weigh_ins (local_day, occurred_at, id);
+    CREATE TABLE diary_targets (
+      save_order INTEGER PRIMARY KEY CHECK (save_order > 0),
+      id TEXT UNIQUE NOT NULL,
+      effective_day TEXT NOT NULL,
+      configured_at INTEGER NOT NULL,
+      mode TEXT NOT NULL CHECK (mode IN ('manual', 'calculated')),
+      kcal REAL NOT NULL CHECK (kcal > 0),
+      protein_g REAL NOT NULL CHECK (protein_g >= 0),
+      fat_g REAL NOT NULL CHECK (fat_g >= 0),
+      carbohydrate_g REAL NOT NULL CHECK (carbohydrate_g >= 0)
+    ) STRICT;
+    CREATE INDEX diary_targets_by_day ON diary_targets (effective_day, save_order);
+    PRAGMA user_version = 3;
+  `);
+  const captured = { ...meal, utcOffsetMinutes: -300 };
+  connection.run(
+    "INSERT INTO diary_meals VALUES (?, ?, ?, ?)",
+    captured.id,
+    captured.localDay,
+    captured.occurredAt,
+    captured.utcOffsetMinutes,
+  );
+  const [item] = captured.items;
+  if (!item) throw new Error("Expected a captured meal item");
+  const { id, ...snapshot } = item;
+  connection.run(
+    "INSERT INTO diary_items VALUES (?, ?, 0, ?)",
+    id,
+    meal.id,
+    JSON.stringify(snapshot),
+  );
+  connection.run(
+    "INSERT INTO diary_weigh_ins VALUES (?, ?, ?, ?)",
+    weighIn.id,
+    weighIn.localDay,
+    weighIn.occurredAt,
+    weighIn.kg,
+  );
+  for (const record of [target, revisedTarget]) {
+    connection.run(
+      "INSERT INTO diary_targets VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+      record.id,
+      record.effectiveDay,
+      record.configuredAt,
+      record.mode,
+      record.target.kcal,
+      record.target.proteinG,
+      record.target.fatG,
+      record.target.availableCarbohydratesG,
+    );
+  }
+  const interrupted = {
+    ...connection,
+    exec(sql: string) {
+      connection.exec(sql);
+      if (sql.includes("CREATE TABLE diary_custom_foods")) throw new Error("Interrupted upgrade");
+    },
+  };
+  await expect(openDiary({ ...source.options, connection: interrupted })).rejects.toThrow(
+    /interrupted upgrade/i,
+  );
+  expect(connection.get("PRAGMA user_version")?.user_version).toBe(3);
+  expect(
+    connection.get("SELECT name FROM sqlite_schema WHERE name = 'diary_custom_foods'"),
+  ).toBeUndefined();
+  const recovery = source.snapshots[0];
+  if (!recovery) throw new Error("Expected a verified version-three copy");
+  using original = new DatabaseSync(recovery, { readOnly: true });
+  expect(original.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+  await backup(original, join(directory, "restored-v3.db"));
+
+  for (const diary of [await source.start(), await createDatabase("restored-v3.db").start()]) {
+    expect(diary.getMeal(meal.id)).toEqual(captured);
+    expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([weighIn]);
+    expect(diary.nutritionTargetAt(revisedTarget.effectiveDay)).toEqual(revisedTarget);
+    expect(diary.listCustomFoods()).toEqual([]);
+    expect(diary.listRecipes()).toEqual([]);
+    expect(diary.listMealTemplates()).toEqual([]);
+    expect(diary.listFavorites()).toEqual([]);
+  }
 });
 
 test("saves offline weigh-ins and preserves effective target revisions in save order", async () => {
@@ -351,7 +450,7 @@ test("rejects a new target with an inconsistent energy budget", async () => {
 });
 
 test.each(["weigh-in", "target", "save order"] as const)(
-  "rejects a version-three backup with different progress %s values",
+  "rejects a current backup with different progress %s values",
   async (difference) => {
     const source = createDatabase();
     const current = await source.start();
@@ -375,13 +474,137 @@ test.each(["weigh-in", "target", "save order"] as const)(
         () => {},
       ),
     ).rejects.toThrow(/backup does not match/i);
-    expect(source.options.connection.get("PRAGMA user_version")?.user_version).toBe(3);
+    expect(source.options.connection.get("PRAGMA user_version")?.user_version).toBe(currentVersion);
     expect(current.listWeighIns("2026-10-31", "2026-10-31")).toEqual([weighIn]);
     expect(current.nutritionTargetAt("2026-10-31")).toEqual(revisedTarget);
   },
 );
 
-test.each([1, 2, currentVersion])(
+test("keeps recipe ingredients and logged portions after editing and deleting a custom food", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const custom: Food = {
+    ...sourceFood,
+    id: { provider: "local", sourceId: "custom-mix" },
+    name: "Synthetic mix",
+    release: null,
+  };
+  diary.saveCustomFood(custom);
+  diary.setFavorite(custom.id, true);
+  diary.setFavorite(sourceFood.id, true);
+  diary.setFavorite(sourceFood.id, true);
+  const ingredient = createDiaryItem("ingredient-mix", custom, { amount: 100, unit: "ml" });
+  const recipe = {
+    id: "recipe-mix",
+    name: "Synthetic recipe",
+    ingredients: [ingredient],
+    servings: 2,
+    cookedWeightG: 240,
+  };
+  diary.saveRecipe(recipe);
+  const logged = createDiaryItem("logged-recipe", foodForRecipe(recipe), {
+    amount: 120,
+    unit: "g",
+  });
+  expect(logged.nutrients.kcal).toBe(40);
+  diary.saveMeal({ ...meal, items: [logged] });
+  const edited = {
+    ...recipe,
+    ingredients: [updateDiaryPortion(ingredient, { amount: 200, unit: "ml" })],
+  };
+  diary.saveRecipe(edited);
+  diary.deleteCustomFood(custom.id.sourceId);
+  diary.deleteCustomFood(custom.id.sourceId);
+  source.db.close();
+
+  const reopened = await createDatabase().start();
+  expect(reopened.listCustomFoods()).toEqual([]);
+  expect(reopened.listFavorites()).toEqual([sourceFood.id]);
+  expect(reopened.listRecipes()).toEqual([edited]);
+  expect(foodForRecipe(edited).nutrition.nutrients.kcal).toBe(80);
+  expect(reopened.getMeal(meal.id)?.items[0]).toEqual(logged);
+});
+
+test("repeats a saved meal with fresh IDs, its new captured offset, and the original portions", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const template = { id: "saved-meal", name: "Synthetic lunch", items: meal.items };
+  const original = meal.items[0];
+  if (!original) throw new Error("The test fixture needs a diary item");
+  const incomplete: DiaryMeal["items"] = new Array(2);
+  expect(() => diary.saveMealTemplate({ ...template, items: incomplete })).toThrow(/record/);
+  diary.saveMealTemplate(template);
+  const saved = diary.listMealTemplates()[0];
+  if (!saved) throw new Error("Expected a saved meal template");
+  expect(saved).toEqual(template);
+  const entry = {
+    id: "repeated-meal",
+    localDay: "2026-11-05",
+    occurredAt: Date.parse("2026-11-06T04:30:00Z"),
+    utcOffsetMinutes: -300,
+  };
+  expect(() => mealFromTemplate(saved, entry, () => original.id)).toThrow(/fresh item IDs/);
+  expect(() =>
+    mealFromTemplate(saved, { ...entry, utcOffsetMinutes: Infinity }, () => "new-item"),
+  ).toThrow(/UTC offset/);
+  const repeated = mealFromTemplate(saved, entry, () => "new-item");
+  diary.saveMeal(repeated);
+  diary.saveMeal(repeated);
+  source.db.close();
+  const reopened = await createDatabase().start();
+  expect(reopened.listMeals(entry.localDay)).toEqual([
+    { ...entry, items: [{ ...original, id: "new-item" }] },
+  ]);
+  expect(reopened.listMealTemplates()).toEqual([template]);
+});
+
+test.each(["custom food", "recipe", "template", "favorite"] as const)(
+  "rejects a verified-shape backup with a different %s",
+  async (difference) => {
+    const source = createDatabase();
+    const older = createDatabase("older-library.db");
+    const current = await source.start();
+    const stale = await older.start();
+    const food: Food = {
+      ...sourceFood,
+      id: { provider: "local", sourceId: "backup-food" },
+      release: null,
+    };
+    const recipe = {
+      id: "backup-recipe",
+      name: "Synthetic recipe",
+      ingredients: meal.items,
+      servings: 2,
+    };
+    const template = { id: "backup-meal", name: "Synthetic meal", items: meal.items };
+    current.saveCustomFood(food);
+    current.saveRecipe(recipe);
+    current.saveMealTemplate(template);
+    current.setFavorite(sourceFood.id, true);
+    stale.saveCustomFood(difference === "custom food" ? { ...food, name: "Old name" } : food);
+    stale.saveRecipe(difference === "recipe" ? { ...recipe, servings: 1 } : recipe);
+    stale.saveMealTemplate(
+      difference === "template" ? { ...template, name: "Old meal" } : template,
+    );
+    stale.setFavorite(difference === "favorite" ? food.id : sourceFood.id, true);
+
+    await expect(
+      migrateDiary(
+        source.options.connection,
+        [...diaryMigrations, (db) => db.exec("ALTER TABLE diary_meals ADD COLUMN memo TEXT")],
+        async (_version, verify) => verify(older.options.connection),
+        () => {},
+      ),
+    ).rejects.toThrow(/backup does not match/i);
+    expect(source.options.connection.get("PRAGMA user_version")?.user_version).toBe(currentVersion);
+    expect(current.listCustomFoods()).toEqual([food]);
+    expect(current.listRecipes()).toEqual([recipe]);
+    expect(current.listMealTemplates()).toEqual([template]);
+    expect(current.listFavorites()).toEqual([sourceFood.id]);
+  },
+);
+
+test.each([1, 2, 3, currentVersion])(
   "rejects a version-%i catalog at the diary open boundary",
   async (version) => {
     const source = createDatabase();
