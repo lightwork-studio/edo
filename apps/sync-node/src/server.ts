@@ -17,7 +17,12 @@ export function createHealthServer({
       return;
     }
 
-    if (catalogRoot && (await serveCatalogAssets(catalogRoot, request, response))) return;
+    if (
+      catalogRoot &&
+      (await serveCatalogAssets(catalogRoot, request, response, off?.servedRelease()))
+    ) {
+      return;
+    }
     if (off && (await off.serveBarcode(request, response))) return;
     response.writeHead(404).end();
   });

@@ -129,7 +129,11 @@ async function readRelease(
   return { body, manifest, digest: actual };
 }
 
-async function resolveReleases(root: string, asset: Asset): Promise<Release[]> {
+async function resolveReleases(
+  root: string,
+  asset: Asset,
+  servedOffRelease?: string,
+): Promise<Release[]> {
   const { provider } = asset;
   if (asset.kind === "active") {
     const active = await readRelease(root, provider);
@@ -138,11 +142,11 @@ async function resolveReleases(root: string, asset: Asset): Promise<Release[]> {
       throw new Error("Catalog activation differs from its release");
     return [active];
   }
-  const published = await listPublishedCatalogReleases(root, provider);
+  const published = new Set(await listPublishedCatalogReleases(root, provider));
+  // A running reader can still serve a verified catalog whose legacy pointer was damaged.
+  if (provider === "open-food-facts" && servedOffRelease) published.add(servedOffRelease);
   if (asset.kind === "release") {
-    return published.includes(asset.digest)
-      ? [await readRelease(root, provider, asset.digest)]
-      : [];
+    return published.has(asset.digest) ? [await readRelease(root, provider, asset.digest)] : [];
   }
   const matches: Release[] = [];
   for (const release of published) {
@@ -216,6 +220,7 @@ export async function serveCatalogAssets(
   root: string,
   request: IncomingMessage,
   response: ServerResponse,
+  servedOffRelease?: string,
 ): Promise<boolean> {
   if (request.method !== "GET" && request.method !== "HEAD") return false;
   const asset = assetAt(request.url?.split("?", 1)[0] ?? "");
@@ -234,7 +239,7 @@ export async function serveCatalogAssets(
   };
   let scratch: string | undefined;
   try {
-    const releases = await resolveReleases(root, asset);
+    const releases = await resolveReleases(root, asset, servedOffRelease);
     let [release] = releases;
     if (!release) {
       response.writeHead(404).end();

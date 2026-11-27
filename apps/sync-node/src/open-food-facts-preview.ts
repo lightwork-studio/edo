@@ -14,7 +14,9 @@ const statuses: Record<BarcodeLookupResult["status"], number> = {
 
 export function createOpenFoodFactsPreview(root: string, useLiveLookup: boolean) {
   const lookup = createBarcodeLookup(root, useLiveLookup ? {} : { liveLookup: null });
+  let servedCatalogRelease: string | undefined;
   return {
+    servedRelease: () => servedCatalogRelease,
     async serveBarcode(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
       const path = request.url?.split("?", 1)[0] ?? "";
       if (request.method !== "GET" || !path.startsWith(barcodePath)) return false;
@@ -22,6 +24,9 @@ export function createOpenFoodFactsPreview(root: string, useLiveLookup: boolean)
       const result: BarcodeLookupResult = /^\d{4,64}$/.test(code)
         ? await lookup.lookupBarcode(code)
         : { status: "invalid" };
+      if (result.status === "found" && result.source === "catalog") {
+        servedCatalogRelease = result.releaseManifestSha256;
+      }
       const body = JSON.stringify({
         ...result,
         attribution: {

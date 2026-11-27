@@ -39,6 +39,7 @@ it("links barcode products to the exact verified release and exposes its ODbL ar
   try {
     const firstLabel = "archive-".repeat(2_048);
     const first = await publish(root, firstLabel, "Haferdrink");
+    await rm(join(root, first.provider, "published"), { recursive: true });
     const firstBytes = await readFile(pointer);
     const firstRelease = sha256(firstBytes);
     server.listen(0, "127.0.0.1");
@@ -80,6 +81,16 @@ it("links barcode products to the exact verified release and exposes its ODbL ar
     expect(download.status).toBe(200);
     expect(sha256(Buffer.from(await download.arrayBuffer()))).toBe(first.artifact.sha256);
     expect((await localFetch(`${endpoint}/catalog-preview/bls/${artifactPath}`)).status).toBe(404);
+
+    await writeFile(pointer, "damaged pre-receipt activation");
+    expect((await get("active.json")).status).toBe(503);
+    expect(await (await get(`barcodes/${code}`)).json()).toMatchObject({
+      releaseManifestSha256: firstRelease,
+      attribution: { catalog: `${prefix}/releases/${firstRelease}.json` },
+    });
+    expect((await get(`releases/${firstRelease}.json`)).status).toBe(200);
+    expect((await get(artifactPath, { method: "HEAD" })).status).toBe(200);
+    await writeFile(pointer, firstBytes);
 
     await publish(root, "second", "Neue Packung");
     const secondRelease = sha256(await readFile(pointer));
