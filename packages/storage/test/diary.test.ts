@@ -330,6 +330,26 @@ test("saves offline weigh-ins and preserves effective target revisions in save o
   expect(reopened.nutritionTargetAt("2026-11-01")).toEqual(revisedTarget);
 });
 
+test("rejects a new target with an inconsistent energy budget", async () => {
+  const diary = await createDatabase().start();
+  diary.saveNutritionTarget(target);
+  expect(() =>
+    diary.saveNutritionTarget({
+      ...revisedTarget,
+      target: { ...revisedTarget.target, kcal: 1 },
+    }),
+  ).toThrow(/protein and fat exceed/i);
+  expect(() =>
+    diary.saveNutritionTarget({
+      ...revisedTarget,
+      target: { ...revisedTarget.target, availableCarbohydratesG: 1 },
+    }),
+  ).toThrow(/carbohydrate target/i);
+  expect(diary.nutritionTargetAt(revisedTarget.effectiveDay)).toEqual(target);
+  diary.saveNutritionTarget(revisedTarget);
+  expect(diary.nutritionTargetAt(revisedTarget.effectiveDay)).toEqual(revisedTarget);
+});
+
 test.each(["weigh-in", "target", "save order"] as const)(
   "rejects a version-three backup with different progress %s values",
   async (difference) => {

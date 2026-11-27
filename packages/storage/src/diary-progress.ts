@@ -1,4 +1,4 @@
-import type { DailyNutritionTarget, WeighIn } from "@edo/core";
+import { type DailyNutritionTarget, manualNutritionTarget, type WeighIn } from "@edo/core";
 import { inCurrentDiary } from "./migrations.ts";
 import { diaryId, readDay, readInstant } from "./snapshot.ts";
 import type { DiarySqliteConnection, SqlRow } from "./sqlite.ts";
@@ -13,6 +13,7 @@ export interface NutritionTargetRecord {
 }
 
 export interface DiaryProgressStore {
+  /** Replace the current local reading by ID. Delayed writes need a revision check first. */
   saveWeighIn(entry: WeighIn): void;
   listWeighIns(from: string, through: string): WeighIn[];
   /** Save a new revision. An exact retry preserves the existing save order. */
@@ -121,6 +122,10 @@ export function diaryProgress(db: DiarySqliteConnection): DiaryProgressStore {
         if (existing) {
           if (JSON.stringify(readNutritionTarget(existing)) === JSON.stringify(record)) return;
           throw new Error("Changing a nutrition target requires a new revision ID");
+        }
+        const expected = manualNutritionTarget(record.target);
+        if (record.target.availableCarbohydratesG !== expected.availableCarbohydratesG) {
+          throw new RangeError("Carbohydrate target must fill the remaining energy budget");
         }
         db.run(
           `INSERT INTO diary_targets (
