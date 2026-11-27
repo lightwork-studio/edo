@@ -1,6 +1,7 @@
 import { createDiaryItem, type Food, type WeighIn } from "@edo/core";
 import { expect, it } from "vitest";
 import {
+  latestWeightReadings,
   progressSummary,
   validWeighInDay,
   weightPoints,
@@ -121,4 +122,16 @@ it("keeps a reading visible after crossing the date line without moving today's 
   );
   expect(summary.latestWeight).toEqual(afterTravel);
   expect(summary.points.at(-1)).toEqual({ day: today, measured: prior, averageKg: 81 });
+  const recordedLater = {
+    ...prior,
+    id: "after-travel",
+    occurredAt: Date.parse("2026-11-28T10:45:00Z"),
+    kg: 79,
+  };
+  expect(latestWeightReadings([earlier, prior, recordedLater, afterTravel])).toEqual([
+    recordedLater,
+    afterTravel,
+    prior,
+    earlier,
+  ]);
 });

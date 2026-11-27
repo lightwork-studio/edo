@@ -3,7 +3,7 @@ import { randomUUID } from "expo-crypto";
 import { useRef, useState } from "react";
 import { Keyboard, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { calendarDate, entryTime, localDay, readAmount } from "./diary-view";
-import { validWeighInDay } from "./progress-data";
+import { latestWeightReadings, validWeighInDay } from "./progress-data";
 import type { Strings } from "./strings";
 import {
   colors,
@@ -40,7 +40,7 @@ export function WeighInScreen({
   const lastAttempt = useRef<WeighIn | null>(null);
   const selected = validWeighInDay(day, today);
   const kg = readAmount(value);
-  const recentEntries = recent.slice(-5).reverse();
+  const recentEntries = latestWeightReadings(recent).slice(0, 5);
   const dateLabel = new Intl.DateTimeFormat(locale, {
     weekday: "short",
     month: "short",
@@ -59,7 +59,7 @@ export function WeighInScreen({
       : null;
 
   function adjust(by: number) {
-    const baseline = kg ?? recent.at(-1)?.kg;
+    const baseline = kg ?? recentEntries[0]?.kg;
     if (baseline === undefined) return;
     const next = Math.round((baseline + by) * 10) / 10;
     if (next > 0) {

@@ -20,6 +20,14 @@ export function recentWeightEnd(today: string): string {
   return addDays(today, 2);
 }
 
+export function latestWeightReadings(weighIns: readonly WeighIn[]): WeighIn[] {
+  return [...weighIns].sort((left, right) => {
+    if (left.occurredAt !== right.occurredAt) return right.occurredAt - left.occurredAt;
+    if (left.id === right.id) return 0;
+    return left.id < right.id ? 1 : -1;
+  });
+}
+
 export function weightPoints(
   today: string,
   days: ProgressRange,
@@ -87,7 +95,7 @@ export function progressSummary(
   return {
     days,
     points: weightPoints(today, range, weights),
-    latestWeight: weights.at(-1) ?? null,
+    latestWeight: latestWeightReadings(weights)[0] ?? null,
     averageCalories: mean("kcal"),
     averageMacros: {
       proteinG: mean("proteinG"),
