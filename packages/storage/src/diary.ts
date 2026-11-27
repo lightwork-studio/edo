@@ -1,12 +1,8 @@
 import type { DiaryItem, DiaryMeal } from "@edo/core";
-import {
-  type DiaryBackup,
-  diaryMigrations,
-  migrateDiary,
-  requireCurrentDiaryVersion,
-} from "./migrations.ts";
-import { decodeSnapshot, diaryId, readSnapshot } from "./snapshot.ts";
-import { type DiarySqliteConnection, rollback, type SqlRow } from "./sqlite.ts";
+import { type DiaryProgressStore, diaryProgress, verifyDiaryProgress } from "./diary-progress.ts";
+import { type DiaryBackup, diaryMigrations, inCurrentDiary, migrateDiary } from "./migrations.ts";
+import { decodeSnapshot, diaryId, readDay, readInstant, readSnapshot } from "./snapshot.ts";
+import type { DiarySqliteConnection, SqlRow } from "./sqlite.ts";
 
 export type { DiaryMeal } from "@edo/core";
 
@@ -22,25 +18,6 @@ export interface OpenDiaryOptions {
   readonly connection: DiarySqliteConnection;
   /** Copy the diary through a separate connection and pass the preserved snapshot to verification. */
   readonly backupBeforeMigration: DiaryBackup;
-}
-
-function readDay(day: unknown): string {
-  if (typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    const date = new Date(`${day}T00:00:00.000Z`);
-    if (Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === day) return day;
-  }
-  throw new TypeError("Invalid diary calendar day");
-}
-
-function readInstant(value: unknown): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    !Number.isFinite(new Date(value).getTime())
-  ) {
-    throw new TypeError("Invalid diary event time");
-  }
-  return value;
 }
 
 function readUtcOffset(value: unknown): number | undefined {
@@ -82,22 +59,6 @@ function readMeals(rows: SqlRow[]): DiaryMeal[] {
     }
   }
   return [...meals.values()];
-}
-
-function inCurrentDiary<T>(
-  db: DiarySqliteConnection,
-  begin: "BEGIN" | "BEGIN IMMEDIATE",
-  operation: () => T,
-): T {
-  db.exec(begin);
-  try {
-    requireCurrentDiaryVersion(db);
-    const result = operation();
-    db.exec("COMMIT");
-    return result;
-  } catch (error) {
-    return rollback(db, error);
-  }
 }
 
 function saveMeal(db: DiarySqliteConnection, meal: DiaryMeal): void {
@@ -144,11 +105,13 @@ function saveMeal(db: DiarySqliteConnection, meal: DiaryMeal): void {
 export async function openDiary({
   connection: db,
   backupBeforeMigration,
-}: OpenDiaryOptions): Promise<DiaryStore> {
+}: OpenDiaryOptions): Promise<DiaryStore & DiaryProgressStore> {
   await migrateDiary(db, diaryMigrations, backupBeforeMigration, (connection) => {
     readMeals(connection.all(selectMeals));
+    verifyDiaryProgress(connection);
   });
   return {
+    ...diaryProgress(db),
     saveMeal: (meal) => saveMeal(db, meal),
     deleteMeal: (id) =>
       inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
