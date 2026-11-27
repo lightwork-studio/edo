@@ -1,18 +1,16 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, readFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import type { CatalogManifest } from "@edo/catalog-import";
-import {
-  type FoodNutrition,
-  type MeasuredPortion,
-  type PackagedFood,
-  sanitizePackagedNutrition,
-} from "@edo/core";
+import type { PackagedFood } from "@edo/core";
+import { barcodeRows, readProduct } from "./catalog-row.ts";
+import { copyVerifiedCatalog, validateCatalogSnapshot } from "./catalog-snapshot.ts";
 import { normalizeLookupCode } from "./format.ts";
 import { createOpenFoodFactsLiveLookup, type LiveBarcodeResult } from "./live-lookup.ts";
-import { compatibleOpenFoodFactsManifest, matchesOpenFoodFactsDatabase } from "./publish.ts";
+import { compatibleOpenFoodFactsManifest } from "./publish.ts";
 
 export type BarcodeProduct = PackagedFood;
 
@@ -49,68 +47,14 @@ export interface BarcodeLookupOptions {
 
 const retryAfterCatalogFailureMs = 30_000;
 
-function requiredText(value: SQLOutputValue | undefined): string {
-  if (typeof value !== "string" || value === "") throw new Error("Invalid packaged-food text");
-  return value;
-}
-
-function nutrient(value: SQLOutputValue | undefined): number | null {
-  if (value === null) return null;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new Error("Invalid packaged-food nutrient");
-  }
-  return value;
-}
-
-function nutritionForRow(row: Record<string, SQLOutputValue>): FoodNutrition | null {
-  const basis = row.nutrition_basis;
-  if (basis === null) return null;
-  if (basis !== "per-100-g" && basis !== "per-100-ml" && basis !== "per-portion") {
-    throw new Error("Unknown packaged-food nutrition basis");
-  }
-  const amount = row.portion_amount;
-  const unit = row.portion_unit;
-  const portionSize: MeasuredPortion | undefined =
-    typeof amount === "number" &&
-    Number.isFinite(amount) &&
-    amount > 0 &&
-    (unit === "g" || unit === "ml")
-      ? { amount, unit }
-      : undefined;
-  return sanitizePackagedNutrition({
-    basis,
-    nutrients: {
-      kcal: nutrient(row.kcal),
-      proteinG: nutrient(row.protein_g),
-      availableCarbohydratesG: nutrient(row.available_carbohydrates_g),
-      fatG: nutrient(row.fat_g),
-      fiberG: nutrient(row.fiber_g),
-    },
-    ...(portionSize && { portionSize }),
-  });
-}
-
-function readProduct(row: Record<string, SQLOutputValue>, release: string): BarcodeProduct {
-  const { preparation, alternate_name: alternateName } = row;
-  if (preparation !== "as-sold" && preparation !== "prepared" && preparation !== "unknown") {
-    throw new Error("Invalid packaged-food preparation");
-  }
-  return {
-    id: { provider: "open-food-facts", sourceId: requiredText(row.source_id) },
-    release,
-    barcode: requiredText(row.code),
-    name: requiredText(row.name),
-    alternateName: alternateName === null ? null : requiredText(alternateName),
-    preparation,
-    nutrition: nutritionForRow(row),
-  };
-}
-
 type ActiveManifest = { manifest: CatalogManifest; text: Buffer; sha256: string };
 
 async function readActiveManifest(providerRoot: string): Promise<ActiveManifest | null> {
   let text: Buffer;
   try {
+    if (!(await lstat(providerRoot)).isDirectory()) {
+      throw new Error("Open Food Facts provider must be a real directory");
+    }
     const active = join(providerRoot, "active.json");
     if (!(await lstat(active)).isFile()) {
       throw new Error("Open Food Facts activation must be a regular file");
@@ -131,35 +75,33 @@ async function openVerifiedCatalog(
   providerRoot: string,
   { manifest, text, sha256 }: ActiveManifest,
 ): Promise<OpenFoodFactsReader> {
-  const releasePath = join(providerRoot, "releases", `${sha256}.json`);
+  const releaseDirectory = join(providerRoot, "releases");
+  const artifactDirectory = join(providerRoot, "artifacts");
+  for (const directory of [releaseDirectory, artifactDirectory]) {
+    if (!(await lstat(directory)).isDirectory()) {
+      throw new Error("Open Food Facts catalog paths must be real directories");
+    }
+  }
+  const releasePath = join(releaseDirectory, `${sha256}.json`);
   if (!(await lstat(releasePath)).isFile()) {
     throw new Error("Open Food Facts immutable manifest must be a regular file");
   }
   const immutableManifest = await readFile(releasePath);
   if (!immutableManifest.equals(text))
     throw new Error("Open Food Facts release manifest does not match activation");
-  const file = join(providerRoot, "artifacts", `${manifest.artifact.sha256}.sqlite`);
-  if (!(await lstat(file)).isFile()) {
-    throw new Error("Open Food Facts catalog artifact must be a regular file");
-  }
-  const hash = createHash("sha256");
-  let bytes = 0;
-  for await (const chunk of createReadStream(file)) {
-    bytes += chunk.length;
-    hash.update(chunk);
-  }
-  if (bytes !== manifest.artifact.bytes || hash.digest("hex") !== manifest.artifact.sha256) {
-    throw new Error("Open Food Facts catalog does not match its checksum");
-  }
-  const db = new DatabaseSync(file, { readOnly: true });
+
+  const source = join(artifactDirectory, `${manifest.artifact.sha256}.sqlite`);
+  const scratch = await mkdtemp(join(tmpdir(), "edo-off-reader-"));
+  const snapshot = join(scratch, "catalog.sqlite");
+  let database: DatabaseSync | undefined;
   try {
+    await copyVerifiedCatalog(source, snapshot, manifest.artifact);
+    await validateCatalogSnapshot(snapshot, manifest);
+    const db = new DatabaseSync(snapshot, { readOnly: true });
+    database = db;
     const release = manifest.source.release;
-    if (!matchesOpenFoodFactsDatabase(db, manifest)) {
-      throw new Error("Open Food Facts catalog metadata does not match its manifest");
-    }
     const lookup = db.prepare(`
-      SELECT food.*, barcode.code
-      FROM barcode JOIN food USING (source_id)
+      ${barcodeRows}
       WHERE barcode.lookup_code = ?
       ORDER BY (barcode.code = ?) DESC, food.source_id
     `);
@@ -179,10 +121,20 @@ async function openVerifiedCatalog(
         if (!key) return [];
         return lookup.all(key, text).map((row) => readProduct(row, release));
       },
-      [Symbol.dispose]: () => db[Symbol.dispose](),
+      [Symbol.dispose]() {
+        try {
+          db[Symbol.dispose]();
+        } finally {
+          rmSync(scratch, { recursive: true, force: true });
+        }
+      },
     };
   } catch (error) {
-    db[Symbol.dispose]();
+    try {
+      database?.[Symbol.dispose]();
+    } finally {
+      await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+    }
     throw error;
   }
 }
