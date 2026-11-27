@@ -34,6 +34,7 @@ export function TodayScreen({
   onAdd,
   onProgress,
   onEdit,
+  onSaveMeal,
   onRetry,
 }: {
   t: Strings;
@@ -50,6 +51,7 @@ export function TodayScreen({
   onAdd?: () => void;
   onProgress: () => void;
   onEdit: (mealId: string, itemId: string) => void;
+  onSaveMeal: (meal: DiaryMeal) => void;
   onRetry: () => void;
 }) {
   const nutrition = meals && totalNutrition(meals);
@@ -168,7 +170,22 @@ export function TodayScreen({
             )}
             {meals.map((meal) => (
               <View key={meal.id} style={styles.card}>
-                <Text style={styles.meta}>{showTime(meal, locale)}</Text>
+                <View style={styles.row}>
+                  <Text style={[styles.meta, styles.stretch]}>{showTime(meal, locale)}</Text>
+                  {meal.items.length > 0 && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={t.saveMealAt(
+                        showTime(meal, locale),
+                        meal.items[0]?.food.name ?? "",
+                      )}
+                      onPress={() => onSaveMeal(meal)}
+                      style={styles.action}
+                    >
+                      <Text style={styles.actionText}>{t.saveMealTemplate}</Text>
+                    </Pressable>
+                  )}
+                </View>
                 {meal.items.map((item) => (
                   <Pressable
                     key={item.id}
