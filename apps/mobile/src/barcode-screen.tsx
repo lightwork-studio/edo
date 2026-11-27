@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { type BarcodeResult, expandUpcE, openFoodFactsLicenseUrl } from "./barcode";
+import { type BarcodeResult, openFoodFactsLicenseUrl } from "./barcode";
 import type { Strings } from "./strings";
 import { colors, DetailHeader, displayNumber, Notice, nutrientValue, styles } from "./ui";
 
@@ -42,7 +42,7 @@ export function BarcodeScreen({
   code: string;
   result: BarcodeResult | null;
   pending: boolean;
-  onSubmit: (code: string, lookupCode?: string) => void;
+  onSubmit: (code: string, cameraUpcE: boolean) => void;
   onPick: (food: PackagedFood) => void;
   onBack: () => void;
 }) {
@@ -118,8 +118,7 @@ export function BarcodeScreen({
     closeCamera();
     setDigits(entered);
     Keyboard.dismiss();
-    if (compressedUpc) onSubmit(entered, expandUpcE(entered) ?? undefined);
-    else onSubmit(entered);
+    onSubmit(entered, compressedUpc);
   }
 
   function back() {

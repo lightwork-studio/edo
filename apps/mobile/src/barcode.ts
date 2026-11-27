@@ -11,6 +11,10 @@ export type BarcodeResult =
   | { status: "found"; products: readonly PackagedFood[]; cached: boolean }
   | { status: "invalid" | "not-found" | "unavailable" | "rate-limited" };
 
+type CatalogResult =
+  | { status: "found"; products: readonly PackagedFood[]; complete: boolean }
+  | Exclude<BarcodeResult, { status: "found" }>;
+
 export const openFoodFactsLicenseUrl = "https://opendatacommons.org/licenses/odbl/1-0/";
 
 const freshnessMs = 7 * 24 * 60 * 60 * 1000;
@@ -40,6 +44,12 @@ export function expandUpcE(code: string): string | null {
     sum += Number(digit) * (position % 2 === 0 ? 3 : 1);
   }
   return sum % 10 === 0 ? expanded : null;
+}
+
+export function barcodeLookupOrder(code: string, cameraUpcE: boolean) {
+  const expanded = expandUpcE(code);
+  if (expanded === null) return { code };
+  return cameraUpcE ? { code: expanded, alternateCode: code } : { code, alternateCode: expanded };
 }
 
 export function retainedProducts(diary: Pick<DiaryStore, "listMeals">, today: string): string[] {
@@ -143,7 +153,7 @@ async function fromCatalog(
   key: string,
   signal: AbortSignal,
   request: CatalogFetch,
-): Promise<BarcodeResult> {
+): Promise<CatalogResult> {
   try {
     const url = `${origin}${previewPath}${code}`;
     const response = await request(url, {
@@ -176,7 +186,14 @@ async function fromCatalog(
       return { status: "unavailable" };
     }
     const products = readProducts(value, key);
-    return products ? { status: "found", products, cached: false } : { status: "unavailable" };
+    if (!products) return { status: "unavailable" };
+    const complete =
+      "source" in value &&
+      value.source === "catalog" &&
+      "releaseManifestSha256" in value &&
+      typeof value.releaseManifestSha256 === "string" &&
+      /^[a-f0-9]{64}$/.test(value.releaseManifestSha256);
+    return { status: "found", products, complete };
   } catch {
     return { status: "unavailable" };
   }
@@ -203,7 +220,7 @@ export async function lookupPackagedFood(
     result.status === "found"
   )
     return result;
-  // A scanned UPC-E may exist verbatim in an older download or on this device.
+  // A UPC-E may be stored as printed or expanded to its GTIN-12.
   const alternate = await lookupCode({
     ...options,
     code: options.alternateCode,
@@ -235,7 +252,11 @@ async function lookupCode({
   const cacheHit: BarcodeResult | undefined = cached.length
     ? { status: "found", products: cached.map(({ product }) => product), cached: true }
     : undefined;
-  if (cacheHit && (!origin || cached.every((row) => checkedAt - row.checkedAt < freshnessMs)))
+  if (
+    cacheHit &&
+    (!origin ||
+      cached.every((row) => row.checkedAt <= checkedAt && checkedAt - row.checkedAt < freshnessMs))
+  )
     return cacheHit;
   if (!origin || signal.aborted) return { status: "unavailable" };
   const controller = new AbortController();
@@ -247,11 +268,13 @@ async function lookupCode({
     if (signal.aborted) return { status: "unavailable" };
     if (result.status !== "found") return cacheHit ?? result;
     try {
-      cache?.save(result.products, checkedAt, keep());
+      if (result.complete)
+        cache?.saveBarcodeCandidates(cleaned, result.products, checkedAt, keep());
+      else cache?.save(result.products, checkedAt, keep());
     } catch {
       // A failed cache write does not change the trusted result of this lookup.
     }
-    return result;
+    return { status: "found", products: result.products, cached: false };
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", abort);

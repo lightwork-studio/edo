@@ -355,7 +355,8 @@ it("upgrades a version-one cache and checks its older rows before eviction", () 
   const broken = food("broken", "12345671", "Rice");
   const budget = Buffer.byteLength(JSON.stringify(cached));
   openPackagedFoodCache(connection(db)).save([cached, broken], 1, []);
-  db.exec(`DROP TRIGGER main.packaged_food_validate;
+  db.exec(`DROP TABLE main.packaged_food_barcode_set;
+    DROP TRIGGER main.packaged_food_validate;
     DROP INDEX main.packaged_food_pending;
     DROP INDEX main.packaged_food_lru;
     ALTER TABLE main.packaged_food DROP COLUMN validation_pending;
@@ -366,7 +367,50 @@ it("upgrades a version-one cache and checks its older rows before eviction", () 
   upgraded.prune([]);
   expect(upgraded.lookupBarcode(cached.barcode, 2)).toEqual([{ product: cached, checkedAt: 1 }]);
   expect(upgraded.search("rice", 3)).toEqual([]);
-  expect(db.prepare("PRAGMA main.user_version").get()).toEqual({ user_version: 2 });
+  expect(db.prepare("PRAGMA main.user_version").get()).toEqual({ user_version: 3 });
+});
+
+it("upgrades a version-two cache without dropping indexed product candidates", () => {
+  using db = new DatabaseSync(":memory:");
+  const product = food("v2-product", "12345670", "Rye");
+  const adapter = connection(db);
+  openPackagedFoodCache(adapter).save([product], 1, []);
+  db.exec("DROP TABLE main.packaged_food_barcode_set; PRAGMA main.user_version = 2");
+  const upgraded = openPackagedFoodCache(adapter);
+  const expected = [{ product, checkedAt: 1 }];
+  expect(upgraded.lookupBarcode(product.barcode, 2)).toEqual(expected);
+  expect(upgraded.search("rye", 3)).toEqual(expected);
+  expect(db.prepare("PRAGMA main.user_version").get()).toEqual({ user_version: 3 });
+});
+
+it("replaces a verified barcode set while retaining older products by name and ID", () => {
+  using db = new DatabaseSync(":memory:");
+  const adapter = connection(db);
+  const retired = food("retired", "12345670", "Older recipe");
+  const match = food("replacement", "012345670", "New recipe");
+  const live = food("live", "12345670", "Live recipe");
+  const barcode = retired.barcode;
+  const retained = [retired.id.sourceId];
+  const cache = openPackagedFoodCache(adapter);
+  cache.saveBarcodeCandidates(barcode, [retired], 10, retained);
+  cache.saveBarcodeCandidates(barcode, [match], 20, retained);
+  cache.saveBarcodeCandidates(barcode, [retired], 15, retained);
+  const reopened = openPackagedFoodCache(adapter);
+  expect(reopened.lookupBarcode(barcode, 21)).toEqual([{ product: match, checkedAt: 20 }]);
+  expect(reopened.search("older", 22)).toEqual([{ product: retired, checkedAt: 10 }]);
+  expect(reopened.findByIds(retained, 23)).toEqual([{ product: retired, checkedAt: 10 }]);
+  reopened.save([live], 30, retained);
+  expect(reopened.lookupBarcode(barcode, 31)).toEqual([
+    { product: live, checkedAt: 30 },
+    { product: match, checkedAt: 20 },
+  ]);
+
+  const empty = openPackagedFoodCache(adapter, 0);
+  empty.prune([]);
+  expect(empty.lookupBarcode(barcode, 32)).toEqual([]);
+  expect(db.prepare("SELECT count(*) AS sets FROM main.packaged_food_barcode_set").get()).toEqual({
+    sets: 0,
+  });
 });
 
 it("does not decode resident rows again during ordinary cache turnover", () => {

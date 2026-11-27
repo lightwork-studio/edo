@@ -2,7 +2,12 @@ import type { PackagedFood } from "@edo/core";
 import type { DiaryStore, PackagedFoodCache } from "@edo/storage";
 import { fetch } from "expo/fetch";
 import { useEffect, useState } from "react";
-import { type BarcodeResult, lookupPackagedFood, retainedProducts } from "./barcode";
+import {
+  type BarcodeResult,
+  barcodeLookupOrder,
+  lookupPackagedFood,
+  retainedProducts,
+} from "./barcode";
 import { BarcodeScreen } from "./barcode-screen";
 import { httpsOrigin } from "./catalog-origin";
 import type { Strings } from "./strings";
@@ -36,7 +41,7 @@ export function BarcodeEntry({
   onPick: (food: PackagedFood, state: BarcodeState) => void;
   onBack: () => void;
 }) {
-  const [submitted, setSubmitted] = useState<{ code: string; lookupCode: string } | null>(null);
+  const [submitted, setSubmitted] = useState<{ code: string; cameraUpcE: boolean } | null>(null);
   const [resolved, setResolved] = useState<{
     submit: NonNullable<typeof submitted>;
     result: BarcodeResult;
@@ -45,8 +50,7 @@ export function BarcodeEntry({
     if (!submitted || cache === undefined) return;
     const controller = new AbortController();
     void lookupPackagedFood({
-      code: submitted.lookupCode,
-      alternateCode: submitted.code,
+      ...barcodeLookupOrder(submitted.code, submitted.cameraUpcE),
       origin,
       cache,
       keep: () => retainedProducts(diary, today),
@@ -72,7 +76,7 @@ export function BarcodeEntry({
       code={code}
       result={result}
       pending={submitted !== null && result === null}
-      onSubmit={(code, lookupCode = code) => setSubmitted({ code, lookupCode })}
+      onSubmit={(code, cameraUpcE) => setSubmitted({ code, cameraUpcE })}
       onPick={(food) => onPick(food, { code, result })}
       onBack={onBack}
     />

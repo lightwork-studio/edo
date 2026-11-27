@@ -2,7 +2,7 @@ import { decodePackagedFood, normalizeOpenFoodFactsBarcode, type PackagedFood } 
 import { rollback, type SqliteConnection, type SqlRow } from "./sqlite.ts";
 
 const applicationId = 0x45444f43;
-const schemaVersion = 2;
+const schemaVersion = 3;
 const defaultByteBudget = 4 * 1024 * 1024;
 const loneSurrogate = /[\uD800-\uDFFF]/u;
 const productColumns = `packaged_food.source_id, packaged_food.barcode, packaged_food.lookup_code,
@@ -26,6 +26,13 @@ export interface CachedPackagedFood {
 export interface PackagedFoodCache {
   /** Retained IDs come from current favourites and recently logged products in the diary. */
   save(products: readonly PackagedFood[], checkedAt: number, retainedIds: readonly string[]): void;
+  /** Save the complete match set from a verified catalog. Older rows stay searchable by name. */
+  saveBarcodeCandidates(
+    barcode: string,
+    products: readonly PackagedFood[],
+    checkedAt: number,
+    retainedIds: readonly string[],
+  ): void;
   prune(retainedIds: readonly string[]): void;
   lookupBarcode(barcode: string, accessedAt: number): CachedPackagedFood[];
   search(query: string, accessedAt: number): CachedPackagedFood[];
@@ -76,6 +83,15 @@ const validationMigration = `
     ON packaged_food WHEN new.validation_pending = 0 BEGIN
     UPDATE packaged_food SET validation_pending = 1 WHERE source_id = new.source_id;
   END;
+  PRAGMA main.user_version = 2;
+`;
+
+const barcodeCandidatesMigration = `
+  CREATE TABLE main.packaged_food_barcode_set (
+    lookup_code TEXT PRIMARY KEY NOT NULL,
+    checked_at INTEGER NOT NULL CHECK (checked_at >= 0),
+    candidate_ids TEXT NOT NULL CHECK (json_valid(candidate_ids) AND json_type(candidate_ids) = 'array')
+  ) WITHOUT ROWID, STRICT;
   PRAGMA main.user_version = ${schemaVersion};
 `;
 
@@ -114,7 +130,7 @@ function initialize(db: SqliteConnection): void {
   transaction(db, () => {
     const id = db.get("PRAGMA main.application_id")?.application_id;
     const version = db.get("PRAGMA main.user_version")?.user_version;
-    if (id === applicationId && (version === 1 || version === schemaVersion)) {
+    if (id === applicationId && (version === 1 || version === 2 || version === schemaVersion)) {
       const objects = db.get(`SELECT COUNT(*) AS count FROM main.sqlite_schema WHERE
         (type = 'table' AND tbl_name = name AND name IN ('packaged_food', 'packaged_food_search')) OR
         (type = 'index' AND tbl_name = 'packaged_food' AND name = 'packaged_food_lookup') OR
@@ -130,7 +146,7 @@ function initialize(db: SqliteConnection): void {
       const total = db.get(
         "SELECT count(*) AS count FROM main.sqlite_schema WHERE name NOT GLOB 'sqlite_*'",
       );
-      const expected = version === 1 ? 10 : 13;
+      const expected = version === 1 ? 10 : version === 2 ? 13 : 14;
       if (
         objects?.count !== 6 ||
         shadows?.count !== 4 ||
@@ -146,13 +162,16 @@ function initialize(db: SqliteConnection): void {
       }
       db.exec(schema);
     }
-    if (version !== schemaVersion) db.exec(validationMigration);
+    if (version === 0 || version === 1) db.exec(validationMigration);
+    if (version !== schemaVersion) db.exec(barcodeCandidatesMigration);
     const validationObjects = db.get(`SELECT COUNT(*) AS count FROM main.sqlite_schema
       WHERE tbl_name = 'packaged_food' AND (
         (type = 'index' AND name IN ('packaged_food_pending', 'packaged_food_lru')) OR
         (type = 'trigger' AND name = 'packaged_food_validate')
       )`);
-    if (validationObjects?.count !== 3) {
+    const barcodeSets = db.get(`SELECT name FROM main.sqlite_schema
+      WHERE type = 'table' AND name = 'packaged_food_barcode_set'`);
+    if (validationObjects?.count !== 3 || !barcodeSets) {
       throw new Error("Packaged-food cache schema is incomplete");
     }
     // A database can change outside SQL while it is closed, so verify its existing rows again.
@@ -369,19 +388,65 @@ export function openPackagedFoodCache(
       }
       return work();
     });
+  function saveProducts(
+    products: readonly PackagedFood[],
+    checkedAt: number,
+    retainedIds: readonly string[],
+  ): void {
+    const retained = new Set(retainedIds);
+    for (const product of products) {
+      writeProduct(db, product, checkedAt, byteBudget, retained.has(product.id.sourceId));
+    }
+  }
+  function pruneCache(retainedIds: readonly string[]) {
+    evict(db, byteBudget, retainedIds);
+    db.run(`DELETE FROM main.packaged_food_barcode_set AS match
+      WHERE NOT EXISTS (SELECT 1 FROM main.packaged_food AS product
+        WHERE product.lookup_code = match.lookup_code)`);
+  }
   return {
     save(products, checkedAt, retainedIds) {
       timestamp(checkedAt);
-      const retained = new Set(retainedIds);
       inCache(() => {
-        for (const product of products) {
-          writeProduct(db, product, checkedAt, byteBudget, retained.has(product.id.sourceId));
-        }
-        evict(db, byteBudget, retainedIds);
+        saveProducts(products, checkedAt, retainedIds);
+        pruneCache(retainedIds);
+      });
+    },
+    saveBarcodeCandidates(barcode, products, checkedAt, retainedIds) {
+      const key = normalizeOpenFoodFactsBarcode(barcode.trim());
+      const ids = products.map((product) => product.id.sourceId);
+      if (
+        !key ||
+        ids.length === 0 ||
+        ids.length > 100 ||
+        new Set(ids).size !== ids.length ||
+        products.some((product) => normalizeOpenFoodFactsBarcode(product.barcode) !== key)
+      ) {
+        throw new TypeError("Invalid packaged-food cache candidate set");
+      }
+      timestamp(checkedAt);
+      inCache(() => {
+        const previous = db.get(
+          `SELECT 1 AS newer FROM main.packaged_food_barcode_set
+           WHERE lookup_code = ? AND checked_at > ?`,
+          key,
+          checkedAt,
+        );
+        if (previous) return;
+        saveProducts(products, checkedAt, retainedIds);
+        db.run(
+          `INSERT INTO main.packaged_food_barcode_set VALUES (?, ?, ?)
+           ON CONFLICT(lookup_code) DO UPDATE SET
+             checked_at = excluded.checked_at, candidate_ids = excluded.candidate_ids`,
+          key,
+          checkedAt,
+          JSON.stringify(ids),
+        );
+        pruneCache(retainedIds);
       });
     },
     prune(retainedIds) {
-      inCache(() => evict(db, byteBudget, retainedIds));
+      inCache(() => pruneCache(retainedIds));
     },
     lookupBarcode(barcode, accessedAt) {
       const text = barcode.trim();
@@ -393,7 +458,13 @@ export function openPackagedFoodCache(
           db,
           db.all(
             `SELECT ${productColumns} FROM main.packaged_food
-             WHERE lookup_code = ? ORDER BY (barcode = ?) DESC, source_id`,
+             LEFT JOIN main.packaged_food_barcode_set AS match
+               ON match.lookup_code = packaged_food.lookup_code
+             WHERE packaged_food.lookup_code = ?
+               AND (match.lookup_code IS NULL OR packaged_food.checked_at > match.checked_at OR
+                 EXISTS (SELECT 1 FROM json_each(match.candidate_ids)
+                   WHERE value = packaged_food.source_id))
+             ORDER BY (barcode = ?) DESC, source_id`,
             key,
             text,
           ),

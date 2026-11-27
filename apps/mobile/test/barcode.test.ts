@@ -3,6 +3,7 @@ import { createDiaryItem, type PackagedFood } from "@edo/core";
 import { openDiary, openPackagedFoodCache, type SqliteConnection } from "@edo/storage";
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  barcodeLookupOrder,
   expandUpcE,
   foodForPackagedProduct,
   lookupPackagedFood,
@@ -170,6 +171,40 @@ it("keeps a known barcode available when a response is too large or has duplicat
   await expect(lookupPackagedFood({ ...input, request: limited })).resolves.toEqual(expected);
 });
 
+it("replaces offline scan candidates only for a complete catalog response", async () => {
+  using db = new DatabaseSync(":memory:");
+  const adapter = testConnection(db);
+  const retired = { ...product, id: { ...product.id, sourceId: "retired" }, name: "Retired juice" };
+  const cache = openPackagedFoodCache(adapter);
+  cache.save([retired], 0, []);
+  const input = {
+    code: retired.barcode,
+    origin: "https://example.test",
+    cache,
+    keep: () => [retired.id.sourceId],
+    now: () => 8 * 86400000,
+    signal: new AbortController().signal,
+  };
+  const catalog = async () =>
+    jsonResponse(
+      {
+        status: "found",
+        source: "catalog",
+        releaseManifestSha256: "a".repeat(64),
+        products: [product],
+      },
+      200,
+    );
+  await lookupPackagedFood({ ...input, request: catalog });
+  const reopened = openPackagedFoodCache(adapter);
+  await expect(lookupPackagedFood({ ...input, cache: reopened, origin: null })).resolves.toEqual({
+    status: "found",
+    products: [product],
+    cached: true,
+  });
+  expect(reopened.search("retired", input.now())).toEqual([{ product: retired, checkedAt: 0 }]);
+});
+
 it("stops a timed-out lookup and leaves the cached candidate available", async () => {
   vi.useFakeTimers();
   using db = new DatabaseSync(":memory:");
@@ -249,16 +284,53 @@ it("falls back to a cached UPC-E product that was previously entered verbatim", 
   const cache = openPackagedFoodCache(testConnection(db));
   const literal = { ...product, barcode: "01234558" };
   cache.save([literal], 10, []);
-  const expanded = expandUpcE(literal.barcode);
-  if (!expanded) throw new Error("Invalid fixture");
   await expect(
     lookupPackagedFood({
-      code: expanded,
-      alternateCode: literal.barcode,
+      ...barcodeLookupOrder(literal.barcode, true),
       cache,
       keep: () => [],
       origin: null,
       signal: new AbortController().signal,
     }),
   ).resolves.toEqual({ status: "found", products: [literal], cached: true });
+});
+
+it("uses the printed code first for manual entry and finds an expanded UPC-E online or offline", async () => {
+  using db = new DatabaseSync(":memory:");
+  const cache = openPackagedFoodCache(testConnection(db));
+  const printed = "01234558";
+  const expanded = { ...product, barcode: "012345000058" };
+  const request = vi.fn(async (url: string) =>
+    url.endsWith(expanded.barcode)
+      ? jsonResponse({ status: "found", products: [expanded] }, 200)
+      : jsonResponse({ status: "not-found" }, 404),
+  );
+  const lookup = {
+    ...barcodeLookupOrder(printed, false),
+    cache,
+    keep: () => [],
+    signal: new AbortController().signal,
+    request,
+  };
+  await expect(lookupPackagedFood({ ...lookup, origin: "https://example.test" })).resolves.toEqual({
+    status: "found",
+    products: [expanded],
+    cached: false,
+  });
+  expect(request.mock.calls.map(([url]) => url.split("/").at(-1))).toEqual([
+    printed,
+    expanded.barcode,
+  ]);
+  await expect(lookupPackagedFood({ ...lookup, origin: null })).resolves.toEqual({
+    status: "found",
+    products: [expanded],
+    cached: true,
+  });
+  const direct = { ...product, id: { ...product.id, sourceId: "ean-8" }, barcode: printed };
+  cache.save([direct], Date.now(), []);
+  await expect(lookupPackagedFood({ ...lookup, origin: null })).resolves.toEqual({
+    status: "found",
+    products: [direct],
+    cached: true,
+  });
 });
