@@ -6,7 +6,7 @@ import {
   foodForRecipe,
   type Recipe,
 } from "@edo/core";
-import { insertArchiveRows } from "./archive-sql.ts";
+import { insertArchiveRows, selectArchiveMatches } from "./archive-sql.ts";
 import { inCurrentDiary } from "./migrations.ts";
 import {
   diaryId,
@@ -115,8 +115,18 @@ function readCollection<T>(
   table: Table,
   read: (value: unknown) => T,
   idOf: (record: T) => string,
+  ids?: readonly string[],
 ): T[] {
-  return db.all(`SELECT id, content FROM ${table} ORDER BY id`).map((row) => {
+  const select = `SELECT id, content FROM ${table}`;
+  const rows = ids
+    ? selectArchiveMatches(
+        db,
+        select,
+        "id",
+        ids.map((id) => [id]),
+      )
+    : db.all(`${select} ORDER BY id`);
+  return rows.map((row) => {
     if (typeof row.content !== "string") throw new TypeError("Invalid saved food content");
     const saved = read(JSON.parse(row.content));
     if (idOf(saved) !== row.id) throw new Error("Saved food ID does not match its record");
@@ -138,30 +148,42 @@ function saveRecord(db: DiarySqliteConnection, table: Table, id: string, value: 
   );
 }
 
-function customFoods(db: DiarySqliteConnection) {
-  return readCollection(db, "diary_custom_foods", readCustomFood, (food) => food.id.sourceId);
+function customFoods(db: DiarySqliteConnection, ids?: readonly string[]) {
+  return readCollection(db, "diary_custom_foods", readCustomFood, (food) => food.id.sourceId, ids);
 }
 
-function recipes(db: DiarySqliteConnection) {
-  return readCollection(db, "diary_recipes", readRecipe, (recipe) => recipe.id);
+function recipes(db: DiarySqliteConnection, ids?: readonly string[]) {
+  return readCollection(db, "diary_recipes", readRecipe, (recipe) => recipe.id, ids);
 }
 
-function templates(db: DiarySqliteConnection) {
-  return readCollection(db, "diary_meal_templates", readTemplate, (template) => template.id);
+function templates(db: DiarySqliteConnection, ids?: readonly string[]) {
+  return readCollection(db, "diary_meal_templates", readTemplate, (template) => template.id, ids);
 }
 
-function favorites(db: DiarySqliteConnection) {
-  return db
-    .all("SELECT provider, source_id FROM diary_favorites ORDER BY provider, source_id")
-    .map((row: SqlRow) => readFavoriteId({ provider: row.provider, sourceId: row.source_id }));
+function favorites(db: DiarySqliteConnection, ids?: readonly FoodId[]) {
+  const select = "SELECT provider, source_id FROM diary_favorites";
+  const rows = ids
+    ? selectArchiveMatches(
+        db,
+        select,
+        "(provider, source_id)",
+        ids.map(({ provider, sourceId }) => [provider, sourceId]),
+      )
+    : db.all(`${select} ORDER BY provider, source_id`);
+  return rows.map((row: SqlRow) =>
+    readFavoriteId({ provider: row.provider, sourceId: row.source_id }),
+  );
 }
 
-export function readMyFoodsRecords(db: DiarySqliteConnection) {
+export function readMyFoodsRecords(
+  db: DiarySqliteConnection,
+  ids?: { customFoods: string[]; recipes: string[]; mealTemplates: string[]; favorites: FoodId[] },
+) {
   return {
-    customFoods: customFoods(db),
-    recipes: recipes(db),
-    mealTemplates: templates(db),
-    favorites: favorites(db),
+    customFoods: customFoods(db, ids?.customFoods),
+    recipes: recipes(db, ids?.recipes),
+    mealTemplates: templates(db, ids?.mealTemplates),
+    favorites: favorites(db, ids?.favorites),
   };
 }
 

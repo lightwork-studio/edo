@@ -297,7 +297,18 @@ export function planPrivateRecords(
   archived: IndexedRecords,
   reportIssue: (issue: PrivateArchiveIssue) => void,
 ) {
-  const current = { ...readMyFoodsRecords(db), ...readDiaryProgressRecords(db) };
+  const current = {
+    ...readMyFoodsRecords(db, {
+      customFoods: archived.customFoods.map(({ record }) => record.id.sourceId),
+      recipes: archived.recipes.map(({ record }) => record.id),
+      mealTemplates: archived.mealTemplates.map(({ record }) => record.id),
+      favorites: archived.favorites.map(({ record }) => record),
+    }),
+    ...readDiaryProgressRecords(db, {
+      weighIns: archived.weighIns.map(({ record }) => record.id),
+      targets: archived.nutritionTargets.map(({ record }) => record),
+    }),
+  };
   let alreadyPresent = 0;
   function compare<T>(
     collection: Collection,

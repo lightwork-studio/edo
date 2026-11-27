@@ -178,16 +178,31 @@ function planPrivateRestore(
   const meals: DiaryMeal[] = [];
   let alreadyPresent = 0;
   for (const batch of archiveBatches(archive.meals.entries, 450)) {
-    const saved = readMeals(
-      db.all(
-        `${selectMeals} WHERE meals.id IN (${archivePlaceholders(batch.length)})
-          ORDER BY meals.id, items.position`,
-        ...batch.map(({ meal }) => meal.id),
-      ),
+    const counts = new Map(
+      db
+        .all(
+          `SELECT meals.id, COUNT(items.id) AS item_count
+          FROM diary_meals AS meals LEFT JOIN diary_items AS items ON meals.id = items.meal_id
+          WHERE meals.id IN (${archivePlaceholders(batch.length)}) GROUP BY meals.id`,
+          ...batch.map(({ meal }) => meal.id),
+        )
+        .map((row) => [diaryId(row.id, "meal ID"), row.item_count]),
     );
+    const compareIds = batch
+      .filter(({ meal }) => counts.get(meal.id) === meal.items.length)
+      .map(({ meal }) => meal.id);
+    const saved = compareIds.length
+      ? readMeals(
+          db.all(
+            `${selectMeals} WHERE meals.id IN (${archivePlaceholders(compareIds.length)})
+          ORDER BY meals.id, items.position`,
+            ...compareIds,
+          ),
+        )
+      : [];
     const previousMeals = new Map(saved.map((meal) => [meal.id, meal]));
     const incomingItems = batch.flatMap(({ meal }) =>
-      previousMeals.has(meal.id) ? [] : meal.items.map((item) => item.id),
+      counts.has(meal.id) ? [] : meal.items.map((item) => item.id),
     );
     const existingItems = new Set<string>();
     for (const ids of archiveBatches(incomingItems, 900)) {
@@ -200,8 +215,8 @@ function planPrivateRestore(
     }
     for (const { index, meal } of batch) {
       const previous = previousMeals.get(meal.id);
-      if (previous) {
-        if (JSON.stringify(previous) === JSON.stringify(meal)) alreadyPresent += 1;
+      if (counts.has(meal.id)) {
+        if (previous && JSON.stringify(previous) === JSON.stringify(meal)) alreadyPresent += 1;
         else
           reportIssue({
             collection: "meals",

@@ -31,7 +31,9 @@ func readArchive(
   }
   let scalars = source.unicodeScalars
   let body = scalars.first == "\u{FEFF}" ? scalars.dropFirst() : scalars[...]
-  guard body.first(where: { $0 != " " && $0 != "\t" && $0 != "\r" && $0 != "\n" }) == "{" else {
+  // Literal NUL is invalid JSON and can be silently truncated by a native string bridge.
+  guard !body.contains("\u{0000}"),
+        body.first(where: { $0 != " " && $0 != "\t" && $0 != "\r" && $0 != "\n" }) == "{" else {
     throw ArchiveReadError.unreadable
   }
   return source

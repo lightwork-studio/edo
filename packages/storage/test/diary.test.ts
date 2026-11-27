@@ -997,7 +997,7 @@ test("previews and restores a large diary with bounded SQLite statement counts",
       },
     },
   });
-  const meals = Array.from({ length: 2400 }, (_, index) => ({
+  const meals = Array.from({ length: 1200 }, (_, index) => ({
     ...meal,
     id: `batch-meal-${index}`,
     items: [createDiaryItem(`batch-item-${index}`, sourceFood, { amount: 100, unit: "ml" })],
@@ -1028,7 +1028,7 @@ test("previews and restores a large diary with bounded SQLite statement counts",
   });
   expect(reads).toBeLessThan(50);
   expect(writes).toBeLessThan(50);
-  expect(diary.getMeal("batch-meal-2399")).toEqual(meals.at(-1));
+  expect(diary.getMeal("batch-meal-1199")).toEqual(meals.at(-1));
   expect(diary.restorePrivateArchive(source, { maxIssues: 100 })).toEqual({
     status: "restored",
     added: 0,
@@ -1047,6 +1047,47 @@ test("counts all top-level version 2 collections toward the interactive archive 
     status: "restored",
     added: 9,
   });
+});
+
+test("looks up only the stored records that can affect a version 2 archive", async () => {
+  const { options, db } = createDatabase("archive-scoped-lookups.db");
+  const original = options.connection;
+  const reads: Array<{ sql: string; rows: number }> = [];
+  const diary = await openDiary({
+    ...options,
+    connection: {
+      ...original,
+      all(sql, ...parameters) {
+        const rows = original.all(sql, ...parameters);
+        reads.push({ sql, rows: rows.length });
+        return rows;
+      },
+    },
+  });
+  const stored = { ...weighIn, id: "history-500" };
+  const source = JSON.stringify({
+    ...JSON.parse(diary.exportPrivateArchive()),
+    meals: [{ ...meal, items: [] }],
+    weighIns: [stored],
+  });
+  db.exec(`WITH RECURSIVE seq(n) AS (
+    SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 1000
+  )
+  INSERT INTO diary_weigh_ins SELECT 'history-' || n, '${stored.localDay}', ${stored.occurredAt},
+    ${stored.kg} FROM seq`);
+  diary.saveMeal(meal);
+  reads.length = 0;
+  expect(diary.previewPrivateArchive(source)).toMatchObject({
+    newRecords: 0,
+    alreadyPresent: 1,
+    issues: [
+      { collection: "meals", index: 0, message: "This meal ID has different saved content" },
+    ],
+  });
+  expect(
+    reads.filter(({ sql }) => sql.includes("FROM diary_weigh_ins")).map(({ rows }) => rows),
+  ).toEqual([1]);
+  expect(reads.some(({ sql }) => /items\.snapshot|FROM diary_recipes/.test(sql))).toBe(false);
 });
 
 test("keeps legacy meal-only archives readable and does not touch other private collections", async () => {

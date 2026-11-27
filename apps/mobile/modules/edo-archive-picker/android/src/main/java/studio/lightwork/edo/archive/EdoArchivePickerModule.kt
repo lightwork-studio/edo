@@ -14,6 +14,7 @@ import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.UUID
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -55,6 +56,8 @@ class EdoArchivePickerModule : Module() {
         }
       } catch (_: TimeoutCancellationException) {
         throw CodedException("ERR_EDO_ARCHIVE_TIMEOUT", "Timed out reading the selected diary archive", null)
+      } catch (_: RejectedExecutionException) {
+        throw CodedException("ERR_EDO_ARCHIVE_PROVIDER_BUSY", "The file provider is still busy", null)
       } catch (error: CodedException) {
         throw error
       } catch (error: CancellationException) {

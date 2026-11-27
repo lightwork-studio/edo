@@ -28,7 +28,7 @@ internal fun readArchive(
   checkCancellation()
   val source = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(output.toByteArray())).toString()
   // Only an archive object may cross the native bridge as document text.
-  if (!source.removePrefix("\uFEFF").trimStart(' ', '\t', '\r', '\n').startsWith("{")) {
+  if ('\u0000' in source || !source.removePrefix("\uFEFF").trimStart(' ', '\t', '\r', '\n').startsWith("{")) {
     throw IOException("The selected file is not a diary archive object")
   }
   return source

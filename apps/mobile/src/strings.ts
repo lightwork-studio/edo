@@ -107,6 +107,7 @@ export const strings = {
     archiveShareError: "Couldn’t share the diary archive. Try again.",
     archiveOpenError: "Couldn’t open this Edo diary archive.",
     archiveReadTimeout: "Reading the archive took too long. Try again or select a local copy.",
+    archiveProviderBusy: "Restart Edo and select a local copy of the archive.",
     archivePickerUnavailable: "Restoring archives requires an installed Edo build.",
     archiveRestoreError: "Couldn’t restore the archive. Try again.",
     archiveSizeError: "Restore on this phone supports archives up to 16 MiB.",
@@ -267,6 +268,7 @@ export const strings = {
     archiveOpenError: "Dieses Edo-Tagebucharchiv konnte nicht geöffnet werden.",
     archiveReadTimeout:
       "Das Lesen des Archivs hat zu lange gedauert. Versuche es erneut oder wähle eine lokale Kopie.",
+    archiveProviderBusy: "Starte Edo neu und wähle eine lokale Kopie des Archivs.",
     archivePickerUnavailable:
       "Für die Wiederherstellung ist eine installierte Edo-App erforderlich.",
     archiveRestoreError: "Das Archiv konnte nicht wiederhergestellt werden. Versuche es erneut.",

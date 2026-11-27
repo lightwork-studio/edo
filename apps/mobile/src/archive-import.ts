@@ -16,6 +16,7 @@ let choosingArchive = false;
 export class ArchiveSizeError extends RangeError {}
 export class ArchiveComplexityError extends RangeError {}
 export class ArchiveReadTimeoutError extends Error {}
+export class ArchiveProviderBusyError extends Error {}
 
 function checkArchiveComplexity(source: string): void {
   let inString = false;
@@ -56,13 +57,13 @@ export async function chooseArchive(): Promise<string | null> {
     checkArchiveComplexity(source);
     return source;
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ERR_EDO_ARCHIVE_TIMEOUT"
-    ) {
-      throw new ArchiveReadTimeoutError("Timed out reading the selected diary archive");
+    if (typeof error === "object" && error !== null && "code" in error) {
+      if (error.code === "ERR_EDO_ARCHIVE_TIMEOUT") {
+        throw new ArchiveReadTimeoutError("Timed out reading the selected diary archive");
+      }
+      if (error.code === "ERR_EDO_ARCHIVE_PROVIDER_BUSY") {
+        throw new ArchiveProviderBusyError("The file provider is still busy");
+      }
     }
     throw error;
   } finally {

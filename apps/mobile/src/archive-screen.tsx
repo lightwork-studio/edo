@@ -10,6 +10,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { shareArchive } from "./archive-files";
 import {
   ArchiveComplexityError,
+  ArchiveProviderBusyError,
   ArchiveReadTimeoutError,
   ArchiveSizeError,
   archivePickerAvailable,
@@ -38,7 +39,7 @@ export function ArchiveScreen({
   const [busy, setBusy] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [error, setError] = useState<
-    "share" | "choose" | "restore" | "size" | "complexity" | "issues" | "timeout" | null
+    "share" | "choose" | "restore" | "size" | "complexity" | "issues" | "timeout" | "provider" | null
   >(null);
   const [result, setResult] = useState<Extract<
     PrivateArchiveResult,
@@ -67,6 +68,7 @@ export function ArchiveScreen({
         )
           setError("complexity");
         else if (error instanceof ArchiveReadTimeoutError) setError("timeout");
+        else if (error instanceof ArchiveProviderBusyError) setError("provider");
         else if (error instanceof ArchiveIssueLimitError) {
           setSelection(null);
           setError("issues");
@@ -85,6 +87,7 @@ export function ArchiveScreen({
     size: t.archiveSizeError,
     complexity: t.archiveComplexityError,
     timeout: t.archiveReadTimeout,
+    provider: t.archiveProviderBusy,
     issues: t.archiveIssueLimitError,
   };
   return (

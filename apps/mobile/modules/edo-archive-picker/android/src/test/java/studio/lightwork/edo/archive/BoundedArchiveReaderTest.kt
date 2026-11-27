@@ -41,6 +41,16 @@ class BoundedArchiveReaderTest {
   }
 
   @Test
+  fun rejectsLiteralNulAndPreservesAnEscapedNul() {
+    val escaped = "{\"field\":\"\\u0000\"}"
+    assertEquals(escaped, readArchive(escaped.byteInputStream(), 24))
+    try {
+      readArchive("{}\u0000trailing".byteInputStream(), 16)
+      throw AssertionError("Accepted a literal NUL")
+    } catch (_: IOException) {}
+  }
+
+  @Test
   fun checksCancellationBeforeReadingAnotherChunk() {
     val stream = ChunkedInput(ByteArray(20))
     try {

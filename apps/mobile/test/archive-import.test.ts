@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import {
   ArchiveComplexityError,
+  ArchiveProviderBusyError,
   ArchiveReadTimeoutError,
   ArchiveSizeError,
   archivePickerAvailable,
@@ -48,6 +49,11 @@ it("reports a provider deadline and permits a new selection", async () => {
     .mockResolvedValueOnce({ status: "selected", source: "{}" });
   await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveReadTimeoutError);
   await expect(chooseArchive()).resolves.toBe("{}");
+});
+
+it("distinguishes provider saturation from a malformed archive", async () => {
+  mock.pickArchiveAsync.mockRejectedValueOnce({ code: "ERR_EDO_ARCHIVE_PROVIDER_BUSY" });
+  await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveProviderBusyError);
 });
 
 it("rejects a 15 MB selection with millions of objects before the store parses it", async () => {

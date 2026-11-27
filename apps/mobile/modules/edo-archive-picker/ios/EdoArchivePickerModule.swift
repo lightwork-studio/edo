@@ -16,7 +16,11 @@ public final class EdoArchivePickerModule: Module {
     Name("EdoArchivePicker")
 
     AsyncFunction("pickArchiveAsync") { (promise: Promise) in
-      guard self.pickerDelegate == nil, self.activeReads < 2,
+      guard self.activeReads < 2 else {
+        promise.reject("ERR_EDO_ARCHIVE_PROVIDER_BUSY", "The file provider is still busy")
+        return
+      }
+      guard self.pickerDelegate == nil,
             let presenter = self.appContext?.utilities?.currentViewController() else {
         promise.reject("ERR_EDO_ARCHIVE_PICKER", "Could not open the archive picker")
         return
