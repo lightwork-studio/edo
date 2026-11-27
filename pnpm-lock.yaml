@@ -45,6 +45,8 @@ importers:
 
   apps/sync-node: {}
 
+  packages/catalog-import: {}
+
   packages/contract: {}
 
   packages/core: {}
