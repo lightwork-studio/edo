@@ -61,7 +61,11 @@ importers:
         specifier: ~19.3.0
         version: 19.3.3
 
-  apps/sync-node: {}
+  apps/sync-node:
+    dependencies:
+      '@edo/off-import':
+        specifier: workspace:*
+        version: link:../../packages/off-import
 
   packages/bls-import:
     dependencies:
