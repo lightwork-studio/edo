@@ -1,7 +1,7 @@
 {
   "name": "edo-catalog",
   "main": "worker.ts",
-  "compatibility_date": "2026-11-27",
+  "compatibility_date": "2026-08-06",
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "edo.timweb.app", "custom_domain": true }],

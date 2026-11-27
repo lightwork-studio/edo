@@ -44,7 +44,7 @@ function objects() {
 
 async function prepare() {
   const storage = objects();
-  const release = await storage.put(`${prefix}/active.json`, {
+  const release = await storage.put("fixture", {
     manifestVersion: 1,
     provider: prefix,
     schemaVersion: 1,
@@ -54,6 +54,10 @@ async function prepare() {
     artifact: { sha256: sha, bytes: 4321 },
     counts: { accepted: 1, rejected: 0 },
   });
+  const releaseBytes = storage.files.get("fixture");
+  if (!releaseBytes) throw new Error("Expected fixture manifest");
+  storage.files.set(`${prefix}/releases/${release}.json`, releaseBytes);
+  await storage.put(`${prefix}/state.json`, { active: release, releases: { [release]: sha } });
   const key = shardFor(sample.barcode);
   const shard = encoder.encode(JSON.stringify({ [sample.barcode]: [sample] })).buffer;
   const digest = await sha256(shard);
@@ -93,9 +97,15 @@ test("does not expose internal index objects or respond to write methods", async
 });
 
 test("serves immutable files with their digest as ETag", async () => {
-  const { env, files } = await prepare();
+  const { env, files, put } = await prepare();
   const path = `bls/artifacts/${sha}.sqlite`;
   files.set(path, encoder.encode("sqlite fixture").buffer);
+  const release = "b".repeat(64);
+  await put("bls/state.json", { active: release, releases: { [release]: sha } });
+  const staged = "c".repeat(64);
+  const stagedKey = `bls/artifacts/${staged}.sqlite`;
+  files.set(stagedKey, encoder.encode("unpublished fixture").buffer);
+  expect((await worker.fetch(new Request(`${origin}/${stagedKey}`), env)).status).toBe(404);
   const url = `${origin}/${path}`;
   const response = await worker.fetch(new Request(url), env);
   expect(response.headers.get("content-type")).toBe("application/vnd.sqlite3");

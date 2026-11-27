@@ -6,6 +6,7 @@ import {
   normalizeOpenFoodFactsBarcode,
   type PackagedFood,
 } from "../../packages/core/src/packaged-food.ts";
+import { checksum, maxManifestBytes, maxStateBytes, readCatalogState } from "./state.ts";
 
 interface StoredObject {
   body: ReadableStream;
@@ -30,7 +31,6 @@ const providers = {
   },
 };
 const immutable = "public, max-age=31536000, immutable";
-const checksum = /^[a-f0-9]{64}$/;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 export async function sha256(bytes: ArrayBuffer) {
@@ -47,8 +47,12 @@ export function shardFor(code: string) {
 
 async function readJson(bucket: CatalogEnvironment["CATALOGS"], key: string, limit: number) {
   const object = await bucket.get(key);
-  if (!object || object.size > limit)
-    throw new Error("Catalog JSON object is missing or oversized");
+  if (!object) throw new Error("Catalog JSON object is missing");
+  return readJsonObject(object, limit);
+}
+
+async function readJsonObject(object: StoredObject, limit: number) {
+  if (object.size > limit) throw new Error("Catalog JSON object is oversized");
   const bytes = await object.arrayBuffer();
   if (bytes.byteLength !== object.size)
     throw new Error("Catalog JSON object has an unexpected size");
@@ -66,7 +70,15 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
   const key = code.length <= 64 ? normalizeOpenFoodFactsBarcode(code) : null;
   if (!key) return json({ status: "invalid" }, 400);
   const prefix = "open-food-facts";
-  const active = await readJson(bucket, `${prefix}/active.json`, 16 * 1024);
+  const { value: record } = await readJson(bucket, `${prefix}/state.json`, maxStateBytes);
+  const state = readCatalogState(record);
+  const active = await readJson(
+    bucket,
+    `${prefix}/releases/${state.active}.json`,
+    maxManifestBytes,
+  );
+  if (active.sha !== state.active)
+    throw new Error("Published catalog manifest does not match its digest");
   const manifest = compatibleCatalog(active.value, prefix, [1]);
   if (!manifest) throw new Error("Unsupported Open Food Facts release");
   const { value: index } = await readJson(bucket, `${prefix}/lookup/${active.sha}.json`, 32 * 1024);
@@ -121,7 +133,18 @@ async function asset(
   const hash = match?.[1] ?? match?.[2];
   if (!active && !hash) return new Response(null, { status: 404 });
 
-  const object = await bucket.get(`${provider}/${route}`);
+  const registration = await bucket.get(`${provider}/state.json`);
+  if (!registration) return new Response(null, { status: active ? 503 : 404 });
+  const { value } = await readJsonObject(registration, maxStateBytes);
+  const state = readCatalogState(value);
+  if (hash) {
+    const published = match?.[1]
+      ? Object.hasOwn(state.releases, hash)
+      : Object.values(state.releases).includes(hash);
+    if (!published) return new Response(null, { status: 404 });
+  }
+  const key = active ? `releases/${state.active}.json` : route;
+  const object = await bucket.get(`${provider}/${key}`);
   if (!object) return new Response(null, { status: active ? 503 : 404 });
   const { license, source } = providers[provider];
   const headers = new Headers({

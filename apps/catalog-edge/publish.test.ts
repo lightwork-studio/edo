@@ -25,7 +25,7 @@ test("publishes and verifies catalog objects before the conditional active write
 
     const objects = new Map<string, Buffer>();
     const writes: string[] = [];
-    const active = "open-food-facts/active.json";
+    const active = "open-food-facts/state.json";
     const fakeR2: Parameters<typeof publishCatalogToR2>[0] = async (operation, key, ...args) => {
       if (operation === "get-object") {
         const object = objects.get(key);
@@ -52,10 +52,14 @@ test("publishes and verifies catalog objects before the conditional active write
 
     const sha = await publishCatalogToR2(fakeR2, root, "open-food-facts", undefined, root);
     expect(writes.at(-1)).toBe(active);
-    expect(objects.get(active)).toEqual(objects.get(`open-food-facts/releases/${sha}.json`));
+    const activeObject = objects.get(active);
+    if (!activeObject) throw new Error("Expected active state");
+    const state = JSON.parse(activeObject.toString("utf8"));
+    expect(state.active).toBe(sha);
+    expect(objects.has(`open-food-facts/releases/${sha}.json`)).toBe(true);
 
     await expect(
-      publishCatalogToR2(fakeR2, root, "open-food-facts", '"stale-object"', root),
+      publishCatalogToR2(fakeR2, root, "open-food-facts", { etag: '"stale-object"', state }, root),
     ).rejects.toThrow("PreconditionFailed");
     expect(writes.filter((key) => key === active)).toHaveLength(1);
 

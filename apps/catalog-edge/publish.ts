@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
+import { validateBlsCatalogRelease } from "../../packages/bls-import/src/publish.ts";
 import {
   type CatalogManifest,
   type CatalogProvider,
@@ -15,12 +16,18 @@ import { barcodeRows, readProduct } from "../../packages/off-import/src/catalog-
 import { validateCatalogSnapshot } from "../../packages/off-import/src/catalog-snapshot.ts";
 import { refreshOpenFoodFactsDeltas } from "../../packages/off-import/src/delta.ts";
 import { compatibleOpenFoodFactsManifest } from "../../packages/off-import/src/publish.ts";
+import {
+  type CatalogState,
+  checksum,
+  maxManifestBytes,
+  maxStateBytes,
+  readCatalogState,
+} from "./state.ts";
 import { shardFor } from "./worker.ts";
 
 const exec = promisify(execFile);
 const bucket = "edo-catalogs";
 const off = "open-food-facts";
-const checksum = /^[a-f0-9]{64}$/;
 const notFound = /\(404\)|\(NoSuchKey\)/;
 const alreadyExists = /\(412\)|\(PreconditionFailed\)/;
 
@@ -90,18 +97,37 @@ function hasStatus(error: unknown, status: RegExp) {
   return error instanceof Error && "stderr" in error && status.test(String(error.stderr));
 }
 
-async function downloadActive(r2: R2, provider: CatalogProvider, directory: string) {
-  const active = join(directory, "active.json");
+async function downloadState(r2: R2, provider: CatalogProvider, directory: string) {
+  const path = join(directory, "state.json");
+  let result: Awaited<ReturnType<R2>>;
   try {
-    const { ETag } = await r2("get-object", `${provider}/active.json`, active);
-    if (!ETag || !/^"[^"\r\n]+"$/.test(ETag)) throw new Error("Missing active catalog ETag");
-    const raw = await readFile(active);
-    if (raw.length > 16 * 1024) throw new Error("Active catalog manifest is oversized");
-    return { raw, hash: digest(raw), manifest: manifestFrom(raw, provider), etag: ETag };
+    result = await r2("get-object", `${provider}/state.json`, path);
   } catch (error) {
     if (hasStatus(error, notFound)) return null;
     throw error;
   }
+  const etag = result.ETag;
+  if (!etag || !/^"[^"\r\n]+"$/.test(etag)) throw new Error("Missing catalog state ETag");
+  const rawState = await readFile(path);
+  if (rawState.length > maxStateBytes) throw new Error("Published catalog state is oversized");
+  return { etag, state: readCatalogState(JSON.parse(rawState.toString("utf8"))) };
+}
+
+async function downloadActive(r2: R2, provider: CatalogProvider, directory: string) {
+  const publication = await downloadState(r2, provider, directory);
+  if (!publication) return null;
+  const { state } = publication;
+  const active = join(directory, "remote-active.json");
+  await r2("get-object", `${provider}/releases/${state.active}.json`, active);
+  const raw = await readFile(active);
+  if (raw.length > maxManifestBytes || digest(raw) !== state.active) {
+    throw new Error("Published manifest does not match the active digest");
+  }
+  const manifest = manifestFrom(raw, provider);
+  if (manifest.artifact.sha256 !== state.releases[state.active]) {
+    throw new Error("Published manifest does not match the active artifact");
+  }
+  return { raw, hash: state.active, manifest, ...publication };
 }
 
 async function verifyFile(path: string, expected: { sha256: string; bytes?: number }) {
@@ -173,12 +199,13 @@ export async function publishCatalogToR2(
   r2: R2,
   root: string,
   provider: CatalogProvider,
-  etag: string | undefined,
+  current: { etag: string; state: CatalogState } | undefined,
   scratch: string,
 ) {
   const base = join(root, provider);
   const active = join(base, "active.json");
   const raw = await readFile(active);
+  if (raw.length > maxManifestBytes) throw new Error("Catalog manifest is oversized");
   const manifest = manifestFrom(raw, provider);
   const releaseHash = digest(raw);
   const artifact = join(base, "artifacts", `${manifest.artifact.sha256}.sqlite`);
@@ -202,6 +229,8 @@ export async function publishCatalogToR2(
       await verifyFile(receipt, { sha256: manifest.source.sha256 });
       await publishImmutable(r2, `${provider}/${key}`, receipt, scratch);
     }
+  } else {
+    await validateBlsCatalogRelease(artifact, manifest);
   }
   await publishImmutable(
     r2,
@@ -210,8 +239,17 @@ export async function publishCatalogToR2(
     scratch,
   );
   await publishImmutable(r2, `${provider}/releases/${releaseHash}.json`, release, scratch);
-  const condition = etag ? ["--if-match", etag] : ["--if-none-match", "*"];
-  await r2("put-object", `${provider}/active.json`, ...condition, "--body", release);
+  const state: CatalogState = {
+    active: releaseHash,
+    releases: { ...current?.state.releases, [releaseHash]: manifest.artifact.sha256 },
+  };
+  const stateText = JSON.stringify(state);
+  if (Buffer.byteLength(stateText) > maxStateBytes)
+    throw new Error("Catalog publication state is oversized");
+  const statePath = join(scratch, "next-state.json");
+  await writeFile(statePath, stateText);
+  const condition = current ? ["--if-match", current.etag] : ["--if-none-match", "*"];
+  await r2("put-object", `${provider}/state.json`, ...condition, "--body", statePath);
   return releaseHash;
 }
 
@@ -240,7 +278,7 @@ async function run() {
         throw new Error("Open Food Facts catalog source is more than 72 hours old");
       const release =
         result.status === "published"
-          ? await publishCatalogToR2(r2, localRoot, off, current.etag, scratch)
+          ? await publishCatalogToR2(r2, localRoot, off, current, scratch)
           : current.hash;
       console.log(
         JSON.stringify({
@@ -258,10 +296,10 @@ async function run() {
       (expected === "empty" || checksum.test(expected)) &&
       extra.length === 0
     ) {
-      const current = await downloadActive(r2, provider, scratch);
-      if ((current?.hash ?? "empty") !== expected)
+      const current = await downloadState(r2, provider, scratch);
+      if ((current?.state.active ?? "empty") !== expected)
         throw new Error("Active R2 catalog changed before publication");
-      console.log(await publishCatalogToR2(r2, root, provider, current?.etag, scratch));
+      console.log(await publishCatalogToR2(r2, root, provider, current ?? undefined, scratch));
     } else {
       throw new Error(
         "Usage: publish.ts nightly | publish <bls|open-food-facts> <catalog-root> <empty|active-sha256>",
