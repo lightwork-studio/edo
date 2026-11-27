@@ -6,6 +6,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "platforms": ["ios", "android"],
+    "plugins": [["expo-localization", { "supportedLocales": ["en", "de"] }]],
     "ios": {
       "bundleIdentifier": "studio.lightwork.edo"
     },

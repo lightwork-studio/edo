@@ -79,7 +79,15 @@ async function openLocalDiaryConnection() {
   const db = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
     const diary = await openDiary({ connection: connectionFor(db), backupBeforeMigration });
-    return { diary, close: () => db.closeAsync() };
+    return {
+      diary,
+      newId() {
+        const row = db.getFirstSync<{ id: string }>("SELECT lower(hex(randomblob(16))) AS id");
+        if (!row) throw new Error("Could not allocate a diary ID");
+        return row.id;
+      },
+      close: () => db.closeAsync(),
+    };
   } catch (error) {
     await db.closeAsync();
     throw error;
