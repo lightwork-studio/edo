@@ -20,12 +20,20 @@ import { type CatalogManifest, isCatalogManifest, isCatalogProvider } from "./ma
 
 export * from "./manifest.ts";
 
-export interface CatalogImportInput
+interface CatalogImportMetadata
   extends Pick<CatalogManifest, "provider" | "schemaVersion" | "importerVersion" | "attribution"> {
   root: string;
+  source: Omit<CatalogManifest["source"], "sha256">;
+}
+
+export interface CatalogImportInput extends CatalogImportMetadata {
   /** A complete, stable input file, such as a downloaded archive. */
   inputPath: string;
-  source: Omit<CatalogManifest["source"], "sha256">;
+}
+
+export interface PreparedCatalogImportInput extends CatalogImportMetadata {
+  /** Write and close a regular file at the supplied private path without linking to another file. */
+  prepareInput(destination: string): Promise<void>;
 }
 
 export interface CatalogBuilder {
@@ -58,9 +66,9 @@ async function installImmutable(
     await link(staged, destination);
   } catch (error) {
     if (!isAlreadyPresent(error)) throw error;
-    const existing = await fileDigest(destination);
-    if (existing.sha256 !== expected.sha256 || existing.bytes !== expected.bytes) {
-      throw new Error("Stored catalog file does not match its checksum");
+    const existing = (await lstat(destination)).isFile() ? await fileDigest(destination) : null;
+    if (existing?.sha256 !== expected.sha256 || existing?.bytes !== expected.bytes) {
+      throw new Error(`Stored catalog file does not match its checksum: ${basename(destination)}`);
     }
   }
 }
@@ -82,9 +90,53 @@ async function syncFile(path: string): Promise<void> {
   await file.sync();
 }
 
+function managedSourcePath(providerRoot: string): string {
+  return join(providerRoot, ".catalog-managed-source");
+}
+
+function lockPublisher(providerRoot: string): DatabaseSync {
+  // SQLite releases the provider's writer lock even if an import process is terminated.
+  const lock = new DatabaseSync(join(providerRoot, ".publisher.sqlite"));
+  try {
+    lock.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
+    return lock;
+  } catch (error) {
+    lock.close();
+    throw error;
+  }
+}
+
+/** Reclaim the producer-owned raw file even if the next run finds an unchanged release. */
+export async function clearPreparedCatalogSource(
+  root: string,
+  provider: CatalogManifest["provider"],
+): Promise<void> {
+  if (!isCatalogProvider(provider)) throw new Error("Unknown catalog provider");
+  const providerRoot = join(root, provider);
+  const path = managedSourcePath(providerRoot);
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+  using _lock = lockPublisher(providerRoot);
+  await rm(path, { force: true });
+}
+
+async function copySource(inputPath: string, stage: string): Promise<string> {
+  const inputFile = await realpath(inputPath);
+  if (!(await stat(inputFile)).isFile()) throw new Error("Catalog input must be a regular file");
+  const stagedSource = join(stage, "source");
+  await mkdir(stagedSource);
+  const snapshot = join(stagedSource, basename(inputFile));
+  await copyFile(inputFile, snapshot, constants.COPYFILE_FICLONE);
+  return snapshot;
+}
+
 /** Serialize writers per provider. Independent providers use separate activation pointers. */
 export async function publishCatalog(
-  input: CatalogImportInput,
+  input: CatalogImportInput | PreparedCatalogImportInput,
   builder: CatalogBuilder,
 ): Promise<CatalogManifest> {
   if (!isCatalogProvider(input.provider)) throw new Error("Unknown catalog provider");
@@ -94,24 +146,28 @@ export async function publishCatalog(
   const releases = join(root, "releases");
   await mkdir(artifacts, { recursive: true });
   await mkdir(releases, { recursive: true });
-  // SQLite releases the provider's writer lock even if an import process is terminated.
-  using lock = new DatabaseSync(join(root, ".publisher.sqlite"));
-  lock.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
+  using _lock = lockPublisher(root);
   const stage = await mkdtemp(join(root, ".stage-"));
+  const managed = !("inputPath" in input);
+  const managedSource = managedSourcePath(root);
   try {
-    const inputFile = await realpath(input.inputPath);
-    if (!(await stat(inputFile)).isFile()) throw new Error("Catalog input must be a regular file");
-    const stagedSource = join(stage, "source");
-    await mkdir(stagedSource);
-    const snapshot = join(stagedSource, basename(inputFile));
-    await copyFile(inputFile, snapshot, constants.COPYFILE_FICLONE);
-    const original = await stat(snapshot, { bigint: true });
+    if (managed) {
+      await rm(managedSource, { force: true });
+      await input.prepareInput(managedSource);
+    }
+    const snapshot = managed ? managedSource : await copySource(input.inputPath, stage);
+    const original = await lstat(snapshot, { bigint: true });
+    if (!original.isFile() || original.nlink !== 1n) {
+      throw new Error("Catalog source must be a regular file with a single link");
+    }
     const source = await fileDigest(snapshot);
     const stagedDatabase = join(stage, "catalog.sqlite");
     const counts = await builder.build(snapshot, stagedDatabase);
     await builder.validate(stagedDatabase, counts);
-    const final = await stat(snapshot, { bigint: true });
+    const final = await lstat(snapshot, { bigint: true });
     if (
+      !final.isFile() ||
+      final.nlink !== 1n ||
       original.dev !== final.dev ||
       original.ino !== final.ino ||
       original.size !== final.size ||
@@ -138,6 +194,7 @@ export async function publishCatalog(
         release: input.source.release,
         url: input.source.url,
         sha256: source.sha256,
+        ...(input.source.lastModified !== undefined && { lastModified: input.source.lastModified }),
       },
       attribution: {
         name: input.attribution.name,
@@ -183,6 +240,7 @@ export async function publishCatalog(
     return manifest;
   } finally {
     // Cleanup must preserve the import result and must not mask the underlying failure.
+    if (managed) await rm(managedSource, { force: true }).catch(() => undefined);
     await rm(stage, { recursive: true, force: true }).catch(() => undefined);
   }
 }

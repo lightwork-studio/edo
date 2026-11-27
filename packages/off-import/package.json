@@ -1,0 +1,19 @@
+{
+  "name": "@edo/off-import",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "import": "node src/cli.ts",
+    "refresh": "node src/refresh-cli.ts",
+    "health": "node src/health-cli.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@edo/catalog-import": "workspace:*",
+    "@edo/core": "workspace:*"
+  }
+}
