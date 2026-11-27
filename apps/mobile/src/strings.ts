@@ -107,6 +107,7 @@ export const strings = {
     archiveShareError: "Couldn’t share the diary archive. Try again.",
     archiveOpenError: "Couldn’t open this Edo diary archive.",
     archiveRestoreError: "Couldn’t restore the archive. Try again.",
+    archiveSizeError: "The mobile app supports archives up to 16 MiB.",
     archiveCounts: (added: number, existing: number) => `${added} new · ${existing} already saved`,
     archiveRestored: (added: number, existing: number) =>
       `${added} restored · ${existing} already saved`,
@@ -260,6 +261,7 @@ export const strings = {
     archiveShareError: "Das Tagebucharchiv konnte nicht geteilt werden. Versuche es erneut.",
     archiveOpenError: "Dieses Edo-Tagebucharchiv konnte nicht geöffnet werden.",
     archiveRestoreError: "Das Archiv konnte nicht wiederhergestellt werden. Versuche es erneut.",
+    archiveSizeError: "Die App unterstützt Archive bis 16 MiB.",
     archiveCounts: (added: number, existing: number) =>
       `${added} neu · ${existing} bereits gespeichert`,
     archiveRestored: (added: number, existing: number) =>

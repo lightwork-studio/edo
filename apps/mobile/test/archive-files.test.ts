@@ -1,9 +1,16 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { chooseArchive, pruneArchiveExports, shareArchive } from "../src/archive-files";
+import {
+  ArchiveSizeError,
+  chooseArchive,
+  pruneArchiveExports,
+  shareArchive,
+} from "../src/archive-files";
 
 const mock = vi.hoisted(() => ({
   directories: new Set<string>(),
   files: new Map<string, string>(),
+  sizes: new Map<string, number>(),
+  read: vi.fn(),
   choose: vi.fn(),
   share: vi.fn(),
   sharingAvailable: vi.fn(),
@@ -64,6 +71,11 @@ vi.mock("expo-file-system", () => {
     get exists() {
       return mock.files.has(this.uri);
     }
+    get size() {
+      return (
+        mock.sizes.get(this.uri) ?? new TextEncoder().encode(mock.files.get(this.uri) ?? "").length
+      );
+    }
     create() {
       mock.files.set(this.uri, "");
     }
@@ -71,6 +83,7 @@ vi.mock("expo-file-system", () => {
       mock.files.set(this.uri, text);
     }
     async text() {
+      mock.read(this.uri);
       const source = mock.files.get(this.uri);
       if (source === undefined) throw new Error("Missing selected file");
       return source;
@@ -86,6 +99,8 @@ vi.mock("expo-file-system", () => {
 beforeEach(() => {
   mock.directories.clear();
   mock.files.clear();
+  mock.sizes.clear();
+  mock.read.mockReset();
   mock.choose.mockReset();
   mock.share.mockReset();
   mock.sharingAvailable.mockReset().mockResolvedValue(true);
@@ -130,4 +145,24 @@ it("reads and removes the picker copy, and keeps a file the picker returns outsi
   expect(mock.choose).toHaveBeenCalledWith(
     expect.objectContaining({ copyToCacheDirectory: true, multiple: false }),
   );
+});
+
+it("rejects oversized input before reading and cleans up oversized export staging", async () => {
+  const oversized = 16 * 1024 * 1024 + 1;
+  const uri = "file:///cache/DocumentPicker/large.json";
+  mock.files.set(uri, "synthetic oversized source");
+  mock.sizes.set(uri, oversized);
+  mock.choose.mockResolvedValueOnce({ canceled: false, assets: [{ uri }] });
+  await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveSizeError);
+  expect(mock.read).not.toHaveBeenCalled();
+  expect(mock.files.has(uri)).toBe(false);
+
+  const staged =
+    "file:///cache/edo-diary-exports/300-a1234567-1234-4321-abcd-123456789abc/edo-diary.json";
+  mock.sizes.set(staged, oversized);
+  await expect(shareArchive("synthetic oversized export", 300)).rejects.toBeInstanceOf(
+    ArchiveSizeError,
+  );
+  expect(mock.share).not.toHaveBeenCalled();
+  expect(mock.files.has(staged)).toBe(false);
 });

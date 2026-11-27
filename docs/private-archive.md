@@ -32,6 +32,7 @@ for personal records.
 On iOS or Android, open **Progress**, then **Diary files**. Share a new archive through the
 system share sheet or choose a previously exported file to preview its restore. The phone
 applies the preview only after you select **Restore records**.
+The mobile file picker and share flow accept archives up to 16 MiB.
 
 Sharing uses a temporary copy in the application cache. The app clears expired staging copies
 when Diary files opens or another archive is shared. The staging window is one day to give the

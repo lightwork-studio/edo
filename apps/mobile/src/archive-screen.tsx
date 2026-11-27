@@ -5,7 +5,12 @@ import type {
 } from "@edo/storage";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { chooseArchive, pruneArchiveExports, shareArchive } from "./archive-files";
+import {
+  ArchiveSizeError,
+  chooseArchive,
+  pruneArchiveExports,
+  shareArchive,
+} from "./archive-files";
 import type { Strings } from "./strings";
 import { DetailHeader, Notice, PrimaryButton, styles } from "./ui";
 
@@ -26,7 +31,7 @@ export function ArchiveScreen({
   const active = useRef(false);
   const [busy, setBusy] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [error, setError] = useState<"share" | "choose" | "restore" | null>(null);
+  const [error, setError] = useState<"share" | "choose" | "restore" | "size" | null>(null);
   const [result, setResult] = useState<Extract<
     PrivateArchiveResult,
     { status: "restored" }
@@ -46,8 +51,8 @@ export function ArchiveScreen({
     setBusy(true);
     try {
       await operation();
-    } catch {
-      if (active.current) setError(kind);
+    } catch (error) {
+      if (active.current) setError(error instanceof ArchiveSizeError ? "size" : kind);
     } finally {
       ongoing.current = false;
       if (active.current) setBusy(false);
@@ -58,6 +63,7 @@ export function ArchiveScreen({
     share: t.archiveShareError,
     choose: t.archiveOpenError,
     restore: t.archiveRestoreError,
+    size: t.archiveSizeError,
   };
   return (
     <>
