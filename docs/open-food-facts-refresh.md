@@ -72,14 +72,17 @@ node apps/catalog-edge/publish.ts publish open-food-facts "$CATALOG_ROOT" empty
 
 A reviewed BLS release uses provider `bls` and an additional argument containing the exact
 artifact SHA-256 recorded during review. Use `empty` only for the first publication of a
-provider. To roll back, disable `EDO_CATALOG_REFRESH_ENABLED` and wait
-for any publication already running. Prepare the desired catalog locally and pass the active
+provider. To roll back, set `EDO_CATALOG_PRODUCTION_ENABLED=false` in the
+`catalog-production` environment and wait for any active refresh jobs to finish.
+Prepare the desired catalog locally and pass the active
 manifest's SHA-256 in place of `empty`. Obtain the SHA-256 from the provider's R2 `state.json`
 if the active manifest is unreadable. Keep refresh paused until the cause is fixed or a fresh
 baseline is seeded so the job does not replay the same bad deltas.
 
-After seeding and configuring credentials, set repository variable
-`EDO_CATALOG_REFRESH_ENABLED=true` to enable the job.
+After seeding and configuring credentials, set `EDO_CATALOG_PRODUCTION_ENABLED=true` in the
+`catalog-production` environment variables to enable the publish step. Define this switch
+only in that environment. The previous repository-level `EDO_CATALOG_REFRESH_ENABLED`
+variable can be removed.
 Run **Refresh Open Food Facts catalog** manually once on `main` to verify the schedule's path.
 Subsequent runs are scheduled for 04:17 UTC. The job restores the prior manifest and artifact
 from R2, then applies retained deltas. It verifies newly written immutable objects before

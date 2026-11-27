@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   refresh:
-    if: github.ref == 'refs/heads/main' && github.ref_protected && vars.EDO_CATALOG_REFRESH_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && github.ref_protected
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: catalog-production
@@ -28,6 +28,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Verify and publish updated catalog
+        if: vars.EDO_CATALOG_PRODUCTION_ENABLED == 'true'
         env:
           EDO_R2_ACCOUNT_ID: ${{ vars.EDO_R2_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.EDO_R2_ACCESS_KEY_ID }}
