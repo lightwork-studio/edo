@@ -1,0 +1,85 @@
+import { randomUUID } from "expo-crypto";
+import { Directory, File, Paths } from "expo-file-system";
+import { isAvailableAsync, shareAsync } from "expo-sharing";
+
+const exportFolder = "edo-diary-exports";
+const exportLifetimeMs = 24 * 60 * 60 * 1000;
+const maxArchiveBytes = 16 * 1024 * 1024;
+const maxArchiveJsonStructureTokens = 512_000;
+const maxArchiveJsonDepth = 32;
+
+export class ArchiveSizeError extends RangeError {}
+export class ArchiveComplexityError extends RangeError {}
+
+function checkArchiveSize(bytes: number): void {
+  if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error("Could not measure the archive");
+  if (bytes > maxArchiveBytes)
+    throw new ArchiveSizeError("Diary archive exceeds the mobile file limit");
+}
+
+function checkArchiveComplexity(source: string): void {
+  let inString = false;
+  let depth = 0;
+  let structureTokens = 0;
+  // Bound parser allocations before JSON.parse materializes object-heavy or deeply nested input.
+  // JSON.parse still validates syntax and the archive store still validates record content.
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    if (inString) {
+      if (char === "\\") index++;
+      else if (char === '"') inString = false;
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      depth++;
+      structureTokens++;
+    } else if (char === "}" || char === "]") {
+      depth--;
+    } else if (char === ",") {
+      structureTokens++;
+    }
+    if (structureTokens > maxArchiveJsonStructureTokens || depth > maxArchiveJsonDepth) {
+      throw new ArchiveComplexityError("Diary archive exceeds mobile JSON limits");
+    }
+  }
+}
+
+export function pruneArchiveExports(now = Date.now()): void {
+  try {
+    const root = new Directory(Paths.cache, exportFolder);
+    if (!root.exists) return;
+    for (const entry of root.list()) {
+      if (!(entry instanceof Directory)) continue;
+      const match = /^(\d+)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.exec(
+        entry.name,
+      );
+      if (match && now - Number(match[1]) >= exportLifetimeMs) entry.delete();
+    }
+  } catch {
+    // The OS can also discard this cache independently.
+  }
+}
+
+export async function shareArchive(source: string, now = Date.now()): Promise<void> {
+  if (!(await isAvailableAsync())) throw new Error("Archive sharing is unavailable");
+  checkArchiveSize(source.length);
+  checkArchiveComplexity(source);
+  pruneArchiveExports(now);
+  const directory = new Directory(Paths.cache, exportFolder, `${now}-${randomUUID()}`);
+  directory.create({ intermediates: true });
+  try {
+    const file = new File(directory, "edo-diary.json");
+    file.create();
+    await file.write(source);
+    checkArchiveSize(file.size);
+    await shareAsync(file.uri, { mimeType: "application/json", UTI: "public.json" });
+    // The receiving app can open the file after the share sheet returns.
+  } catch (error) {
+    try {
+      if (directory.exists) directory.delete();
+    } catch {
+      // A failed cleanup can be retried when Diary files reopens.
+    }
+    throw error;
+  }
+}

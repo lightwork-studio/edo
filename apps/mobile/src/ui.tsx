@@ -101,7 +101,7 @@ export function DetailHeader({
   onBack,
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   back: string;
   onBack: () => void;
 }) {
@@ -112,7 +112,7 @@ export function DetailHeader({
         <Text accessibilityRole="header" style={styles.title}>
           {title}
         </Text>
-        <Text style={styles.meta}>{subtitle}</Text>
+        {subtitle && <Text style={styles.meta}>{subtitle}</Text>}
       </View>
     </View>
   );
