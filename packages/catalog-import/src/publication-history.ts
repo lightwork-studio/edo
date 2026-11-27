@@ -63,13 +63,25 @@ export async function archiveCurrentCatalogRelease(
 ): Promise<void> {
   const previous = await activeReleaseDigest(root, provider);
   if (!previous || previous === nextDigest) return;
+  await writeCatalogPublicationReceipt(root, stage, previous);
+}
 
+export async function ensureCatalogReceiptDirectory(root: string): Promise<string> {
   const directory = join(root, receiptDirectory);
   await mkdir(directory, { recursive: true });
   if (!(await lstat(directory)).isDirectory())
     throw new Error("Catalog receipt directory must be a real directory");
-  const receipt = join(directory, `${previous}.sha256`);
-  const body = `${previous}\n`;
+  return directory;
+}
+
+export async function writeCatalogPublicationReceipt(
+  root: string,
+  stage: string,
+  digest: string,
+): Promise<void> {
+  const directory = await ensureCatalogReceiptDirectory(root);
+  const receipt = join(directory, `${digest}.sha256`);
+  const body = `${digest}\n`;
   if ((await readRegularFile(receipt))?.toString("utf8") !== body) {
     const pending = join(stage, "published.sha256");
     await writeFile(pending, body, { flush: true });

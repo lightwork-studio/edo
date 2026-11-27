@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -75,6 +75,10 @@ async function active(): Promise<unknown> {
   return JSON.parse(await readFile(join(input.root, input.provider, "active.json"), "utf8"));
 }
 
+function restore(releaseSha256: string) {
+  return restoreCatalogRelease(input.root, input.provider, releaseSha256, () => undefined);
+}
+
 it("publishes a readable SQLite artifact and reproducible manifest without duplicating a release", async () => {
   const first = await publishCatalog(input, builder);
   const second = await publishCatalog(input, builder);
@@ -122,6 +126,9 @@ it("archives only releases that reached the activation commit point", async () =
   const stored = await readdir(join(root, "releases"));
   expect(stored).toHaveLength(2);
   expect(await readdir(join(root, "artifacts"))).toHaveLength(2);
+  const interrupted = stored.find((file) => file !== `${first}.json`)?.slice(0, -5);
+  if (!interrupted) throw new Error("Expected a staged immutable catalog release");
+  await expect(restore(interrupted)).rejects.toThrow(/previously activated/);
   expect(digestOf(await readFile(activation))).toBe(first);
   expect(await listPublishedCatalogReleases(input.root, input.provider)).toEqual([first]);
 
@@ -133,12 +140,55 @@ it("archives only releases that reached the activation commit point", async () =
   );
   expect(await readFile(join(root, "published", `${first}.sha256`), "utf8")).toBe(`${first}\n`);
 
-  await restoreCatalogRelease(input.root, input.provider, first);
+  await restore(first);
   expect(digestOf(await readFile(activation))).toBe(first);
   expect(new Set(await listPublishedCatalogReleases(input.root, input.provider))).toEqual(
     new Set([first, second]),
   );
 });
+
+it("keeps the latest successful release available for recovery if its pointer is damaged", async () => {
+  await publishCatalog(input, builder);
+  const activation = join(input.root, input.provider, "active.json");
+  const original = await readFile(activation);
+  const digest = createHash("sha256").update(original).digest("hex");
+  await writeFile(activation, "broken catalog pointer");
+  expect(await listPublishedCatalogReleases(input.root, input.provider)).toEqual([digest]);
+  await restore(digest);
+  expect(await readFile(activation)).toEqual(original);
+});
+
+it("rejects a symlinked publisher lock before opening SQLite", async () => {
+  await publishCatalog(input, builder);
+  const root = join(input.root, input.provider);
+  const activation = await readFile(join(root, "active.json"));
+  const digest = createHash("sha256").update(activation).digest("hex");
+  const lockPath = join(root, ".publisher.sqlite");
+  const moved = join(directory, "outside.sqlite");
+  await rename(lockPath, moved);
+  await symlink(moved, lockPath, "file");
+  await expect(restore(digest)).rejects.toThrow(/publisher lock must be a regular file/);
+  await expect(publishCatalog(input, builder)).rejects.toThrow(
+    /publisher lock must be a regular file/,
+  );
+  expect(await readFile(join(root, "active.json"))).toEqual(activation);
+});
+
+it.each(["provider", "artifacts", "releases", "published"] as const)(
+  "rejects a symlinked %s directory before publishing",
+  async (kind) => {
+    const root = join(input.root, input.provider);
+    const path = kind === "provider" ? root : join(root, kind);
+    const outside = join(directory, "outside");
+    await mkdir(dirname(path), { recursive: true });
+    await mkdir(outside);
+    await symlink(outside, path, "dir");
+
+    await expect(publishCatalog(input, builder)).rejects.toThrow(/must be (a )?real director/);
+    expect(await readdir(outside)).toEqual([]);
+    await expect(readFile(join(root, "active.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "syncs an existing receipt again before retrying activation",
@@ -165,7 +215,7 @@ it.skipIf(process.platform === "win32")(
       expect(await active()).toEqual(first);
       const second = await publishCatalog(next, builder);
       expect(await active()).toEqual(second);
-      expect(attempts).toBe(2);
+      expect(attempts).toBe(3);
     } finally {
       vi.mocked(open).mockImplementation(real.open);
     }

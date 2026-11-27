@@ -80,13 +80,15 @@ timestamp separately from the check and activation times to detect a stale upstr
    Verify the SHA-256 and byte size of `open-food-facts/artifacts/<artifact-sha>.sqlite` against
    that manifest. Open the artifact read-only and confirm `PRAGMA integrity_check` returns `ok`.
    If no release passes these checks, keep downloads paused and proceed to quarantine and rebuild.
-3. Restore the verified release with the publisher command. It checks both files and preserves
-   evidence of the displaced activation before changing `active.json`. If a directory occupies
+3. Restore the verified release with the publisher command. It checks both files, validates
+   Open Food Facts metadata and schema, and preserves evidence of the displaced activation
+   before changing `active.json`. If a directory occupies
    `active.json`, move it to private quarantine first. Use the catalog root and the known-good
-   manifest's digest.
+   manifest's digest. A legacy release without activation evidence must be reimported from its
+   reviewed source.
 
    ```sh
-   pnpm --filter @edo/catalog-import run restore /absolute/path/catalogs open-food-facts <manifest-sha256>
+   pnpm --filter @edo/off-import run restore /absolute/path/catalogs <manifest-sha256>
    ```
 
 4. Compare the reported digest-named file's SHA-256 to its filename, then move corrupt files to
