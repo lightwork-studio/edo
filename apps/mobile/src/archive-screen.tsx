@@ -1,7 +1,8 @@
-import type {
-  PrivateArchivePreview,
-  PrivateArchiveResult,
-  PrivateArchiveStore,
+import {
+  ArchiveIssueLimitError,
+  type PrivateArchivePreview,
+  type PrivateArchiveResult,
+  type PrivateArchiveStore,
 } from "@edo/storage";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -15,6 +16,8 @@ import type { Strings } from "./strings";
 import { DetailHeader, Notice, PrimaryButton, styles } from "./ui";
 
 type Selection = { source: string; preview: PrivateArchivePreview };
+const maxPreviewIssues = 100;
+const maxDisplayedIssues = 12;
 
 export function ArchiveScreen({
   t,
@@ -31,7 +34,9 @@ export function ArchiveScreen({
   const active = useRef(false);
   const [busy, setBusy] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [error, setError] = useState<"share" | "choose" | "restore" | "size" | null>(null);
+  const [error, setError] = useState<"share" | "choose" | "restore" | "size" | "issues" | null>(
+    null,
+  );
   const [result, setResult] = useState<Extract<
     PrivateArchiveResult,
     { status: "restored" }
@@ -52,7 +57,13 @@ export function ArchiveScreen({
     try {
       await operation();
     } catch (error) {
-      if (active.current) setError(error instanceof ArchiveSizeError ? "size" : kind);
+      if (active.current) {
+        if (error instanceof ArchiveSizeError) setError("size");
+        else if (error instanceof ArchiveIssueLimitError) {
+          setSelection(null);
+          setError("issues");
+        } else setError(kind);
+      }
     } finally {
       ongoing.current = false;
       if (active.current) setBusy(false);
@@ -64,6 +75,7 @@ export function ArchiveScreen({
     choose: t.archiveOpenError,
     restore: t.archiveRestoreError,
     size: t.archiveSizeError,
+    issues: t.archiveIssueLimitError,
   };
   return (
     <>
@@ -91,7 +103,10 @@ export function ArchiveScreen({
                 setResult(null);
                 const source = await chooseArchive();
                 if (source !== null && active.current) {
-                  setSelection({ source, preview: archive.previewPrivateArchive(source) });
+                  setSelection({
+                    source,
+                    preview: archive.previewPrivateArchive(source, maxPreviewIssues),
+                  });
                 }
               })
             }
@@ -123,11 +138,16 @@ export function ArchiveScreen({
                 {t.archiveConflicts(selection.preview.issues.length)}
               </Text>
             )}
-            {selection.preview.issues.map(({ collection, index, message }) => (
-              <Text key={`${collection}:${index}:${message}`} style={styles.meta}>
-                {t.archiveCollection[collection]} · {index + 1} · {message}
-              </Text>
-            ))}
+            {selection.preview.issues
+              .slice(0, maxDisplayedIssues)
+              .map(({ collection, index, message }) => (
+                <Text key={`${collection}:${index}:${message}`} style={styles.meta}>
+                  {t.archiveCollection[collection]} · {index + 1} · {message}
+                </Text>
+              ))}
+            {selection.preview.issues.length > maxDisplayedIssues && (
+              <Text style={styles.meta}>{t.archiveIssueSample(maxDisplayedIssues)}</Text>
+            )}
           </View>
         )}
       </ScrollView>
@@ -140,7 +160,10 @@ export function ArchiveScreen({
               title={t.restoreDiaryArchive}
               onPress={() =>
                 void run("restore", () => {
-                  const restored = archive.restorePrivateArchive(selection.source);
+                  const restored = archive.restorePrivateArchive(
+                    selection.source,
+                    maxPreviewIssues,
+                  );
                   if (restored.status === "rejected")
                     setSelection({ ...selection, preview: restored.preview });
                   else {

@@ -58,7 +58,7 @@ function readMeal(value: unknown): DiaryMeal {
   };
 }
 
-export function readDiaryArchiveValue(value: unknown) {
+export function readDiaryArchiveValue(value: unknown, onIssue?: () => void) {
   const root = archiveRecord(value, ["format", "formatVersion", "meals"]);
   if (
     root.format !== format ||
@@ -68,10 +68,10 @@ export function readDiaryArchiveValue(value: unknown) {
     throw new TypeError("Unsupported diary archive format");
   }
 
-  return readMealEntries(root.meals);
+  return readMealEntries(root.meals, onIssue);
 }
 
-export function readMealEntries(meals: readonly unknown[]) {
+export function readMealEntries(meals: readonly unknown[], onIssue?: () => void) {
   const entries: { index: number; meal: DiaryMeal }[] = [];
   const issues: DiaryRestoreIssue[] = [];
   const mealIds = new Set<string>();
@@ -89,6 +89,7 @@ export function readMealEntries(meals: readonly unknown[]) {
       entries.push({ index, meal });
     } catch (error) {
       if (!(error instanceof TypeError)) throw error;
+      onIssue?.();
       issues.push({ mealIndex: index, message: error.message });
     }
   }

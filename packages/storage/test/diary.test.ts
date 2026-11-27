@@ -10,6 +10,7 @@ import {
   updateDiaryPortion,
 } from "@edo/core";
 import {
+  ArchiveIssueLimitError,
   type DiaryMeal,
   type DiarySqliteConnection,
   mealFromTemplate,
@@ -999,6 +1000,31 @@ test("keeps legacy meal-only archives readable and does not touch other private 
     alreadyPresent: 1,
     issues: [],
   });
+});
+
+test("stops a mobile preview with a large number of malformed legacy records", async () => {
+  const diary = await createDatabase("archive-issue-budget.db").start();
+  const source = `{"format":"edo-diary","formatVersion":1,"meals":[${"0,".repeat(999_999)}0]}`;
+  expect(() => diary.previewPrivateArchive(source, 100)).toThrow(ArchiveIssueLimitError);
+  expect(() => diary.restorePrivateArchive(source, 100)).toThrow(ArchiveIssueLimitError);
+  expect(diary.latestMealDay()).toBeNull();
+});
+
+test("counts invalid and conflicting archive records toward the same optional issue budget", async () => {
+  const diary = await createDatabase("archive-conflict-budget.db").start();
+  diary.saveWeighIn(weighIn);
+  const before = diary.exportPrivateArchive();
+  const source = JSON.stringify({
+    ...JSON.parse(before),
+    meals: [null],
+    weighIns: [{ ...weighIn, kg: weighIn.kg + 1 }],
+  });
+  expect(diary.previewPrivateArchive(source, 2).issues.map(({ collection }) => collection)).toEqual(
+    ["meals", "weighIns"],
+  );
+  expect(() => diary.restorePrivateArchive(source, 1)).toThrow(ArchiveIssueLimitError);
+  expect(diary.restorePrivateArchive(source)).toMatchObject({ status: "rejected" });
+  expect(diary.exportPrivateArchive()).toBe(before);
 });
 
 test("round-trips both saved offsets at a DST repeat, zero and an unknown offset", async () => {

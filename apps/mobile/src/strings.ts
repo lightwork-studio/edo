@@ -108,11 +108,13 @@ export const strings = {
     archiveOpenError: "Couldn’t open this Edo diary archive.",
     archiveRestoreError: "Couldn’t restore the archive. Try again.",
     archiveSizeError: "The mobile app supports archives up to 16 MiB.",
+    archiveIssueLimitError: "This archive has too many invalid or conflicting records to preview.",
     archiveCounts: (added: number, existing: number) => `${added} new · ${existing} already saved`,
     archiveRestored: (added: number, existing: number) =>
       `${added} restored · ${existing} already saved`,
     archiveConflicts: (count: number) =>
       `This archive has ${count} invalid or conflicting records.`,
+    archiveIssueSample: (count: number) => `Showing the first ${count} issues.`,
     archiveCollection: {
       meals: "Meals",
       customFoods: "Custom foods",
@@ -262,12 +264,15 @@ export const strings = {
     archiveOpenError: "Dieses Edo-Tagebucharchiv konnte nicht geöffnet werden.",
     archiveRestoreError: "Das Archiv konnte nicht wiederhergestellt werden. Versuche es erneut.",
     archiveSizeError: "Die App unterstützt Archive bis 16 MiB.",
+    archiveIssueLimitError:
+      "Für eine Vorschau enthält dieses Archiv zu viele ungültige oder widersprüchliche Einträge.",
     archiveCounts: (added: number, existing: number) =>
       `${added} neu · ${existing} bereits gespeichert`,
     archiveRestored: (added: number, existing: number) =>
       `${added} wiederhergestellt · ${existing} bereits gespeichert`,
     archiveConflicts: (count: number) =>
       `Dieses Archiv enthält ${count} ungültige oder widersprüchliche Einträge.`,
+    archiveIssueSample: (count: number) => `Die ersten ${count} Probleme werden angezeigt.`,
     archiveCollection: {
       meals: "Mahlzeiten",
       customFoods: "Eigene Lebensmittel",

@@ -3,6 +3,7 @@ import { type DiaryProgressStore, diaryProgress, verifyDiaryProgress } from "./d
 import { type DiaryBackup, diaryMigrations, inCurrentDiary, migrateDiary } from "./migrations.ts";
 import { type MyFoodsStore, myFoods, verifyMyFoods } from "./my-foods.ts";
 import {
+  ArchiveIssueLimitError,
   createPrivateArchive,
   insertPrivateRecords,
   type PrivateArchiveIssue,
@@ -33,8 +34,9 @@ export interface DiaryStore {
 
 export interface PrivateArchiveStore {
   exportPrivateArchive(): string;
-  previewPrivateArchive(source: string): PrivateArchivePreview;
-  restorePrivateArchive(source: string): PrivateArchiveResult;
+  /** Throws ArchiveIssueLimitError if the supplied validation and conflict budget is exhausted. */
+  previewPrivateArchive(source: string, maxIssues?: number): PrivateArchivePreview;
+  restorePrivateArchive(source: string, maxIssues?: number): PrivateArchiveResult;
 }
 
 export interface OpenDiaryOptions {
@@ -126,9 +128,22 @@ function readMeal(db: DiarySqliteConnection, id: string): DiaryMeal | null {
   );
 }
 
+function archiveIssueBudget(maxIssues: number | undefined): (() => void) | undefined {
+  if (maxIssues === undefined) return;
+  if (!Number.isSafeInteger(maxIssues) || maxIssues < 0) {
+    throw new RangeError("Invalid archive issue limit");
+  }
+  let count = 0;
+  return () => {
+    count += 1;
+    if (count > maxIssues) throw new ArchiveIssueLimitError("Too many diary archive issues");
+  };
+}
+
 function planPrivateRestore(
   db: DiarySqliteConnection,
   archive: ReturnType<typeof readPrivateArchive>,
+  onIssue?: () => void,
 ) {
   const issues: PrivateArchiveIssue[] = [
     ...archive.issues,
@@ -138,6 +153,10 @@ function planPrivateRestore(
       message,
     })),
   ];
+  function reportIssue(issue: PrivateArchiveIssue): void {
+    onIssue?.();
+    issues.push(issue);
+  }
   const meals: DiaryMeal[] = [];
   let alreadyPresent = 0;
   for (const { index, meal } of archive.meals.entries) {
@@ -145,7 +164,7 @@ function planPrivateRestore(
     if (previous) {
       if (JSON.stringify(previous) === JSON.stringify(meal)) alreadyPresent += 1;
       else
-        issues.push({
+        reportIssue({
           collection: "meals",
           index,
           message: "This meal ID has different saved content",
@@ -153,7 +172,7 @@ function planPrivateRestore(
     } else if (
       meal.items.some((item) => db.get("SELECT id FROM diary_items WHERE id = ?", item.id))
     ) {
-      issues.push({
+      reportIssue({
         collection: "meals",
         index,
         message: "An item ID is already used by another saved meal",
@@ -162,7 +181,7 @@ function planPrivateRestore(
       meals.push(meal);
     }
   }
-  const records = archive.records ? planPrivateRecords(db, archive.records, issues) : null;
+  const records = archive.records ? planPrivateRecords(db, archive.records, reportIssue) : null;
   return {
     meals,
     records: records?.additions,
@@ -226,14 +245,16 @@ export async function openDiary({
         }
         return source;
       }),
-    previewPrivateArchive: (source) => {
-      const archive = readPrivateArchive(source);
-      return inCurrentDiary(db, "BEGIN", () => planPrivateRestore(db, archive).preview);
+    previewPrivateArchive: (source, maxIssues) => {
+      const onIssue = archiveIssueBudget(maxIssues);
+      const archive = readPrivateArchive(source, onIssue);
+      return inCurrentDiary(db, "BEGIN", () => planPrivateRestore(db, archive, onIssue).preview);
     },
-    restorePrivateArchive: (source) => {
-      const archive = readPrivateArchive(source);
+    restorePrivateArchive: (source, maxIssues) => {
+      const onIssue = archiveIssueBudget(maxIssues);
+      const archive = readPrivateArchive(source, onIssue);
       return inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
-        const { meals, records, preview } = planPrivateRestore(db, archive);
+        const { meals, records, preview } = planPrivateRestore(db, archive, onIssue);
         if (preview.issues.length > 0) return { status: "rejected", preview };
         for (const meal of meals) writeMeal(db, prepareMeal(meal), false);
         if (records) insertPrivateRecords(db, records);
