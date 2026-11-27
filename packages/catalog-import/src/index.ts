@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, lstatSync } from "node:fs";
 import {
   copyFile,
   link,
@@ -18,8 +18,15 @@ import {
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type CatalogManifest, isCatalogManifest, isCatalogProvider } from "./manifest.ts";
+import {
+  archiveCurrentCatalogRelease,
+  ensureCatalogReceiptDirectory,
+  listPublishedCatalogReleases,
+  writeCatalogPublicationReceipt,
+} from "./publication-history.ts";
 
 export * from "./manifest.ts";
+export { listPublishedCatalogReleases } from "./publication-history.ts";
 
 interface CatalogImportMetadata
   extends Pick<CatalogManifest, "provider" | "schemaVersion" | "importerVersion" | "attribution"> {
@@ -96,14 +103,25 @@ function managedSourcePath(providerRoot: string): string {
 }
 
 function lockPublisher(providerRoot: string): DatabaseSync {
+  const path = join(providerRoot, ".publisher.sqlite");
+  const existing = lstatSync(path, { throwIfNoEntry: false });
+  if (existing && (!existing.isFile() || existing.nlink !== 1)) {
+    throw new Error("Catalog publisher lock must be a regular file with a single link");
+  }
   // SQLite releases the provider's writer lock even if an import process is terminated.
-  const lock = new DatabaseSync(join(providerRoot, ".publisher.sqlite"));
+  const lock = new DatabaseSync(path);
   try {
     lock.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
     return lock;
   } catch (error) {
     lock.close();
     throw error;
+  }
+}
+
+async function requireCatalogDirectory(path: string): Promise<void> {
+  if (!(await lstat(path)).isDirectory()) {
+    throw new Error("Catalog paths must be real directories");
   }
 }
 
@@ -116,6 +134,7 @@ export async function clearPreparedCatalogSource(
   const providerRoot = join(root, provider);
   const path = managedSourcePath(providerRoot);
   try {
+    await requireCatalogDirectory(providerRoot);
     await lstat(path);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
@@ -135,12 +154,17 @@ async function copySource(inputPath: string, stage: string): Promise<string> {
   return snapshot;
 }
 
-async function activateManifest(root: string, stage: string, manifest: CatalogManifest) {
+async function activateManifest(
+  root: string,
+  stage: string,
+  manifest: CatalogManifest,
+  manifestText = `${JSON.stringify(manifest, null, 2)}\n`,
+) {
   if (!isCatalogManifest(manifest)) throw new Error("Invalid catalog release manifest");
+  await ensureCatalogReceiptDirectory(root);
 
   const artifacts = join(root, "artifacts");
   const releases = join(root, "releases");
-  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
   const releaseDigest = {
     sha256: createHash("sha256").update(manifestText).digest("hex"),
     bytes: Buffer.byteLength(manifestText),
@@ -152,6 +176,7 @@ async function activateManifest(root: string, stage: string, manifest: CatalogMa
     join(releases, `${releaseDigest.sha256}.json`),
     releaseDigest,
   );
+  await archiveCurrentCatalogRelease(root, stage, manifest.provider, releaseDigest.sha256);
 
   const activation = join(stage, "active.json");
   await writeFile(activation, manifestText, { flush: true });
@@ -161,9 +186,66 @@ async function activateManifest(root: string, stage: string, manifest: CatalogMa
     await syncFile(root);
   }
   await rename(activation, join(root, "active.json"));
-  if (process.platform !== "win32") {
-    // The rename is the commit point. A flush error here leaves both releases recoverable.
-    await syncFile(root).catch(() => undefined);
+  try {
+    if (process.platform !== "win32") await syncFile(root);
+    await writeCatalogPublicationReceipt(root, stage, releaseDigest.sha256);
+    if (process.platform !== "win32") await syncFile(root);
+  } catch {
+    // The pointer rename already committed. It proves the new release until a receipt is written.
+  }
+}
+
+/** Restore an activated release after rechecking its file and provider compatibility. */
+export async function restoreCatalogRelease(
+  root: string,
+  provider: CatalogManifest["provider"],
+  releaseSha256: string,
+  validate: (database: DatabaseSync, manifest: CatalogManifest) => void | Promise<void>,
+): Promise<CatalogManifest> {
+  if (!isCatalogProvider(provider) || !/^[a-f0-9]{64}$/.test(releaseSha256)) {
+    throw new Error("Invalid catalog provider or release checksum");
+  }
+  const providerRoot = join(root, provider);
+  const releases = join(providerRoot, "releases");
+  const artifacts = join(providerRoot, "artifacts");
+  for (const directory of [providerRoot, releases, artifacts]) {
+    await requireCatalogDirectory(directory);
+  }
+  using _lock = lockPublisher(providerRoot);
+  if (!(await listPublishedCatalogReleases(root, provider)).includes(releaseSha256)) {
+    throw new Error("Catalog restore requires a previously activated release");
+  }
+  const release = join(releases, `${releaseSha256}.json`);
+  if (!(await lstat(release)).isFile()) throw new Error("Catalog release must be a regular file");
+  const original = await readFile(release);
+  const text = original.toString("utf8");
+  if (
+    !Buffer.from(text).equals(original) ||
+    createHash("sha256").update(original).digest("hex") !== releaseSha256
+  ) {
+    throw new Error("Stored catalog release does not match its checksum");
+  }
+  const manifest: unknown = JSON.parse(text);
+  if (!isCatalogManifest(manifest) || manifest.provider !== provider) {
+    throw new Error("Invalid catalog release manifest");
+  }
+  const path = join(artifacts, `${manifest.artifact.sha256}.sqlite`);
+  const artifact = (await lstat(path)).isFile() ? await fileDigest(path) : null;
+  if (artifact?.sha256 !== manifest.artifact.sha256 || artifact.bytes !== manifest.artifact.bytes) {
+    throw new Error("Stored catalog artifact does not match its checksum");
+  }
+  verifyDatabase(path, manifest.schemaVersion);
+  using database = new DatabaseSync(path, { readOnly: true });
+  if (database.prepare("PRAGMA integrity_check").get()?.integrity_check !== "ok") {
+    throw new Error("Catalog restore failed SQLite integrity verification");
+  }
+  await validate(database, manifest);
+  const stage = await mkdtemp(join(providerRoot, ".stage-"));
+  try {
+    await activateManifest(providerRoot, stage, manifest, text);
+    return manifest;
+  } finally {
+    await rm(stage, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -176,6 +258,9 @@ export async function recordCatalogSourceLastModified(
 ): Promise<CatalogManifest> {
   if (!isCatalogProvider(provider)) throw new Error("Unknown catalog provider");
   const providerRoot = join(root, provider);
+  await requireCatalogDirectory(providerRoot);
+  await requireCatalogDirectory(join(providerRoot, "artifacts"));
+  await requireCatalogDirectory(join(providerRoot, "releases"));
   using _lock = lockPublisher(providerRoot);
   const active = join(providerRoot, "active.json");
   if (!(await lstat(active)).isFile()) throw new Error("Catalog activation must be a regular file");
@@ -218,9 +303,12 @@ export async function publishCatalog(
   const root = join(input.root, input.provider);
   const artifacts = join(root, "artifacts");
   const releases = join(root, "releases");
-  await mkdir(artifacts, { recursive: true });
-  await mkdir(releases, { recursive: true });
+  for (const directory of [root, artifacts, releases]) {
+    await mkdir(directory, { recursive: true });
+    await requireCatalogDirectory(directory);
+  }
   using _lock = lockPublisher(root);
+  await ensureCatalogReceiptDirectory(root);
   const stage = await mkdtemp(join(root, ".stage-"));
   const managed = !("inputPath" in input);
   const managedSource = managedSourcePath(root);

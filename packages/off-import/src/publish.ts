@@ -1,5 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
-import { type CatalogManifest, compatibleCatalog, publishCatalog } from "@edo/catalog-import";
+import {
+  type CatalogManifest,
+  compatibleCatalog,
+  publishCatalog,
+  restoreCatalogRelease,
+} from "@edo/catalog-import";
 import { readOpenFoodFactsExport } from "./read.ts";
 
 export const openFoodFactsCatalog = {
@@ -31,6 +36,30 @@ export function matchesOpenFoodFactsDatabase(database: DatabaseSync, manifest: C
     meta.release === manifest.source.release &&
     schema?.user_version === manifest.schemaVersion
   );
+}
+
+export function restoreOpenFoodFactsRelease(root: string, manifestSha256: string) {
+  return restoreCatalogRelease(root, provider, manifestSha256, (database, manifest) => {
+    if (!compatibleOpenFoodFactsManifest(manifest)) {
+      throw new Error("Unsupported Open Food Facts catalog manifest");
+    }
+    if (!matchesOpenFoodFactsDatabase(database, manifest)) {
+      throw new Error("Open Food Facts catalog metadata does not match its manifest");
+    }
+    validateOpenFoodFactsRows(database, manifest.counts.accepted);
+  });
+}
+
+function validateOpenFoodFactsRows(database: DatabaseSync, accepted: number): void {
+  const foreignKeys = database.prepare("PRAGMA foreign_key_check").all();
+  const rows = database
+    .prepare(
+      "SELECT (SELECT COUNT(*) FROM food) AS food, (SELECT COUNT(*) FROM barcode) AS barcode",
+    )
+    .get();
+  if (foreignKeys.length > 0 || rows?.food !== accepted || rows?.barcode !== accepted) {
+    throw new Error("Open Food Facts catalog failed integrity or row validation");
+  }
 }
 
 const schema = `
@@ -158,20 +187,10 @@ export async function publishOpenFoodFactsRelease(
         }
         using database = new DatabaseSync(artifactPath, { readOnly: true });
         const integrity = database.prepare("PRAGMA integrity_check").get();
-        const foreignKeys = database.prepare("PRAGMA foreign_key_check").all();
-        const rows = database
-          .prepare(
-            "SELECT (SELECT COUNT(*) FROM food) AS food, (SELECT COUNT(*) FROM barcode) AS barcode",
-          )
-          .get();
-        if (
-          integrity?.integrity_check !== "ok" ||
-          foreignKeys.length > 0 ||
-          rows?.food !== counts.accepted ||
-          rows?.barcode !== counts.accepted
-        ) {
+        if (integrity?.integrity_check !== "ok") {
           throw new Error("Open Food Facts catalog failed integrity or row validation");
         }
+        validateOpenFoodFactsRows(database, counts.accepted);
       },
     },
   );
