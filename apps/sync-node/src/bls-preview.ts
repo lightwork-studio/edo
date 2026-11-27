@@ -45,7 +45,17 @@ async function openRegularFile(path: string) {
   const file = await open(path, openFlags);
   try {
     const opened = await file.stat({ bigint: true });
-    if (!opened.isFile() || opened.ino !== entry.ino || opened.dev !== entry.dev) {
+    // A publisher can atomically replace the active manifest before this open.
+    const expected =
+      opened.ino === entry.ino && opened.dev === entry.dev
+        ? entry
+        : await lstat(path, { bigint: true });
+    if (
+      !opened.isFile() ||
+      !expected.isFile() ||
+      opened.ino !== expected.ino ||
+      opened.dev !== expected.dev
+    ) {
       throw new Error("BLS catalog file changed while being opened");
     }
     return file;

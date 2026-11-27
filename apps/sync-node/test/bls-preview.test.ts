@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { createHealthServer } from "../src/server.ts";
 
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
-  return { ...fs, rename: vi.fn(fs.rename) };
+  return { ...fs, open: vi.fn(fs.open), rename: vi.fn(fs.rename) };
 });
 
 const realFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
@@ -36,6 +36,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.mocked(open).mockImplementation(realFs.open);
   vi.mocked(rename).mockImplementation(realFs.rename);
   await server[Symbol.asyncDispose]();
   await rm(root, { recursive: true, force: true });
@@ -171,4 +172,22 @@ it("rejects a checksum-valid SQLite artifact whose metadata claims a different r
   expect(sameArtifact.artifact.sha256).toBe(previous.artifact.sha256);
   expect((await get("active.json")).status).toBe(503);
   expect((await get(artifactPath(previous), { method: "HEAD" })).status).toBe(200);
+});
+
+it("serves the complete new activation when publication occurs while opening the pointer", async () => {
+  await publish("previous");
+  const active = join(root, provider, "active.json");
+  let pending = true;
+  vi.mocked(open).mockImplementation(async (path, flags, mode) => {
+    if (pending && path === active) {
+      pending = false;
+      await publish("next");
+    }
+    return realFs.open(path, flags, mode);
+  });
+
+  const result = await get("active.json");
+  expect(result.status).toBe(200);
+  expect(await result.json()).toMatchObject({ source: { release: "next" } });
+  expect(pending).toBe(false);
 });
