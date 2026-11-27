@@ -2,7 +2,7 @@ import { sevenDayWeightAverage, type WeighIn } from "@edo/core";
 import { randomUUID } from "expo-crypto";
 import { useRef, useState } from "react";
 import { Keyboard, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { calendarDate, entryTime, readAmount } from "./diary-view";
+import { calendarDate, entryTime, localDay, readAmount } from "./diary-view";
 import { validWeighInDay } from "./progress-data";
 import type { Strings } from "./strings";
 import {
@@ -37,6 +37,7 @@ export function WeighInScreen({
   const [value, setValue] = useState("");
   const [error, setError] = useState<"day" | "weight" | "save" | null>(null);
   const submitted = useRef(false);
+  const lastAttempt = useRef<WeighIn | null>(null);
   const selected = validWeighInDay(day, today);
   const kg = readAmount(value);
   const recentEntries = recent.slice(-5).reverse();
@@ -69,13 +70,22 @@ export function WeighInScreen({
 
   function save() {
     if (submitted.current) return;
-    if (!candidate) {
-      setError(selected && kg === null ? "weight" : "day");
+    const now = new Date();
+    const chosen = validWeighInDay(day, localDay(now));
+    if (!chosen || kg === null) {
+      setError(chosen ? "weight" : "day");
       return;
     }
+    const prior = lastAttempt.current;
+    const { day: recordDay, occurredAt } = entryTime(chosen, now);
+    const entry =
+      prior?.localDay === recordDay && prior.kg === kg
+        ? prior
+        : { id, localDay: recordDay, occurredAt, kg };
+    lastAttempt.current = entry;
     submitted.current = true;
     try {
-      onSave(candidate);
+      onSave(entry);
       Keyboard.dismiss();
     } catch {
       submitted.current = false;

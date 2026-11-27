@@ -87,3 +87,38 @@ it("validates a recorded calendar day without converting through the device time
   expect(weightWindowStart("2026-08-01", 7)).toBe("2026-07-26");
   expect(weightWindowStart("0000-01-01", 7)).toBe("0000-01-01");
 });
+
+it("keeps a reading visible after crossing the date line without moving today's trend", () => {
+  const earlier: WeighIn = {
+    id: "earlier",
+    localDay: "2026-11-26",
+    occurredAt: Date.parse("2026-11-26T08:00:00Z"),
+    kg: 82,
+  };
+  const prior: WeighIn = {
+    id: "prior",
+    localDay: today,
+    occurredAt: Date.parse("2026-11-27T08:00:00Z"),
+    kg: 80,
+  };
+  const afterTravel: WeighIn = {
+    id: "captured-in-an-eastern-zone",
+    localDay: "2026-11-29",
+    occurredAt: Date.parse("2026-11-28T10:30:00Z"),
+    kg: 78,
+  };
+  const summary = progressSummary(
+    {
+      listMeals: () => [],
+      listWeighIns: (from, through) =>
+        [earlier, prior, afterTravel].filter(
+          (record) => record.localDay >= from && record.localDay <= through,
+        ),
+      nutritionTargetAt: () => null,
+    },
+    today,
+    7,
+  );
+  expect(summary.latestWeight).toEqual(afterTravel);
+  expect(summary.points.at(-1)).toEqual({ day: today, measured: prior, averageKg: 81 });
+});

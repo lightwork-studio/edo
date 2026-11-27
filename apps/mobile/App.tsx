@@ -26,7 +26,7 @@ import { FoodDetail } from "./src/food-detail";
 import { openLocalCatalog } from "./src/local-catalog";
 import { openLocalDiary } from "./src/local-diary";
 import { ProgressScreen } from "./src/progress";
-import { type ProgressRange, weightWindowStart } from "./src/progress-data";
+import { type ProgressRange, recentWeightEnd, weightWindowStart } from "./src/progress-data";
 import { SearchScreen } from "./src/search";
 import { appLocale, type Language, strings } from "./src/strings";
 import { TargetsScreen } from "./src/targets-screen";
@@ -110,9 +110,9 @@ function readMeals(diary: DiaryStore, day: string): DiaryMeal[] | null {
   }
 }
 
-function readWeights(diary: DiaryProgressStore, through: string, days: number) {
+function readWeights(diary: DiaryProgressStore, day: string, days: number, through = day) {
   try {
-    return diary.listWeighIns(weightWindowStart(through, days), through);
+    return diary.listWeighIns(weightWindowStart(day, days), through);
   } catch {
     return null;
   }
@@ -246,7 +246,7 @@ function DiaryApp({
     return (
       <WeighInScreen
         today={today}
-        recent={readWeights(diary, today, 96) ?? []}
+        recent={readWeights(diary, today, 96, recentWeightEnd(today)) ?? []}
         readWindow={(through) => readWeights(diary, through, 7)}
         locale={locale}
         t={t}

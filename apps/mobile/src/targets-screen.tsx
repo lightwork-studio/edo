@@ -36,6 +36,7 @@ const copy = {
     maintenance: "Maintenance",
     goal: "Goal",
     savedTarget: "Saved target",
+    recalculate: "Recalculate calories",
     calories: "Calorie target",
     macros: "Macros",
     perDay: "per day",
@@ -77,6 +78,7 @@ const copy = {
     maintenance: "Erhaltungsbedarf",
     goal: "Ziel",
     savedTarget: "Gespeichertes Ziel",
+    recalculate: "Kalorien neu berechnen",
     calories: "Kalorienziel",
     macros: "Makros",
     perDay: "pro Tag",
@@ -160,6 +162,7 @@ export function TargetsScreen({
   const [draft, setDraft] = useState<TargetsDraft>(() => ({
     mode: current?.mode ?? "calculated",
     kcal: current ? displayAmount(current.target.kcal, locale) : "",
+    savedCalculatedKcal: current?.mode === "calculated" ? current.target.kcal : null,
     weight:
       suggestedWeightKg === null
         ? ""
@@ -258,7 +261,20 @@ export function TargetsScreen({
             </Pressable>
           ))}
         </View>
-        {draft.mode === "calculated" ? (
+        {draft.mode === "calculated" && draft.savedCalculatedKcal !== null ? (
+          <View style={styles.card}>
+            <Text style={styles.meta}>
+              {t.savedTarget} · {displayNumber(draft.savedCalculatedKcal, locale, 0)} kcal
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              style={styles.action}
+              onPress={() => change("savedCalculatedKcal", null)}
+            >
+              <Text style={styles.actionText}>{t.recalculate}</Text>
+            </Pressable>
+          </View>
+        ) : draft.mode === "calculated" ? (
           <View style={[styles.card, local.card]}>
             <Text accessibilityRole="header" style={local.sectionTitle}>
               {t.body}

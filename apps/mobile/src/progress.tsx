@@ -128,11 +128,10 @@ export function ProgressScreen({
     { days: 30, label: t.month },
     { days: 90, label: t.threeMonths },
   ] as const;
-  let latest: WeightPoint["measured"] = null;
+  const latest = summary?.latestWeight;
   let trendStart: { day: string; kg: number } | null = null;
   let trendEnd: { day: string; kg: number } | null = null;
   for (const point of summary?.points ?? []) {
-    if (point.measured) latest = point.measured;
     if (point.averageKg !== null) {
       trendEnd = { day: point.day, kg: point.averageKg };
       trendStart ??= trendEnd;
@@ -193,7 +192,8 @@ export function ProgressScreen({
             </Text>
             {latest && (
               <Text style={styles.meta}>
-                {t.latestWeight} {displayNumber(latest.kg, locale, 1)} kg
+                {t.latestWeight} {dateText(latest.localDay)} · {displayNumber(latest.kg, locale, 1)}{" "}
+                kg
               </Text>
             )}
             <WeightChart points={summary.points} locale={locale} />

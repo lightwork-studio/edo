@@ -4,6 +4,7 @@ import { previewTarget, type TargetsDraft } from "../src/targets-form";
 const calculated: TargetsDraft = {
   mode: "calculated",
   kcal: "",
+  savedCalculatedKcal: null,
   weight: "78,6",
   height: "182",
   age: "34",
@@ -46,4 +47,26 @@ test("requires explicit manual calories and macros, allowing zero grams and zero
   expect(previewTarget({ ...manual, fat: "" }).error).toBe("invalidMacros");
   expect(previewTarget({ ...manual, fat: "−1" }).error).toBe("invalidMacros");
   expect(previewTarget({ ...manual, fat: "0,1" }).error).toBe("overBudget");
+});
+
+test("allows macro edits to an existing calculated target without storing equation inputs", () => {
+  const edit: TargetsDraft = {
+    ...calculated,
+    savedCalculatedKcal: 2000,
+    weight: "",
+    height: "",
+    age: "",
+    coefficient: null,
+    activity: "",
+    adjustment: "",
+    protein: "160",
+  };
+  expect(previewTarget(edit)).toEqual({
+    maintenanceKcal: null,
+    kcal: 2000,
+    weightKg: null,
+    target: { kcal: 2000, proteinG: 160, fatG: 70, availableCarbohydratesG: 182.5 },
+    error: null,
+  });
+  expect(previewTarget({ ...edit, savedCalculatedKcal: null }).error).toBe("invalidBody");
 });

@@ -9,6 +9,7 @@ import type { NutritionTargetRecord } from "@edo/storage";
 export interface TargetsDraft {
   mode: NutritionTargetRecord["mode"];
   kcal: string;
+  savedCalculatedKcal: number | null;
   weight: string;
   height: string;
   age: string;
@@ -37,6 +38,9 @@ function previewEnergy(draft: TargetsDraft): EnergyPreview {
     return kcal !== null && kcal > 0
       ? { maintenanceKcal: null, kcal, error: null }
       : { maintenanceKcal: null, kcal: null, error: "invalidCalories" };
+  }
+  if (draft.savedCalculatedKcal !== null) {
+    return { maintenanceKcal: null, kcal: draft.savedCalculatedKcal, error: null };
   }
 
   const weightKg = readNumber(draft.weight);
@@ -96,7 +100,10 @@ export function previewTarget(draft: TargetsDraft): TargetPreview {
   }
   try {
     const target = manualNutritionTarget({ kcal: energy.kcal, proteinG, fatG });
-    const weightKg = draft.mode === "calculated" ? readNumber(draft.weight) : null;
+    const weightKg =
+      draft.mode === "calculated" && draft.savedCalculatedKcal === null
+        ? readNumber(draft.weight)
+        : null;
     return { ...preview, weightKg, target, error: null };
   } catch (error) {
     if (!(error instanceof RangeError)) throw error;

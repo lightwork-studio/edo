@@ -15,6 +15,11 @@ export function weightWindowStart(through: string, days: number): string {
   return first < "0000-01-01" ? "0000-01-01" : first;
 }
 
+export function recentWeightEnd(today: string): string {
+  // The time zones at either side of the date line can differ by 26 hours.
+  return addDays(today, 2);
+}
+
 export function weightPoints(
   today: string,
   days: ProgressRange,
@@ -60,7 +65,7 @@ export function progressSummary(
   today: string,
   range: ProgressRange,
 ) {
-  const weights = diary.listWeighIns(weightWindowStart(today, range + 6), today);
+  const weights = diary.listWeighIns(weightWindowStart(today, range + 6), recentWeightEnd(today));
   const days = Array.from({ length: 7 }, (_, index) => {
     const day = addDays(today, index - 6);
     const meals = diary.listMeals(day);
@@ -82,6 +87,7 @@ export function progressSummary(
   return {
     days,
     points: weightPoints(today, range, weights),
+    latestWeight: weights.at(-1) ?? null,
     averageCalories: mean("kcal"),
     averageMacros: {
       proteinG: mean("proteinG"),
