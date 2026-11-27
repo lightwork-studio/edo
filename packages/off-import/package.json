@@ -9,6 +9,7 @@
   "scripts": {
     "import": "node src/cli.ts",
     "refresh": "node src/refresh-cli.ts",
+    "delta": "node src/delta-cli.ts",
     "restore": "node src/restore-cli.ts",
     "health": "node src/health-cli.ts",
     "typecheck": "tsc -p ."
