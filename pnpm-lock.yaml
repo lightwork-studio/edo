@@ -72,6 +72,9 @@ importers:
       '@edo/catalog-import':
         specifier: workspace:*
         version: link:../../packages/catalog-import
+      '@edo/off-import':
+        specifier: workspace:*
+        version: link:../../packages/off-import
 
   packages/bls-import:
     dependencies:

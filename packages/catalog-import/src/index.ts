@@ -26,6 +26,7 @@ import {
 } from "./publication-history.ts";
 
 export * from "./manifest.ts";
+export { matchesCatalogDatabaseMetadata } from "./metadata.ts";
 export { listPublishedCatalogReleases } from "./publication-history.ts";
 
 interface CatalogImportMetadata

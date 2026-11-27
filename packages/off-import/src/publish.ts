@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   type CatalogManifest,
   compatibleCatalog,
+  matchesCatalogDatabaseMetadata,
   publishCatalog,
   restoreCatalogRelease,
 } from "@edo/catalog-import";
@@ -17,24 +18,24 @@ const { provider, schemaVersion, importerVersion, sourceUrl } = openFoodFactsCat
 const notice = {
   name: "Open Food Facts contributors",
   license: "ODbL-1.0",
+  licenseUrl: "https://opendatacommons.org/licenses/odbl/1-0/",
   changes:
     "Selected German-market foods, preserved source IDs, indexed names and barcodes, and omitted nutrition values inconsistent with declared mass.",
 };
 
 export function compatibleOpenFoodFactsManifest(value: unknown): CatalogManifest | null {
   const manifest = compatibleCatalog(value, provider, [schemaVersion]);
-  return manifest?.source.url === sourceUrl && manifest.attribution.license === notice.license
+  return manifest?.source.url === sourceUrl &&
+    manifest.attribution.name === notice.name &&
+    manifest.attribution.license === notice.license
     ? manifest
     : null;
 }
 
 export function matchesOpenFoodFactsDatabase(database: DatabaseSync, manifest: CatalogManifest) {
-  const meta = database.prepare("SELECT provider, release FROM catalog_metadata").get();
-  const schema = database.prepare("PRAGMA user_version").get();
   return (
-    meta?.provider === provider &&
-    meta.release === manifest.source.release &&
-    schema?.user_version === manifest.schemaVersion
+    manifest.provider === provider &&
+    matchesCatalogDatabaseMetadata(database, manifest, notice.licenseUrl)
   );
 }
 
@@ -128,14 +129,7 @@ export async function publishOpenFoodFactsRelease(
         database.exec(schema);
         database
           .prepare("INSERT INTO catalog_metadata VALUES (?, ?, ?, ?, ?, ?)")
-          .run(
-            provider,
-            input.release,
-            sourceUrl,
-            notice.name,
-            "https://opendatacommons.org/licenses/odbl/1-0/",
-            notice.changes,
-          );
+          .run(provider, input.release, sourceUrl, notice.name, notice.licenseUrl, notice.changes);
         const insert = database.prepare(`
           INSERT INTO food VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (source_id) DO NOTHING

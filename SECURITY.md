@@ -5,4 +5,5 @@ maintainer privately. Include the affected commit, the conditions needed to repr
 and its impact. Use synthetic records and omit credentials and personal data.
 
 The Node development server binds to loopback and provides a health check and an optional
-preview for public BLS catalog files.
+preview for public BLS and Open Food Facts catalog files and barcode lookup. The barcode
+preview queries Open Food Facts online only when the developer enables live fallback.
