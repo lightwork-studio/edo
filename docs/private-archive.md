@@ -28,3 +28,11 @@ rolls back the transaction. Fix the source of the conflict before retrying.
 
 The archive contains private diary data in clear text. Keep the file in a location appropriate
 for personal records.
+
+On iOS or Android, open **Progress**, then **Diary files**. Share a new archive through the
+system share sheet or choose a previously exported file to preview its restore. The phone
+applies the preview only after you select **Restore records**.
+
+Sharing uses a temporary copy in the application cache. The app clears expired staging copies
+when Diary files opens or another archive is shared. The staging window is one day to give the
+receiving app time to read the file.
