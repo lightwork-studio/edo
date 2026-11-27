@@ -6,5 +6,8 @@
   `apps/sync-node/` and any server-only code under `packages/sync/src/server/`.
 - [Edo brand artwork terms](LICENSES/LicenseRef-Edo-Brand.txt) cover artwork marked with
   that license. See [name and artwork](TRADEMARKS.md) for branding in forks and distributions.
+- The bundled [BLS food catalog](apps/mobile/assets/bls.sqlite) is an adaptation of the Max
+  Rubner-Institut's BLS 4.0 dataset under [CC BY 4.0](LICENSES/CC-BY-4.0.txt). The
+  [catalog import documentation](packages/bls-import/README.md#attribution) records the changes.
 
 Third-party dependencies and materials retain their own licenses.

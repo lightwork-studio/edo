@@ -13,6 +13,12 @@ SPDX-FileCopyrightText = "Edo contributors"
 SPDX-License-Identifier = "AGPL-3.0-only"
 
 [[annotations]]
+path = "apps/mobile/assets/bls.sqlite"
+precedence = "closest"
+SPDX-FileCopyrightText = "2025 Max Rubner-Institut"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+[[annotations]]
 path = [
   "assets/brand/*.svg",
   "assets/brand/png/*.png",

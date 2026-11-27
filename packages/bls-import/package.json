@@ -1,0 +1,17 @@
+{
+  "name": "@edo/bls-import",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "import": "node src/cli.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@edo/catalog-import": "workspace:*",
+    "@edo/core": "workspace:*",
+    "fflate": "0.8.3",
+    "xlsx-extract": "0.2.0"
+  }
+}
