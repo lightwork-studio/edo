@@ -70,7 +70,7 @@ function customSourceId(value: unknown): string {
   return id;
 }
 
-function readCustomFood(value: unknown): Food {
+export function readCustomFood(value: unknown): Food {
   const food = readFood(value);
   if (food.id.provider !== "local" || food.release !== null) {
     throw new TypeError("Custom foods need a local ID and no catalog release");
@@ -79,7 +79,7 @@ function readCustomFood(value: unknown): Food {
   return food;
 }
 
-function readRecipe(value: unknown): Recipe {
+export function readRecipe(value: unknown): Recipe {
   const { id, name, ingredients, servings, cookedWeightG } = record(value);
   if (
     typeof servings !== "number" ||
@@ -98,13 +98,13 @@ function readRecipe(value: unknown): Recipe {
   return recipe;
 }
 
-function readTemplate(value: unknown): SavedMealTemplate {
+export function readTemplate(value: unknown): SavedMealTemplate {
   const { id, name, items } = record(value);
   return { id: diaryId(id, "meal template ID"), name: readName(name), items: readItems(items) };
 }
 
-function readFavorite(row: SqlRow): FoodId {
-  const id = readFoodId({ provider: row.provider, sourceId: row.source_id });
+export function readFavoriteId(value: unknown): FoodId {
+  const id = readFoodId(value);
   diaryId(id.sourceId, "favorite source ID");
   return id;
 }
@@ -123,15 +123,22 @@ function readCollection<T>(
   });
 }
 
+function writeRecord(
+  db: DiarySqliteConnection,
+  table: Table,
+  id: string,
+  value: unknown,
+  replace: boolean,
+) {
+  const insert = `INSERT INTO ${table} (id, content) VALUES (?, ?)`;
+  const operation = replace
+    ? `${insert} ON CONFLICT(id) DO UPDATE SET content = excluded.content`
+    : insert;
+  db.run(operation, id, JSON.stringify(value));
+}
+
 function saveRecord(db: DiarySqliteConnection, table: Table, id: string, value: unknown) {
-  inCurrentDiary(db, "BEGIN IMMEDIATE", () =>
-    db.run(
-      `INSERT INTO ${table} (id, content) VALUES (?, ?)
-       ON CONFLICT(id) DO UPDATE SET content = excluded.content`,
-      id,
-      JSON.stringify(value),
-    ),
-  );
+  inCurrentDiary(db, "BEGIN IMMEDIATE", () => writeRecord(db, table, id, value, true));
 }
 
 function customFoods(db: DiarySqliteConnection) {
@@ -149,14 +156,34 @@ function templates(db: DiarySqliteConnection) {
 function favorites(db: DiarySqliteConnection) {
   return db
     .all("SELECT provider, source_id FROM diary_favorites ORDER BY provider, source_id")
-    .map(readFavorite);
+    .map((row: SqlRow) => readFavoriteId({ provider: row.provider, sourceId: row.source_id }));
+}
+
+export function readMyFoodsRecords(db: DiarySqliteConnection) {
+  return {
+    customFoods: customFoods(db),
+    recipes: recipes(db),
+    mealTemplates: templates(db),
+    favorites: favorites(db),
+  };
 }
 
 export function verifyMyFoods(db: DiarySqliteConnection) {
-  customFoods(db);
-  recipes(db);
-  templates(db);
-  favorites(db);
+  readMyFoodsRecords(db);
+}
+
+/** The archive has already validated these records and owns the surrounding transaction. */
+export function insertMyFoodsRecords(
+  db: DiarySqliteConnection,
+  records: ReturnType<typeof readMyFoodsRecords>,
+) {
+  for (const food of records.customFoods)
+    writeRecord(db, "diary_custom_foods", food.id.sourceId, food, false);
+  for (const recipe of records.recipes) writeRecord(db, "diary_recipes", recipe.id, recipe, false);
+  for (const meal of records.mealTemplates)
+    writeRecord(db, "diary_meal_templates", meal.id, meal, false);
+  for (const { provider, sourceId } of records.favorites)
+    db.run("INSERT INTO diary_favorites VALUES (?, ?)", provider, sourceId);
 }
 
 export function myFoods(db: DiarySqliteConnection): MyFoodsStore {
@@ -184,19 +211,18 @@ export function myFoods(db: DiarySqliteConnection): MyFoodsStore {
     },
     listMealTemplates: () => inCurrentDiary(db, "BEGIN", () => templates(db)),
     setFavorite(value, enabled) {
-      const id = readFoodId(value);
-      const sourceId = diaryId(id.sourceId, "favorite source ID");
+      const { provider, sourceId } = readFavoriteId(value);
       inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
         if (enabled) {
           db.run(
             "INSERT INTO diary_favorites VALUES (?, ?) ON CONFLICT(provider, source_id) DO NOTHING",
-            id.provider,
+            provider,
             sourceId,
           );
         } else {
           db.run(
             "DELETE FROM diary_favorites WHERE provider = ? AND source_id = ?",
-            id.provider,
+            provider,
             sourceId,
           );
         }

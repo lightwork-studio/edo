@@ -41,7 +41,7 @@ function targetMode(value: unknown): NutritionTargetRecord["mode"] {
   return value;
 }
 
-function readWeighIn(row: SqlRow): WeighIn {
+export function readWeighIn(row: SqlRow): WeighIn {
   return {
     id: diaryId(row.id, "weigh-in ID"),
     localDay: readDay(row.local_day),
@@ -50,7 +50,7 @@ function readWeighIn(row: SqlRow): WeighIn {
   };
 }
 
-function readNutritionTarget(row: SqlRow): NutritionTargetRecord {
+export function readNutritionTarget(row: SqlRow): NutritionTargetRecord {
   return {
     id: diaryId(row.id, "target ID"),
     effectiveDay: readDay(row.effective_day),
@@ -63,6 +63,52 @@ function readNutritionTarget(row: SqlRow): NutritionTargetRecord {
       availableCarbohydratesG: grams(row.carbohydrate_g, "carbohydrate target"),
     },
   };
+}
+
+export function validateTargetBudget(target: DailyNutritionTarget): void {
+  const expected = manualNutritionTarget(target);
+  if (target.availableCarbohydratesG !== expected.availableCarbohydratesG) {
+    throw new RangeError("Carbohydrate target must fill the remaining energy budget");
+  }
+}
+
+const insertWeighIn = "INSERT INTO diary_weigh_ins VALUES (?, ?, ?, ?)";
+
+function insertNutritionTarget(db: DiarySqliteConnection, record: NutritionTargetRecord): void {
+  db.run(
+    `INSERT INTO diary_targets (
+      id, effective_day, configured_at, mode, kcal, protein_g, fat_g, carbohydrate_g
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    record.id,
+    record.effectiveDay,
+    record.configuredAt,
+    record.mode,
+    record.target.kcal,
+    record.target.proteinG,
+    record.target.fatG,
+    record.target.availableCarbohydratesG,
+  );
+}
+
+export function readDiaryProgressRecords(db: DiarySqliteConnection) {
+  return {
+    weighIns: db
+      .all("SELECT * FROM diary_weigh_ins ORDER BY local_day, occurred_at, id")
+      .map(readWeighIn),
+    nutritionTargets: db
+      .all("SELECT * FROM diary_targets ORDER BY effective_day, save_order")
+      .map(readNutritionTarget),
+  };
+}
+
+export function insertDiaryProgressRecords(
+  db: DiarySqliteConnection,
+  records: ReturnType<typeof readDiaryProgressRecords>,
+) {
+  for (const { id, localDay, occurredAt, kg } of records.weighIns) {
+    db.run(insertWeighIn, id, localDay, occurredAt, kg);
+  }
+  for (const record of records.nutritionTargets) insertNutritionTarget(db, record);
 }
 
 export function verifyDiaryProgress(db: DiarySqliteConnection): void {
@@ -81,7 +127,7 @@ export function diaryProgress(db: DiarySqliteConnection): DiaryProgressStore {
       });
       inCurrentDiary(db, "BEGIN IMMEDIATE", () =>
         db.run(
-          `INSERT INTO diary_weigh_ins VALUES (?, ?, ?, ?)
+          `${insertWeighIn}
            ON CONFLICT(id) DO UPDATE SET local_day = excluded.local_day,
              occurred_at = excluded.occurred_at, kg = excluded.kg`,
           weighIn.id,
@@ -123,23 +169,8 @@ export function diaryProgress(db: DiarySqliteConnection): DiaryProgressStore {
           if (JSON.stringify(readNutritionTarget(existing)) === JSON.stringify(record)) return;
           throw new Error("Changing a nutrition target requires a new revision ID");
         }
-        const expected = manualNutritionTarget(record.target);
-        if (record.target.availableCarbohydratesG !== expected.availableCarbohydratesG) {
-          throw new RangeError("Carbohydrate target must fill the remaining energy budget");
-        }
-        db.run(
-          `INSERT INTO diary_targets (
-             id, effective_day, configured_at, mode, kcal, protein_g, fat_g, carbohydrate_g
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          record.id,
-          record.effectiveDay,
-          record.configuredAt,
-          record.mode,
-          record.target.kcal,
-          record.target.proteinG,
-          record.target.fatG,
-          record.target.availableCarbohydratesG,
-        );
+        validateTargetBudget(record.target);
+        insertNutritionTarget(db, record);
       });
     },
     nutritionTargetAt(day) {

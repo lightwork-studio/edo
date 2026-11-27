@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
-import { createDiaryItem, type Food, foodForRecipe, updateDiaryPortion } from "@edo/core";
+import {
+  createDiaryItem,
+  type Food,
+  foodForRecipe,
+  manualNutritionTarget,
+  updateDiaryPortion,
+} from "@edo/core";
 import {
   type DiaryMeal,
   type DiarySqliteConnection,
@@ -869,4 +875,306 @@ test("refuses to assume ownership of a populated, unversioned database", async (
   await expect(source.start()).rejects.toThrow(/nonempty unversioned diary/);
   expect(source.options.connection.get("SELECT data FROM older_format")?.data).toBe("preserve");
   expect(source.options.connection.get("PRAGMA user_version")?.user_version).toBe(0);
+});
+
+const archiveCustomFood: Food = {
+  ...sourceFood,
+  id: { provider: "local", sourceId: "homemade-drink" },
+  release: null,
+  name: "Homemade drink",
+};
+const archiveRecipe = {
+  id: "breakfast-drink",
+  name: "Breakfast drink",
+  ingredients: [
+    createDiaryItem("recipe-item-drink", archiveCustomFood, { amount: 50, unit: "ml" }),
+  ],
+  servings: 2,
+  cookedWeightG: 90,
+};
+const archiveTarget = {
+  ...target,
+  id: "second-target",
+  configuredAt: target.configuredAt - 1000,
+  target: manualNutritionTarget({ kcal: 1900, proteinG: 110, fatG: 60 }),
+};
+
+async function populatedPrivateArchive() {
+  const diary = await createDatabase("archive-source.db").start();
+  const item = meal.items[0];
+  if (!item) throw new Error("The archive fixture needs a captured item");
+  const captured = {
+    ...meal,
+    utcOffsetMinutes: -240,
+    items: [{ ...item, nutrients: { ...item.nutrients, kcal: 79 } }],
+  };
+  diary.saveMeal(captured);
+  diary.saveCustomFood(archiveCustomFood);
+  diary.saveRecipe(archiveRecipe);
+  const template = { id: "saved-night-meal", name: "Saved meal", items: captured.items };
+  diary.saveMealTemplate(template);
+  diary.setFavorite(sourceFood.id, true);
+  diary.setFavorite(archiveCustomFood.id, true);
+  diary.saveWeighIn(weighIn);
+  diary.saveNutritionTarget(target);
+  diary.saveNutritionTarget(archiveTarget);
+  return { diary, captured, template, archive: diary.exportPrivateArchive() };
+}
+
+test("round-trips all private collections through a fresh SQLite diary and replays idempotently", async () => {
+  const { archive, captured, template } = await populatedPrivateArchive();
+  const json: Record<string, unknown> = JSON.parse(archive);
+  expect(json).toMatchObject({ format: "edo-diary", formatVersion: 2 });
+  expect(Object.keys(json)).toEqual([
+    "format",
+    "formatVersion",
+    "meals",
+    "customFoods",
+    "recipes",
+    "mealTemplates",
+    "favorites",
+    "weighIns",
+    "nutritionTargets",
+  ]);
+  const destination = createDatabase("archive-destination.db");
+  const restore = await destination.start();
+  expect(restore.previewPrivateArchive(archive)).toEqual({
+    newRecords: 9,
+    alreadyPresent: 0,
+    issues: [],
+  });
+  expect(restore.listCustomFoods()).toEqual([]);
+  expect(restore.getMeal(captured.id)).toBeNull();
+  expect(restore.restorePrivateArchive(archive)).toEqual({
+    status: "restored",
+    added: 9,
+    alreadyPresent: 0,
+  });
+  expect(restore.getMeal(captured.id)).toEqual(captured);
+  expect(restore.listCustomFoods()).toEqual([archiveCustomFood]);
+  expect(restore.listRecipes()).toEqual([archiveRecipe]);
+  expect(restore.listMealTemplates()).toEqual([template]);
+  expect(restore.listFavorites()).toEqual([archiveCustomFood.id, sourceFood.id]);
+  expect(restore.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([weighIn]);
+  expect(restore.nutritionTargetAt(target.effectiveDay)).toEqual(archiveTarget);
+  expect(destination.db.prepare("PRAGMA integrity_check").get()?.integrity_check).toBe("ok");
+  expect(destination.db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  destination.db.close();
+
+  const reopened = await createDatabase("archive-destination.db").start();
+  expect(reopened.exportPrivateArchive()).toBe(archive);
+  expect(reopened.restorePrivateArchive(archive)).toEqual({
+    status: "restored",
+    added: 0,
+    alreadyPresent: 9,
+  });
+  expect(reopened.nutritionTargetAt(target.effectiveDay)).toEqual(archiveTarget);
+});
+
+test("keeps legacy meal-only archives readable and does not touch other private collections", async () => {
+  const legacy =
+    '{"format":"edo-diary","formatVersion":1,"meals":[{"id":"legacy-meal","localDay":"2026-10-31","occurredAt":1793433600000,"items":[]}]}';
+  const restore = await createDatabase("archive-destination.db").start();
+  const initial = { ...weighIn, kg: 77 };
+  restore.saveWeighIn(initial);
+  expect(restore.previewPrivateArchive(legacy)).toEqual({
+    newRecords: 1,
+    alreadyPresent: 0,
+    issues: [],
+  });
+  expect(restore.restorePrivateArchive(legacy)).toEqual({
+    status: "restored",
+    added: 1,
+    alreadyPresent: 0,
+  });
+  expect(restore.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([initial]);
+  expect(restore.getMeal("legacy-meal")).toEqual({
+    id: "legacy-meal",
+    localDay: "2026-10-31",
+    occurredAt: 1793433600000,
+    items: [],
+  });
+  expect(restore.previewPrivateArchive(legacy)).toEqual({
+    newRecords: 0,
+    alreadyPresent: 1,
+    issues: [],
+  });
+});
+
+test("round-trips both saved offsets at a DST repeat, zero and an unknown offset", async () => {
+  const source = await createDatabase("offset-source.db").start();
+  const entries = [
+    {
+      id: "first",
+      localDay: "2026-11-01",
+      occurredAt: Date.parse("2026-11-01T05:30:00Z"),
+      utcOffsetMinutes: -240,
+      items: [],
+    },
+    {
+      id: "second",
+      localDay: "2026-11-01",
+      occurredAt: Date.parse("2026-11-01T06:30:00Z"),
+      utcOffsetMinutes: -300,
+      items: [],
+    },
+    {
+      id: "utc",
+      localDay: "2026-11-01",
+      occurredAt: Date.parse("2026-11-01T08:00:00Z"),
+      utcOffsetMinutes: 0,
+      items: [],
+    },
+    {
+      id: "unknown",
+      localDay: "2026-11-01",
+      occurredAt: Date.parse("2026-11-01T09:00:00Z"),
+      items: [],
+    },
+  ];
+  for (const entry of entries) source.saveMeal(entry);
+  const archive = source.exportPrivateArchive();
+  const destination = await createDatabase("offset-destination.db").start();
+  const invalid = JSON.stringify({
+    ...JSON.parse(archive),
+    meals: [{ ...entries[0], utcOffsetMinutes: null }],
+  });
+  expect(destination.previewPrivateArchive(invalid).issues).toEqual([
+    { collection: "meals", index: 0, message: "Invalid diary archive UTC offset" },
+  ]);
+  expect(destination.restorePrivateArchive(invalid)).toMatchObject({ status: "rejected" });
+  expect(destination.restorePrivateArchive(archive)).toMatchObject({ added: 4 });
+  expect(destination.listMeals("2026-11-01")).toEqual(entries);
+  expect(destination.exportPrivateArchive()).toBe(archive);
+});
+
+test("rejects an item ID used by a different meal without inserting any archive records", async () => {
+  const { archive, captured } = await populatedPrivateArchive();
+  const destination = await createDatabase("colliding-archive.db").start();
+  const other = { ...captured, id: "unrelated-meal" };
+  destination.saveMeal(other);
+  const before = destination.exportPrivateArchive();
+  expect(destination.restorePrivateArchive(archive)).toMatchObject({
+    status: "rejected",
+    preview: {
+      issues: [
+        {
+          collection: "meals",
+          index: 0,
+          message: "An item ID is already used by another saved meal",
+        },
+      ],
+    },
+  });
+  expect(destination.exportPrivateArchive()).toBe(before);
+});
+
+test("rejects unsupported sections, invalid values, and unknown fields inside private snapshots", async () => {
+  const { archive } = await populatedPrivateArchive();
+  const restore = await createDatabase("archive-destination.db").start();
+  const saved = restore.exportPrivateArchive();
+  const parsed: Record<string, unknown> = JSON.parse(archive);
+  expect(() =>
+    restore.previewPrivateArchive(JSON.stringify({ ...parsed, catalogCache: [] })),
+  ).toThrow(/Unsupported diary archive field/);
+  expect(() =>
+    restore.previewPrivateArchive(JSON.stringify({ ...parsed, formatVersion: 99 })),
+  ).toThrow(/Unsupported diary archive format/);
+  expect(() => restore.previewPrivateArchive(JSON.stringify({ ...parsed, recipes: null }))).toThrow(
+    /Invalid diary archive collection/,
+  );
+  const changed = JSON.stringify({
+    ...parsed,
+    recipes: [
+      { ...archiveRecipe, ingredients: [{ ...archiveRecipe.ingredients[0], icon: "unsupported" }] },
+    ],
+    weighIns: [{ ...weighIn, kg: 0 }],
+    nutritionTargets: [{ ...target, target: { ...target.target, availableCarbohydratesG: 0 } }],
+    favorites: [sourceFood.id, sourceFood.id],
+  });
+  expect(restore.previewPrivateArchive(changed).issues).toEqual(
+    expect.arrayContaining([
+      { collection: "recipes", index: 0, message: "Unsupported diary archive field" },
+      { collection: "weighIns", index: 0, message: "Invalid diary weigh-in weight" },
+      {
+        collection: "nutritionTargets",
+        index: 0,
+        message: "Carbohydrate target must fill the remaining energy budget",
+      },
+      { collection: "favorites", index: 1, message: "Duplicate ID in this archive collection" },
+    ]),
+  );
+  expect(restore.restorePrivateArchive(changed)).toMatchObject({ status: "rejected" });
+  expect(restore.exportPrivateArchive()).toBe(saved);
+});
+
+test("rechecks archive content after preview and keeps every local record on conflict", async () => {
+  const { archive } = await populatedPrivateArchive();
+  const restore = await createDatabase("archive-destination.db").start();
+  expect(restore.previewPrivateArchive(archive).issues).toEqual([]);
+  restore.saveCustomFood({ ...archiveCustomFood, name: "Edited on this device" });
+  const saved = restore.exportPrivateArchive();
+  expect(restore.restorePrivateArchive(archive)).toMatchObject({
+    status: "rejected",
+    preview: {
+      issues: [
+        { collection: "customFoods", index: 0, message: "This ID has different saved content" },
+      ],
+    },
+  });
+  expect(restore.exportPrivateArchive()).toBe(saved);
+});
+
+test("rolls back a failed archive across all tables and succeeds on retry", async () => {
+  const { archive } = await populatedPrivateArchive();
+  const destination = createDatabase("archive-destination.db");
+  const restore = await destination.start();
+  const saved = restore.exportPrivateArchive();
+  destination.db.exec(`CREATE TRIGGER abort_archive BEFORE INSERT ON diary_targets
+    WHEN NEW.id = 'second-target' BEGIN SELECT RAISE(ABORT, 'interrupted archive'); END`);
+  expect(() => restore.restorePrivateArchive(archive)).toThrow(/interrupted archive/);
+  expect(restore.exportPrivateArchive()).toBe(saved);
+  destination.db.exec("DROP TRIGGER abort_archive");
+  expect(restore.restorePrivateArchive(archive)).toEqual({
+    status: "restored",
+    added: 9,
+    alreadyPresent: 0,
+  });
+});
+
+test("preserves same-day target history and rejects ambiguous order on a populated device", async () => {
+  const { archive } = await populatedPrivateArchive();
+  const restore = await createDatabase("archive-destination.db").start();
+  restore.saveNutritionTarget(archiveTarget);
+  expect(restore.previewPrivateArchive(archive)).toMatchObject({
+    issues: [
+      {
+        collection: "nutritionTargets",
+        index: 0,
+        message: "The saved targets have a different order on this day",
+      },
+    ],
+  });
+  expect(restore.restorePrivateArchive(archive)).toMatchObject({ status: "rejected" });
+  expect(restore.getMeal(meal.id)).toBeNull();
+  restore.saveNutritionTarget(target);
+  expect(restore.restorePrivateArchive(archive)).toMatchObject({ status: "rejected" });
+  expect(restore.nutritionTargetAt(target.effectiveDay)).toEqual(target);
+
+  const prefix = await createDatabase("archive-prefix.db").start();
+  prefix.saveNutritionTarget(target);
+  expect(prefix.restorePrivateArchive(archive)).toEqual({
+    status: "restored",
+    added: 8,
+    alreadyPresent: 1,
+  });
+  expect(prefix.nutritionTargetAt(target.effectiveDay)).toEqual(archiveTarget);
+  const localNew = { ...target, id: "new-local-target" };
+  prefix.saveNutritionTarget(localNew);
+  expect(prefix.restorePrivateArchive(archive)).toEqual({
+    status: "restored",
+    added: 0,
+    alreadyPresent: 9,
+  });
+  expect(prefix.nutritionTargetAt(target.effectiveDay)).toEqual(localNew);
 });
