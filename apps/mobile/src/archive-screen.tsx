@@ -1,12 +1,7 @@
 import type { PrivateArchiveStore } from "@edo/storage";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import {
-  ArchiveComplexityError,
-  ArchiveSizeError,
-  pruneArchiveExports,
-  shareArchive,
-} from "./archive-files";
+import { shareArchive } from "./archive-files";
 import type { Strings } from "./strings";
 import { DetailHeader, Notice, styles } from "./ui";
 
@@ -21,23 +16,17 @@ export function ArchiveScreen({
 }) {
   const sharing = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    pruneArchiveExports();
-  }, []);
+  const [failed, setFailed] = useState(false);
 
   async function share() {
     if (sharing.current) return;
     sharing.current = true;
     setBusy(true);
-    setError(null);
+    setFailed(false);
     try {
       await shareArchive(archive.exportPrivateArchive());
-    } catch (error) {
-      if (error instanceof ArchiveSizeError) setError(t.archiveSizeError);
-      else if (error instanceof ArchiveComplexityError) setError(t.archiveComplexityError);
-      else setError(t.archiveShareError);
+    } catch {
+      setFailed(true);
     } finally {
       sharing.current = false;
       setBusy(false);
@@ -61,9 +50,9 @@ export function ArchiveScreen({
           </Pressable>
         </View>
         {busy && <Notice text={t.loading} pending />}
-        {error && (
+        {failed && (
           <Text accessibilityRole="alert" style={styles.error}>
-            {error}
+            {t.archiveShareError}
           </Text>
         )}
       </ScrollView>
