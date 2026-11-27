@@ -74,7 +74,7 @@ it("uses last access for the byte budget and retains favourites or recent entrie
   using db = new DatabaseSync(":memory:");
   const cache = openPackagedFoodCache(connection(db), budget);
   cache.save([older, favourite], 10, ["favourite"]);
-  cache.lookupBarcode(older.barcode, 30);
+  expect(cache.findByIds([older.id.sourceId], 30)).toEqual([{ product: older, checkedAt: 10 }]);
   cache.save([newer], 20, ["favourite"]);
   expect(cache.lookupBarcode(newer.barcode, 40)).toEqual([]);
   expect(cache.lookupBarcode(older.barcode, 41)).toHaveLength(1);
@@ -117,6 +117,27 @@ it("does not initialize over another database", () => {
   ]);
 });
 
+it("ignores temporary tables that shadow the dedicated cache tables", () => {
+  using db = new DatabaseSync(":memory:");
+  const initial = food("original", "12345670", "Oat");
+  openPackagedFoodCache(connection(db)).save([initial], 1, []);
+  db.exec(`CREATE TEMP TABLE packaged_food AS SELECT * FROM main.packaged_food;
+    CREATE UNIQUE INDEX temp.shadow_key ON packaged_food (source_id);
+    CREATE TEMP TABLE packaged_food_search (name TEXT, alternate_name TEXT)`);
+
+  const cache = openPackagedFoodCache(connection(db));
+  const updated = { ...initial, name: "Rice" };
+  cache.save([updated], 2, []);
+  expect(cache.search("rice", 3)).toEqual([{ product: updated, checkedAt: 2 }]);
+  expect(cache.lookupBarcode(initial.barcode, 4)).toEqual([{ product: updated, checkedAt: 2 }]);
+  expect(cache.findByIds([initial.id.sourceId], 5)).toEqual([{ product: updated, checkedAt: 2 }]);
+  expect(db.prepare("SELECT name, checked_at, accessed_at FROM temp.packaged_food").get()).toEqual({
+    name: "Oat",
+    checked_at: 1,
+    accessed_at: 1,
+  });
+});
+
 it("ignores a damaged row without hiding valid barcode and name candidates", () => {
   using db = new DatabaseSync(":memory:");
   const cache = openPackagedFoodCache(connection(db));
@@ -140,6 +161,26 @@ it("rejects a cache file with a missing index table", () => {
   expect(() => openPackagedFoodCache(connection(db))).toThrow(/schema is incomplete/);
   db.exec("CREATE TABLE packaged_food_search (name TEXT, alternate_name TEXT)");
   expect(() => openPackagedFoodCache(connection(db))).toThrow(/schema is incomplete/);
+});
+
+it("requires real cache triggers instead of same-named tables", () => {
+  using db = new DatabaseSync(":memory:");
+  openPackagedFoodCache(connection(db));
+  db.exec(
+    "DROP TRIGGER main.packaged_food_delete; CREATE TABLE main.packaged_food_delete (name TEXT)",
+  );
+  expect(() => openPackagedFoodCache(connection(db))).toThrow(/schema is incomplete/);
+});
+
+it("rejects text SQLite cannot round-trip and preserves well-formed Unicode", () => {
+  using db = new DatabaseSync(":memory:");
+  const cache = openPackagedFoodCache(connection(db));
+  const product = food("original", "12345670", "Oat 🥛");
+  cache.save([product], 1, []);
+  for (const name of ["Oat\u0000 milk", "Oat\uD800"]) {
+    expect(() => cache.save([{ ...product, name }], 2, [])).toThrow(/cache product text/);
+  }
+  expect(cache.lookupBarcode(product.barcode, 3)).toEqual([{ product, checkedAt: 1 }]);
 });
 
 it("normalizes indexed names while preserving the original display names", () => {
@@ -195,4 +236,67 @@ it("does not let corrupted payloads evict a healthy product or clear an unrelate
   expect(db.prepare("SELECT source_id FROM temp.retained_packaged_food").get()).toMatchObject({
     source_id: "unrelated",
   });
+});
+
+it("does not let an invalid access timestamp push out a healthy cached product", () => {
+  using db = new DatabaseSync(":memory:");
+  const broken = food("broken", "12345670", "Oat");
+  const valid = food("valid", "12345671", "Rice");
+  const budget = Math.max(
+    Buffer.byteLength(JSON.stringify(broken)),
+    Buffer.byteLength(JSON.stringify(valid)),
+  );
+  const cache = openPackagedFoodCache(connection(db), budget);
+  cache.save([broken], 1, []);
+  db.exec("UPDATE main.packaged_food SET accessed_at = 9223372036854775807");
+  cache.save([valid], 2, []);
+  expect(cache.lookupBarcode(valid.barcode, 3)).toEqual([{ product: valid, checkedAt: 2 }]);
+  expect(cache.search("oat", 4)).toEqual([]);
+});
+
+it("upgrades a version-one cache and checks its older rows before eviction", () => {
+  using db = new DatabaseSync(":memory:");
+  const cached = food("cached", "12345670", "Oat");
+  const broken = food("broken", "12345671", "Rice");
+  const budget = Buffer.byteLength(JSON.stringify(cached));
+  openPackagedFoodCache(connection(db)).save([cached, broken], 1, []);
+  db.exec(`DROP TRIGGER main.packaged_food_validate;
+    DROP INDEX main.packaged_food_pending;
+    ALTER TABLE main.packaged_food DROP COLUMN validation_pending;
+    PRAGMA main.user_version = 1;
+    UPDATE main.packaged_food SET accessed_at = 9223372036854775807 WHERE source_id = 'broken'`);
+
+  const upgraded = openPackagedFoodCache(connection(db), budget);
+  upgraded.prune([]);
+  expect(upgraded.lookupBarcode(cached.barcode, 2)).toEqual([{ product: cached, checkedAt: 1 }]);
+  expect(upgraded.search("rice", 3)).toEqual([]);
+  expect(db.prepare("PRAGMA main.user_version").get()).toEqual({ user_version: 2 });
+});
+
+it("does not decode resident rows again during ordinary cache turnover", () => {
+  using db = new DatabaseSync(":memory:");
+  const adapter = connection(db);
+  const ordinary = Array.from({ length: 50 }, (_, index) =>
+    food(String(index).padStart(2, "0"), "12345670", "Oat"),
+  );
+  const budget = ordinary.reduce(
+    (total, item) => total + Buffer.byteLength(JSON.stringify(item)),
+    0,
+  );
+  const materialized: number[] = [];
+  const cache = openPackagedFoodCache(
+    {
+      ...adapter,
+      all(sql, ...parameters) {
+        const rows = adapter.all(sql, ...parameters);
+        if (sql.includes("validation_pending = 1")) materialized.push(rows.length);
+        return rows;
+      },
+    },
+    budget,
+  );
+  cache.save(ordinary, 1, []);
+  cache.save([food("50", "12345671", "Rye")], 2, []);
+  expect(materialized).toEqual([0]);
+  expect(cache.lookupBarcode("12345671", 3)).toHaveLength(1);
 });
