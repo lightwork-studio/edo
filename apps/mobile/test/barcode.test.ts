@@ -11,6 +11,7 @@ import {
 } from "../src/barcode";
 import { httpsOrigin } from "../src/catalog-origin";
 import { saveFood } from "../src/diary-view";
+import { foodKey, resolveFavoriteFoods } from "../src/favorite-foods";
 
 const product: PackagedFood = {
   id: { provider: "open-food-facts", sourceId: "synthetic-juice" },
@@ -135,18 +136,61 @@ it("rejects a response for a different barcode, broken origins and authorization
   await expect(lookupPackagedFood(input)).resolves.toEqual({ status: "unavailable" });
 });
 
-it("retains Open Food Facts products from the last 30 recorded diary days", () => {
+it("retains Open Food Facts favorites and products from the last 30 recorded diary days", () => {
   const item = createDiaryItem("item", foodForPackagedProduct(product), {
     amount: 100,
     unit: "ml",
   });
   const diary = {
+    listFavorites: () => [
+      { ...product.id, sourceId: "favorite" },
+      { provider: "bls" as const, sourceId: "bls-favorite" },
+    ],
     listMeals: vi.fn((day: string) =>
       day === "2026-10-29" ? [{ id: "meal", localDay: day, occurredAt: 0, items: [item] }] : [],
     ),
   };
-  expect(retainedProducts(diary, "2026-11-27")).toEqual([product.id.sourceId]);
+  expect(retainedProducts(diary, "2026-11-27")).toEqual(["favorite", product.id.sourceId]);
   expect(diary.listMeals).toHaveBeenCalledTimes(30);
+});
+
+it("keeps a favorite cached over budget and keeps a recent log after unpinning", async () => {
+  using privateDb = new DatabaseSync(":memory:");
+  using publicDb = new DatabaseSync(":memory:");
+  const diary = await openDiary({
+    connection: testConnection(privateDb),
+    async backupBeforeMigration() {
+      throw new Error("A blank diary needs no backup");
+    },
+  });
+  const day = "2026-11-27";
+  const cache = openPackagedFoodCache(testConnection(publicDb), 0);
+  diary.setFavorite(product.id, true);
+  cache.save([product], 10, retainedProducts(diary, day));
+  const reopened = openPackagedFoodCache(testConnection(publicDb), 0);
+  const found = await resolveFavoriteFoods({
+    ids: diary.listFavorites(),
+    localFoods: [],
+    catalog: null,
+    cache: reopened,
+    language: "en",
+    accessedAt: 11,
+  });
+  const food = found.get(foodKey(product.id));
+  if (!food) throw new Error("Expected to resolve the pinned food offline");
+  const ids = ["item", "meal"].values();
+  saveFood(
+    diary,
+    { kind: "add", food, day, occurredAt: Date.parse(`${day}T10:00:00Z`) },
+    { amount: 100, unit: "ml" },
+    () => ids.next().value ?? "",
+  );
+  diary.setFavorite(product.id, false);
+  reopened.prune(retainedProducts(diary, day));
+  expect(reopened.findByIds([product.id.sourceId], 12)).toHaveLength(1);
+  reopened.prune(retainedProducts(diary, "2027-01-01"));
+  expect(reopened.findByIds([product.id.sourceId], 13)).toEqual([]);
+  expect(diary.listMeals(day)[0]?.items[0]?.nutrients.kcal).toBe(41);
 });
 
 it("keeps a known barcode available when a response is too large or has duplicate candidates", async () => {

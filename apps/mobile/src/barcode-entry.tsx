@@ -1,5 +1,5 @@
 import type { PackagedFood } from "@edo/core";
-import type { DiaryStore, PackagedFoodCache } from "@edo/storage";
+import type { DiaryStore, MyFoodsStore, PackagedFoodCache } from "@edo/storage";
 import { fetch } from "expo/fetch";
 import { useEffect, useState } from "react";
 import {
@@ -34,7 +34,7 @@ export function BarcodeEntry({
   locale: string;
   date: string;
   today: string;
-  diary: DiaryStore;
+  diary: DiaryStore & MyFoodsStore;
   /** Undefined while opening, null when the independent cache is unavailable. */
   cache: PackagedFoodCache | null | undefined;
   initial: BarcodeState;
