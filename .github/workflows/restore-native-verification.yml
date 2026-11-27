@@ -16,6 +16,16 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Prepare the Android emulator
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          image='system-images;android-35;google_apis;x86_64'
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          "$tools/sdkmanager" --install emulator "$image"
+          sudo chmod a+rw /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+          "$tools/avdmanager" create avd --name edo-restore --package "$image" <<< no
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -32,10 +42,6 @@ jobs:
           ./gradlew :app:assembleRelease --console=plain -PreactNativeArchitectures=x86_64
       - name: Boot the Android emulator and exercise restore
         run: |
-          image='system-images;android-35;google_apis;x86_64'
-          sdkmanager --install emulator "$image"
-          sudo chmod a+rw /dev/kvm
-          avdmanager create avd --name edo-restore --package "$image" <<< no
           "$ANDROID_HOME/emulator/emulator" -avd edo-restore -no-window -no-audio \
             -no-snapshot -no-boot-anim -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
           emulator_pid=$!
@@ -55,4 +61,6 @@ jobs:
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
           adb install apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          adb shell cmd connectivity airplane-mode enable
+          adb shell svc wifi disable
           python3 -u .github/scripts/android-archive-smoke.py "$RUNNER_TEMP"
