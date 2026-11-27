@@ -63,6 +63,9 @@ importers:
 
   apps/sync-node:
     dependencies:
+      '@edo/catalog-import':
+        specifier: workspace:*
+        version: link:../../packages/catalog-import
       '@edo/off-import':
         specifier: workspace:*
         version: link:../../packages/off-import

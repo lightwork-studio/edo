@@ -215,6 +215,12 @@ test("serves the BLS manifest and SQLite bundle from its own licensed catalog", 
       expect((await get(`${route}/${artifact}`)).status).toBe(404);
       expect((await get(`${route}/${release}`)).status).toBe(404);
       expect((await get(`${blsRoute}/barcodes/034000470693`)).status).toBe(404);
+      await writeFile(
+        join(blsRoot, "active.json"),
+        `${JSON.stringify({ ...manifest, importerVersion: "2" })}\n`,
+      );
+      expect((await get(`${blsRoute}/active.json`)).status).toBe(503);
+      expect((await get(`${blsRoute}/${release}`)).status).toBe(200);
       await writeFile(join(blsRoot, artifact), "damaged BLS fixture");
       expect((await get(url, { method: "HEAD" })).status).toBe(503);
     } finally {

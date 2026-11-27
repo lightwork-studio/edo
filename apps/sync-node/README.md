@@ -10,7 +10,8 @@ Use `http://127.0.0.1:8787/catalog-preview/bls` for Bundeslebensmittelschlüssel
 `http://127.0.0.1:8787/catalog-preview/open-food-facts` for Open Food Facts. Each serves files from
 its own provider directory under the configured catalog root.
 
-- `GET /active.json` returns the latest activation manifest.
+- `GET /active.json` returns the latest activation manifest after checking that it matches its
+  immutable release manifest.
 - `GET /releases/<sha256>.json` and `GET /artifacts/<sha256>.sqlite` serve digest-named
   released files. Both accept `HEAD` and use the digest as the ETag.
 - `GET /barcodes/<code>` is available under Open Food Facts. It returns candidate products in

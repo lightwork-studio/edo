@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { type FileHandle, open } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { compatibleCatalog } from "@edo/catalog-import";
 import { type BarcodeLookupResult, createBarcodeLookup } from "@edo/off-import";
 
 const offPath = "/catalog-preview/open-food-facts";
 const offLicense = "https://opendatacommons.org/licenses/odbl/1-0/";
 const offSource = "https://world.openfoodfacts.org/data";
+const manifestLimit = 16 * 1024;
+const assetOpenFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 const catalogLinks = {
   bls: '<https://creativecommons.org/licenses/by/4.0/>; rel="license", <https://doi.org/10.25826/Data20251217-134202-0>; rel="cite-as"',
   "open-food-facts": `<${offLicense}>; rel="license"`,
@@ -48,6 +51,35 @@ function assetAt(path: string): Asset | null {
   };
 }
 
+async function readManifest(file: FileHandle, size: number): Promise<Buffer> {
+  if (size <= 0 || size > manifestLimit) throw new Error("Invalid catalog manifest size");
+  const buffer = Buffer.alloc(size + 1);
+  const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+  if (bytesRead !== size) throw new Error("Catalog manifest changed while being read");
+  return buffer.subarray(0, size);
+}
+
+async function verifiedActivation(root: string, asset: Asset, file: FileHandle, size: number) {
+  const active = await readManifest(file, size);
+  if (!compatibleCatalog(JSON.parse(active.toString("utf8")), asset.provider, [1])) {
+    throw new Error("Invalid catalog activation manifest");
+  }
+  const digest = createHash("sha256").update(active).digest("hex");
+  const path = join(root, asset.provider, "releases", `${digest}.json`);
+  await using immutable = await open(path, assetOpenFlags).catch(() => {
+    throw new Error("Missing immutable copy of the catalog activation");
+  });
+  const metadata = await immutable.stat();
+  if (
+    !metadata.isFile() ||
+    metadata.size !== size ||
+    !(await readManifest(immutable, size)).equals(active)
+  ) {
+    throw new Error("Catalog activation differs from its immutable manifest");
+  }
+  return active;
+}
+
 async function serveAsset(
   root: string,
   asset: Asset,
@@ -56,15 +88,13 @@ async function serveAsset(
 ): Promise<void> {
   const etag = asset.digest ? `"${asset.digest}"` : undefined;
   try {
-    await using file = await open(
-      join(root, asset.provider, asset.path),
-      constants.O_RDONLY | constants.O_NOFOLLOW,
-    );
+    await using file = await open(join(root, asset.provider, asset.path), assetOpenFlags);
     const metadata = await file.stat();
     if (!metadata.isFile()) {
       response.writeHead(404).end();
       return;
     }
+    let active: Buffer | undefined;
     if (asset.digest) {
       const hash = createHash("sha256");
       for await (const chunk of file.createReadStream({ autoClose: false, start: 0 })) {
@@ -74,6 +104,8 @@ async function serveAsset(
         response.writeHead(503).end();
         return;
       }
+    } else {
+      active = await verifiedActivation(root, asset, file, metadata.size);
     }
     const headers = {
       "Content-Type": asset.type,
@@ -88,6 +120,7 @@ async function serveAsset(
     }
     response.writeHead(200, { ...headers, "Content-Length": metadata.size });
     if (request.method === "HEAD") response.end();
+    else if (active) response.end(active);
     else await pipeline(file.createReadStream({ autoClose: false, start: 0 }), response);
   } catch (error) {
     if (response.headersSent) {
