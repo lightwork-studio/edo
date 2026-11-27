@@ -2,17 +2,22 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { lstat, open, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { pipeline } from "node:stream/promises";
 import {
   type CatalogManifest,
   clearPreparedCatalogSource,
-  isCatalogManifest,
   recordCatalogSourceLastModified,
 } from "@edo/catalog-import";
-import { openFoodFactsCatalog, publishOpenFoodFactsRelease } from "./publish.ts";
+import {
+  compatibleOpenFoodFactsManifest,
+  matchesOpenFoodFactsDatabase,
+  openFoodFactsCatalog,
+  publishOpenFoodFactsRelease,
+} from "./publish.ts";
 import { runCatalogJob } from "./worker.ts";
 
-const { provider, schemaVersion, importerVersion, sourceUrl } = openFoodFactsCatalog;
+const { provider, importerVersion, sourceUrl } = openFoodFactsCatalog;
 const requestHeaders = {
   "Accept-Encoding": "identity",
   "User-Agent": "Edo/1 (https://github.com/lightwork-studio/edo)",
@@ -184,14 +189,8 @@ async function readActiveRelease(
 
     await using active = await open(activePath, "r");
     const manifestText = await active.readFile("utf8");
-    const manifest: unknown = JSON.parse(manifestText);
-    if (
-      !isCatalogManifest(manifest) ||
-      manifest.provider !== provider ||
-      manifest.source.url !== sourceUrl
-    ) {
-      return null;
-    }
+    const manifest = compatibleOpenFoodFactsManifest(JSON.parse(manifestText));
+    if (!manifest) return null;
 
     const manifestDigest = createHash("sha256").update(manifestText).digest("hex");
     const immutableManifest = join(providerRoot, "releases", `${manifestDigest}.json`);
@@ -219,9 +218,13 @@ async function verifyActiveArtifact(
     if (!artifactStat.isFile() || artifactStat.size !== manifest.artifact.bytes) return false;
     const hash = createHash("sha256");
     for await (const chunk of createReadStream(artifact)) hash.update(chunk);
-    return hash.digest("hex") === manifest.artifact.sha256;
+    if (hash.digest("hex") !== manifest.artifact.sha256) return false;
+    using database = new DatabaseSync(artifact, { readOnly: true });
+    return matchesOpenFoodFactsDatabase(database, manifest);
   } catch (error) {
     if (missingFile(error)) return false;
+    if (error instanceof Error && "code" in error && error.code === "ERR_SQLITE_ERROR")
+      return false;
     throw error;
   }
 }
@@ -241,10 +244,7 @@ export async function checkOpenFoodFactsHealth(
   const checkedAt = now.toISOString();
   const providerRoot = join(root, provider);
   const active = await readActiveRelease(providerRoot);
-  if (
-    active?.manifest.schemaVersion !== schemaVersion ||
-    !(await verifyActiveArtifact(providerRoot, active.manifest))
-  ) {
+  if (!active || !(await verifyActiveArtifact(providerRoot, active.manifest))) {
     return { status: "unverified" as const, checkedAt, maxSourceAgeHours };
   }
 
@@ -284,10 +284,7 @@ export async function refreshOpenFoodFactsCatalog(
     }
     const active = await readActiveRelease(providerRoot);
     const previous =
-      active?.manifest.schemaVersion === schemaVersion &&
-      (await verifyActiveArtifact(providerRoot, active.manifest))
-        ? active
-        : null;
+      active && (await verifyActiveArtifact(providerRoot, active.manifest)) ? active : null;
     const previousTimestamp = previous?.manifest.source.lastModified;
     const previousTime = previousTimestamp ? Date.parse(previousTimestamp) : null;
     const previousIsFuture = previousTime !== null && previousTime > checked.getTime();

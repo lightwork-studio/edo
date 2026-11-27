@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { type CatalogManifest, publishCatalog } from "@edo/catalog-import";
+import { type CatalogManifest, compatibleCatalog, publishCatalog } from "@edo/catalog-import";
 import { readOpenFoodFactsExport } from "./read.ts";
 
 export const openFoodFactsCatalog = {
@@ -15,6 +15,23 @@ const notice = {
   changes:
     "Selected German-market foods, preserved source IDs, indexed names and barcodes, and omitted nutrition values inconsistent with declared mass.",
 };
+
+export function compatibleOpenFoodFactsManifest(value: unknown): CatalogManifest | null {
+  const manifest = compatibleCatalog(value, provider, [schemaVersion]);
+  return manifest?.source.url === sourceUrl && manifest.attribution.license === notice.license
+    ? manifest
+    : null;
+}
+
+export function matchesOpenFoodFactsDatabase(database: DatabaseSync, manifest: CatalogManifest) {
+  const meta = database.prepare("SELECT provider, release FROM catalog_metadata").get();
+  const schema = database.prepare("PRAGMA user_version").get();
+  return (
+    meta?.provider === provider &&
+    meta.release === manifest.source.release &&
+    schema?.user_version === manifest.schemaVersion
+  );
+}
 
 const schema = `
   CREATE TABLE catalog_metadata (

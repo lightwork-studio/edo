@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
-import { type CatalogManifest, compatibleCatalog } from "@edo/catalog-import";
+import type { CatalogManifest } from "@edo/catalog-import";
 import {
   type FoodNutrition,
   type MeasuredPortion,
@@ -12,6 +12,7 @@ import {
 } from "@edo/core";
 import { normalizeLookupCode } from "./format.ts";
 import { createOpenFoodFactsLiveLookup, type LiveBarcodeResult } from "./live-lookup.ts";
+import { compatibleOpenFoodFactsManifest, matchesOpenFoodFactsDatabase } from "./publish.ts";
 
 export type BarcodeProduct = PackagedFood;
 
@@ -119,8 +120,8 @@ async function readActiveManifest(providerRoot: string): Promise<ActiveManifest 
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }
-  const active = compatibleCatalog(JSON.parse(text.toString("utf8")), "open-food-facts", [1]);
-  if (active?.attribution.license !== "ODbL-1.0") {
+  const active = compatibleOpenFoodFactsManifest(JSON.parse(text.toString("utf8")));
+  if (!active) {
     throw new Error("Unsupported Open Food Facts catalog manifest");
   }
   return { manifest: active, text, sha256: createHash("sha256").update(text).digest("hex") };
@@ -153,13 +154,7 @@ async function openVerifiedCatalog(
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     const release = manifest.source.release;
-    const meta = db.prepare("SELECT provider, release FROM catalog_metadata").get();
-    const schema = db.prepare("PRAGMA user_version").get();
-    if (
-      meta?.provider !== "open-food-facts" ||
-      meta.release !== release ||
-      schema?.user_version !== manifest.schemaVersion
-    ) {
+    if (!matchesOpenFoodFactsDatabase(db, manifest)) {
       throw new Error("Open Food Facts catalog metadata does not match its manifest");
     }
     const lookup = db.prepare(`

@@ -398,6 +398,32 @@ it("does not let an unverified active timestamp block recovery", async () => {
   expect(await readFile(immutable)).toEqual(active);
 });
 
+it.each(["license", "release"])(
+  "rejects a hash-matched catalog with inconsistent %s",
+  async (field) => {
+    const first = await refreshOpenFoodFactsCatalog(directory, fetchExport);
+    const { manifest } = first;
+    const incompatible =
+      field === "license"
+        ? { ...manifest, attribution: { ...manifest.attribution, license: "CC-BY-4.0" } }
+        : { ...manifest, source: { ...manifest.source, release: "different-release" } };
+    const text = `${JSON.stringify(incompatible, null, 2)}\n`;
+    const digest = createHash("sha256").update(text).digest("hex");
+    await writeFile(join(providerRoot, "releases", `${digest}.json`), text);
+    await writeFile(activePath, text);
+
+    const now = new Date(Date.parse(modified) + 60 * 60 * 1000);
+    await expect(checkOpenFoodFactsHealth(directory, 36, now)).resolves.toMatchObject({
+      status: "unverified",
+    });
+    await expect(openOpenFoodFactsCatalog(directory)).rejects.toThrow(/manifest/);
+    await expect(refreshOpenFoodFactsCatalog(directory, fetchExport)).resolves.toMatchObject({
+      status: "published",
+      manifest,
+    });
+  },
+);
+
 it("rebuilds the active pointer when it is a symlink to a valid manifest", async () => {
   const first = await refreshOpenFoodFactsCatalog(directory, fetchExport);
   const active = await readFile(activePath);

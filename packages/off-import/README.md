@@ -12,9 +12,9 @@ pnpm --silent --filter @edo/off-import run refresh /absolute/path/catalogs
 The command checks the official bulk export with a HEAD request. A matching upstream release and
 verified active catalog result in a single metadata check. If a matching release gains a source
 timestamp, the worker publishes a new manifest for the same SQLite file without downloading the
-export. A future-dated upstream timestamp fails the refresh before download. For a new release, the worker streams
-the gzip into a private publisher staging file and confirms its length and upstream identity before
-the importer reads that same file. An upstream timestamp older than the source timestamp in the
+export. A future-dated upstream timestamp fails the refresh before download. For a new release, the
+worker streams the gzip into a private publisher staging file and confirms its length and upstream
+identity before the importer reads that same file. An upstream timestamp older than the source timestamp in the
 verified active manifest stops the job before the download. A complete snapshot can
 activate if the export rotates after the final metadata check, while SQLite is being built.
 
@@ -81,7 +81,8 @@ timestamp separately from the check and activation times to detect a stale upstr
    that manifest. Open the artifact read-only and confirm `PRAGMA integrity_check` returns `ok`.
    If no release passes these checks, keep downloads paused and proceed to quarantine and rebuild.
 3. Restore the verified release by copying its manifest to a temporary file in `open-food-facts/`
-   and renaming it over `active.json`. On Linux, after setting `provider` and `known_good` to the
+   and renaming it over `active.json`. If a directory occupies `active.json`, move it to private
+   quarantine first. On Linux, after setting `provider` and `known_good` to the
    absolute provider directory and verified manifest path, run
 
    ```sh
@@ -89,7 +90,7 @@ timestamp separately from the check and activation times to detect a stale upstr
      cp -p "$known_good" "$pending" &&
      touch "$pending" &&
      sync "$pending" &&
-     mv -f "$pending" "$provider/active.json" &&
+     mv -fT "$pending" "$provider/active.json" &&
      sync "$provider"
    ```
 
