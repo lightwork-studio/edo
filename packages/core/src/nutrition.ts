@@ -114,6 +114,12 @@ export function nutritionForPortion(food: FoodNutrition, portion: Portion): Nutr
   return mapNutrients(food.nutrients, (value, name) => checkedNutrient(value * scale, name));
 }
 
+/** Divide a batch across servings without rounding its nutrient values. */
+export function nutritionPerServing(batch: Nutrients, servings: number): Nutrients {
+  const count = checkedAmount(servings, "Serving count");
+  return mapNutrients(batch, (value, name) => checkedNutrient(value / count, name));
+}
+
 /** A total is unknown if any of its contributing amounts is unknown. */
 export function sumNutrition(values: readonly Nutrients[]): Nutrients {
   const totals: { -readonly [Name in NutrientName]: Nutrients[Name] } = {
@@ -142,9 +148,10 @@ export function roundNutritionForDisplay(nutrients: Nutrients): Nutrients {
     if (scaled >= Number.MAX_SAFE_INTEGER) return value;
     if (Number.isInteger(scaled)) return scaled / places;
 
-    // Match a half step lost to floating-point error when scaling or summing portions.
+    // Equivalent portions can accumulate error across several divisions and multiplications.
     const midpoint = Math.floor(scaled) + 0.5;
-    const atMidpoint = midpoint > scaled && midpoint - scaled <= scaled * Number.EPSILON;
+    const tolerance = Math.min(4 * scaled * Number.EPSILON, 1e-7);
+    const atMidpoint = midpoint > scaled && midpoint - scaled <= tolerance;
     return Math.round(atMidpoint ? midpoint : scaled) / places;
   });
 }

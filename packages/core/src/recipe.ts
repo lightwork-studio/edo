@@ -1,6 +1,6 @@
 import type { DiaryItem } from "./diary.ts";
 import type { Food, FoodId } from "./food.ts";
-import { nutritionForPortion, sumNutrition } from "./nutrition.ts";
+import { nutritionForPortion, nutritionPerServing, sumNutrition } from "./nutrition.ts";
 
 export interface Recipe {
   readonly id: string;
@@ -37,10 +37,7 @@ export function foodForRecipe(recipe: Recipe): Food {
   const batch = sumNutrition(
     ingredients.map(({ food, portion }) => nutritionForPortion(food.nutrition, portion)),
   );
-  const nutrients = nutritionForPortion(
-    { basis: "per-portion", nutrients: batch },
-    { amount: 1 / servings, unit: "portion" },
-  );
+  const nutrients = nutritionPerServing(batch, servings);
   const foodId: FoodId = { provider: "local", sourceId: `recipe:${id}` };
   return {
     id: foodId,

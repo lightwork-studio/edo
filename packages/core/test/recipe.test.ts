@@ -4,6 +4,7 @@ import {
   type Food,
   foodForRecipe,
   type Recipe,
+  roundNutritionForDisplay,
   updateDiaryPortion,
 } from "../src/index.ts";
 
@@ -52,6 +53,33 @@ describe("recipe portions", () => {
       fiberG: null,
     });
   });
+
+  it.each([
+    { proteinG: 21.15, cookedWeightG: 899, expected: 21.2 },
+    { proteinG: 10.35, cookedWeightG: 900, expected: 10.4 },
+  ])(
+    "rounds equivalent weighed and counted portions consistently",
+    ({ proteinG, cookedWeightG, expected }) => {
+      const ingredient = createDiaryItem(
+        "ingredient",
+        {
+          ...oats,
+          nutrition: { ...oats.nutrition, nutrients: { ...oats.nutrition.nutrients, proteinG } },
+        },
+        { amount: 100, unit: "g" },
+      );
+      const food = foodForRecipe({
+        ...recipe,
+        ingredients: [ingredient],
+        servings: 7,
+        cookedWeightG,
+      });
+      const servings = createDiaryItem("servings", food, { amount: 7, unit: "portion" });
+      const weighed = createDiaryItem("weighed", food, { amount: cookedWeightG, unit: "g" });
+      expect(roundNutritionForDisplay(servings.nutrients).proteinG).toBe(expected);
+      expect(roundNutritionForDisplay(weighed.nutrients).proteinG).toBe(expected);
+    },
+  );
 
   it("keeps logged nutrition and portion edits independent of recipe changes or source removal", () => {
     const original = foodForRecipe(recipe);
