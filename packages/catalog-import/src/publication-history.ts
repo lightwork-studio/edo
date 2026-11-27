@@ -70,11 +70,13 @@ export async function archiveCurrentCatalogRelease(
     throw new Error("Catalog receipt directory must be a real directory");
   const receipt = join(directory, `${previous}.sha256`);
   const body = `${previous}\n`;
-  if ((await readRegularFile(receipt))?.toString("utf8") === body) return;
-  const pending = join(stage, "published.sha256");
-  await writeFile(pending, body, { flush: true });
-  await rename(pending, receipt);
+  if ((await readRegularFile(receipt))?.toString("utf8") !== body) {
+    const pending = join(stage, "published.sha256");
+    await writeFile(pending, body, { flush: true });
+    await rename(pending, receipt);
+  }
   if (process.platform !== "win32") {
+    // The prior attempt may have stopped after rename and before this directory was durable.
     await using handle = await open(directory);
     await handle.sync();
   }

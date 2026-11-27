@@ -3,6 +3,7 @@ import {
   link,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   readlink,
@@ -22,12 +23,13 @@ import {
   clearPreparedCatalogSource,
   listPublishedCatalogReleases,
   publishCatalog,
+  restoreCatalogRelease,
 } from "../src/index.ts";
 import { compatibleCatalog } from "../src/manifest.ts";
 
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
-  return { ...fs, rename: vi.fn(fs.rename) };
+  return { ...fs, open: vi.fn(fs.open), rename: vi.fn(fs.rename) };
 });
 
 let directory: string;
@@ -130,7 +132,45 @@ it("archives only releases that reached the activation commit point", async () =
     new Set([first, second]),
   );
   expect(await readFile(join(root, "published", `${first}.sha256`), "utf8")).toBe(`${first}\n`);
+
+  await restoreCatalogRelease(input.root, input.provider, first);
+  expect(digestOf(await readFile(activation))).toBe(first);
+  expect(new Set(await listPublishedCatalogReleases(input.root, input.provider))).toEqual(
+    new Set([first, second]),
+  );
 });
+
+it.skipIf(process.platform === "win32")(
+  "syncs an existing receipt again before retrying activation",
+  async () => {
+    const root = join(input.root, input.provider);
+    const first = await publishCatalog(input, builder);
+    const next = { ...input, source: { ...input.source, release: "fixture-2" } };
+    const real = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    let attempts = 0;
+    vi.mocked(open).mockImplementation(async (path, flags, mode) => {
+      const handle = await real.open(path, flags, mode);
+      if (path === join(root, "published")) {
+        const sync = handle.sync.bind(handle);
+        vi.spyOn(handle, "sync").mockImplementation(async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("Interrupted before receipt directory sync");
+          await sync();
+        });
+      }
+      return handle;
+    });
+    try {
+      await expect(publishCatalog(next, builder)).rejects.toThrow(/before receipt directory sync/);
+      expect(await active()).toEqual(first);
+      const second = await publishCatalog(next, builder);
+      expect(await active()).toEqual(second);
+      expect(attempts).toBe(2);
+    } finally {
+      vi.mocked(open).mockImplementation(real.open);
+    }
+  },
+);
 
 it.each(["artifact", "manifest"] as const)(
   "rejects an immutable %s symlink with matching bytes",

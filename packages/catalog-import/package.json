@@ -8,6 +8,7 @@
     "./manifest": "./src/manifest.ts"
   },
   "scripts": {
+    "restore": "node src/restore-cli.ts",
     "typecheck": "tsc -p ."
   }
 }

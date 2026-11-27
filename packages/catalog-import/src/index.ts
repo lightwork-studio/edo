@@ -137,12 +137,16 @@ async function copySource(inputPath: string, stage: string): Promise<string> {
   return snapshot;
 }
 
-async function activateManifest(root: string, stage: string, manifest: CatalogManifest) {
+async function activateManifest(
+  root: string,
+  stage: string,
+  manifest: CatalogManifest,
+  manifestText = `${JSON.stringify(manifest, null, 2)}\n`,
+) {
   if (!isCatalogManifest(manifest)) throw new Error("Invalid catalog release manifest");
 
   const artifacts = join(root, "artifacts");
   const releases = join(root, "releases");
-  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
   const releaseDigest = {
     sha256: createHash("sha256").update(manifestText).digest("hex"),
     bytes: Buffer.byteLength(manifestText),
@@ -167,6 +171,56 @@ async function activateManifest(root: string, stage: string, manifest: CatalogMa
   if (process.platform !== "win32") {
     // The rename is the commit point. A flush error here leaves both releases recoverable.
     await syncFile(root).catch(() => undefined);
+  }
+}
+
+/** Restore a reviewed immutable release while preserving evidence of the displaced activation. */
+export async function restoreCatalogRelease(
+  root: string,
+  provider: CatalogManifest["provider"],
+  releaseSha256: string,
+): Promise<CatalogManifest> {
+  if (!isCatalogProvider(provider) || !/^[a-f0-9]{64}$/.test(releaseSha256)) {
+    throw new Error("Invalid catalog provider or release checksum");
+  }
+  const providerRoot = join(root, provider);
+  const releases = join(providerRoot, "releases");
+  const artifacts = join(providerRoot, "artifacts");
+  for (const directory of [providerRoot, releases, artifacts]) {
+    if (!(await lstat(directory)).isDirectory())
+      throw new Error("Catalog paths must be real directories");
+  }
+  using _lock = lockPublisher(providerRoot);
+  const release = join(releases, `${releaseSha256}.json`);
+  if (!(await lstat(release)).isFile()) throw new Error("Catalog release must be a regular file");
+  const original = await readFile(release);
+  const text = original.toString("utf8");
+  if (
+    !Buffer.from(text).equals(original) ||
+    createHash("sha256").update(original).digest("hex") !== releaseSha256
+  ) {
+    throw new Error("Stored catalog release does not match its checksum");
+  }
+  const manifest: unknown = JSON.parse(text);
+  if (!isCatalogManifest(manifest) || manifest.provider !== provider) {
+    throw new Error("Invalid catalog release manifest");
+  }
+  const path = join(artifacts, `${manifest.artifact.sha256}.sqlite`);
+  const artifact = (await lstat(path)).isFile() ? await fileDigest(path) : null;
+  if (artifact?.sha256 !== manifest.artifact.sha256 || artifact.bytes !== manifest.artifact.bytes) {
+    throw new Error("Stored catalog artifact does not match its checksum");
+  }
+  verifyDatabase(path, manifest.schemaVersion);
+  using database = new DatabaseSync(path, { readOnly: true });
+  if (database.prepare("PRAGMA integrity_check").get()?.integrity_check !== "ok") {
+    throw new Error("Catalog restore failed SQLite integrity verification");
+  }
+  const stage = await mkdtemp(join(providerRoot, ".stage-"));
+  try {
+    await activateManifest(providerRoot, stage, manifest, text);
+    return manifest;
+  } finally {
+    await rm(stage, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
