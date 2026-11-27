@@ -1,5 +1,5 @@
-import type { DiaryItem, Food, Portion } from "@edo/core";
-import type { DiaryMeal, DiaryStore } from "@edo/storage";
+import { type DiaryItem, type Food, type Portion, sevenDayWeightAverage } from "@edo/core";
+import type { DiaryMeal, DiaryProgressStore, DiaryStore } from "@edo/storage";
 import { getLocales } from "expo-localization";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -25,17 +25,24 @@ import {
 import { FoodDetail } from "./src/food-detail";
 import { openLocalCatalog } from "./src/local-catalog";
 import { openLocalDiary } from "./src/local-diary";
+import { ProgressScreen } from "./src/progress";
+import { type ProgressRange, recentWeightEnd, weightWindowStart } from "./src/progress-data";
 import { SearchScreen } from "./src/search";
 import { appLocale, type Language, strings } from "./src/strings";
+import { TargetsScreen } from "./src/targets-screen";
 import { TodayScreen } from "./src/today";
 import { Notice, showDay, styles } from "./src/ui";
 import { useDatabase } from "./src/use-database";
+import { WeighInScreen } from "./src/weigh-in";
 
 type LocalDiary = Awaited<ReturnType<typeof openLocalDiary>>;
 type SearchContext = EntryTime & { query: string };
 type DeviceContext = { today: string; language: Language; locale: string };
 type Route =
   | { kind: "diary" }
+  | { kind: "progress" }
+  | { kind: "weigh-in" }
+  | { kind: "targets" }
   | ({ kind: "search" } & SearchContext)
   | ({ kind: "add"; food: Food } & SearchContext)
   | { kind: "edit"; day: string; mealId: string; itemId: string; item: DiaryItem };
@@ -103,6 +110,22 @@ function readMeals(diary: DiaryStore, day: string): DiaryMeal[] | null {
   }
 }
 
+function readWeights(diary: DiaryProgressStore, day: string, days: number, through = day) {
+  try {
+    return diary.listWeighIns(weightWindowStart(day, days), through);
+  } catch {
+    return null;
+  }
+}
+
+function readTarget(diary: DiaryProgressStore, day: string) {
+  try {
+    return diary.nutritionTargetAt(day);
+  } catch {
+    return null;
+  }
+}
+
 function DiaryApp({
   connection,
   today,
@@ -111,6 +134,8 @@ function DiaryApp({
 }: DeviceContext & { connection: LocalDiary }) {
   const [route, setRoute] = useState<Route>({ kind: "diary" });
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [progressRange, setProgressRange] = useState<ProgressRange>(30);
+  const [savedWeightDay, setSavedWeightDay] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [feedback, setFeedback] = useState<{ day: string; kind: "saved" | "updated" } | null>(null);
   const catalog = useDatabase(openLocalCatalog, false);
@@ -136,6 +161,8 @@ function DiaryApp({
     if (route.kind === "add") {
       const { day, occurredAt, utcOffsetMinutes, query } = route;
       setRoute({ kind: "search", day, occurredAt, utcOffsetMinutes, query });
+    } else if (route.kind === "weigh-in" || route.kind === "targets") {
+      setRoute({ kind: "progress" });
     } else {
       setRoute({ kind: "diary" });
     }
@@ -162,6 +189,7 @@ function DiaryApp({
         day={day}
         week={week}
         meals={meals}
+        kcalTarget={readTarget(diary, day)?.target.kcal ?? null}
         feedback={feedback?.day === day ? t[feedback.kind] : null}
         onDay={chooseDay}
         onWeek={(offset) => {
@@ -178,6 +206,10 @@ function DiaryApp({
               }
             : undefined
         }
+        onProgress={() => {
+          setSavedWeightDay(null);
+          setRoute({ kind: "progress" });
+        }}
         onEdit={(mealId, itemId) => {
           const meal = meals?.find((entry) => entry.id === mealId);
           const item = meal?.items.find((entry) => entry.id === itemId);
@@ -187,6 +219,68 @@ function DiaryApp({
           }
         }}
         onRetry={() => setRefresh((revision) => revision + 1)}
+      />
+    );
+  }
+
+  if (route.kind === "progress") {
+    return (
+      <ProgressScreen
+        diary={diary}
+        today={today}
+        locale={locale}
+        t={t}
+        range={progressRange}
+        savedDay={savedWeightDay}
+        onRange={setProgressRange}
+        onBack={goBack}
+        onTargets={() => setRoute({ kind: "targets" })}
+        onWeight={() => {
+          setSavedWeightDay(null);
+          setRoute({ kind: "weigh-in" });
+        }}
+      />
+    );
+  }
+  if (route.kind === "weigh-in") {
+    return (
+      <WeighInScreen
+        today={today}
+        recent={readWeights(diary, today, 96, recentWeightEnd(today)) ?? []}
+        readWindow={(through) => readWeights(diary, through, 7)}
+        locale={locale}
+        t={t}
+        onBack={goBack}
+        onSave={(entry) => {
+          if (entry.localDay > localDay(new Date())) {
+            throw new RangeError("The weigh-in date is now in the future");
+          }
+          diary.saveWeighIn(entry);
+          setSavedWeightDay(entry.localDay);
+          setRoute({ kind: "progress" });
+        }}
+      />
+    );
+  }
+  if (route.kind === "targets") {
+    return (
+      <TargetsScreen
+        language={language}
+        locale={locale}
+        current={readTarget(diary, today)}
+        suggestedWeightKg={sevenDayWeightAverage(today, readWeights(diary, today, 7) ?? []).kg}
+        onBack={goBack}
+        onSave={(mode, target) => {
+          const now = new Date();
+          diary.saveNutritionTarget({
+            id: connection.newId(),
+            effectiveDay: localDay(now),
+            configuredAt: now.getTime(),
+            mode,
+            target,
+          });
+          setRoute({ kind: "progress" });
+        }}
       />
     );
   }
