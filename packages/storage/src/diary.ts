@@ -1,4 +1,4 @@
-import type { DiaryItem } from "@edo/core";
+import type { DiaryItem, DiaryMeal } from "@edo/core";
 import {
   type DiaryBackup,
   diaryMigrations,
@@ -8,16 +8,7 @@ import {
 import { decodeSnapshot, diaryId, readSnapshot } from "./snapshot.ts";
 import { type DiarySqliteConnection, rollback, type SqlRow } from "./sqlite.ts";
 
-export interface DiaryMeal {
-  readonly id: string;
-  /** Calendar day as entered by the user, independent of the phone's current time zone. */
-  readonly localDay: string;
-  /** Event instant in milliseconds since the Unix epoch. */
-  readonly occurredAt: number;
-  /** Minutes east of UTC at the event, when captured. */
-  readonly utcOffsetMinutes?: number;
-  readonly items: readonly DiaryItem[];
-}
+export type { DiaryMeal } from "@edo/core";
 
 export interface DiaryStore {
   saveMeal(meal: DiaryMeal): void;

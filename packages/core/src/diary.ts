@@ -15,6 +15,17 @@ export interface DiaryItem {
   readonly nutrients: Nutrients;
 }
 
+export interface DiaryMeal {
+  readonly id: string;
+  /** Calendar day as entered by the user, independent of the phone's current time zone. */
+  readonly localDay: string;
+  /** Event instant in milliseconds since the Unix epoch. */
+  readonly occurredAt: number;
+  /** Minutes east of UTC at the event, when captured. */
+  readonly utcOffsetMinutes?: number;
+  readonly items: readonly DiaryItem[];
+}
+
 const providers: readonly FoodProvider[] = ["bls", "open-food-facts", "usda", "local"];
 const preparationStates: readonly FoodPreparation[] = [
   "raw",
