@@ -166,4 +166,9 @@ it("rejects a checksum-valid SQLite artifact whose metadata claims a different r
   expect((await get("active.json")).status).toBe(503);
   expect((await get(artifactPath(mismatched))).status).toBe(503);
   expect((await get(artifactPath(previous), { method: "HEAD" })).status).toBe(200);
+
+  const sameArtifact = await publish("latest again", "previous");
+  expect(sameArtifact.artifact.sha256).toBe(previous.artifact.sha256);
+  expect((await get("active.json")).status).toBe(503);
+  expect((await get(artifactPath(previous), { method: "HEAD" })).status).toBe(200);
 });
