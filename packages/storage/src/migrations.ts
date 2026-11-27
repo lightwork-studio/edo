@@ -7,6 +7,8 @@ export type DiaryBackup = (
   verify: (snapshot: DiarySqliteConnection) => void,
 ) => Promise<void>;
 
+const diaryApplicationId = 0x45444f44; // EDOD
+
 export const diaryMigrations: readonly Migration[] = [
   (db) => {
     db.exec(`
@@ -25,6 +27,14 @@ export const diaryMigrations: readonly Migration[] = [
       );
     `);
   },
+  (db) => {
+    db.exec(`
+      ALTER TABLE diary_meals ADD COLUMN utc_offset_minutes INTEGER
+        CHECK (utc_offset_minutes IS NULL OR
+          (typeof(utc_offset_minutes) = 'integer' AND utc_offset_minutes BETWEEN -1439 AND 1439));
+      PRAGMA application_id = ${diaryApplicationId};
+    `);
+  },
 ];
 
 function storageVersion(db: DiarySqliteConnection): number {
@@ -33,6 +43,22 @@ function storageVersion(db: DiarySqliteConnection): number {
     throw new Error("Invalid diary storage version");
   }
   return version;
+}
+
+function requireDiaryIdentity(db: DiarySqliteConnection, version: number): void {
+  const applicationId = db.get("PRAGMA application_id")?.application_id;
+  if (applicationId === diaryApplicationId) return;
+  if (applicationId === 0) {
+    if (version === 0) return;
+    if (
+      version === 1 &&
+      db.get(`SELECT count(*) AS tables_found FROM sqlite_schema
+        WHERE type = 'table' AND name IN ('diary_meals', 'diary_items')`)?.tables_found === 2
+    ) {
+      return;
+    }
+  }
+  throw new Error("SQLite file does not belong to the Edo diary");
 }
 
 /** Check while holding the operation's SQLite transaction. */
@@ -62,6 +88,7 @@ async function verifyBackup(
     if (storageVersion(snapshot) !== installed) {
       throw new Error("Diary backup has the wrong storage version");
     }
+    requireDiaryIdentity(snapshot, installed);
     verifyIntegrity(snapshot, "Diary backup");
     for (const query of [
       "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name",
@@ -91,7 +118,9 @@ export async function migrateDiary(
   if (db.get("PRAGMA foreign_keys")?.foreign_keys !== 1) {
     throw new Error("Diary storage requires foreign key enforcement");
   }
-  if (storageVersion(db) === migrations.length) return;
+  const observed = storageVersion(db);
+  requireDiaryIdentity(db, observed);
+  if (observed === migrations.length) return;
 
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -99,6 +128,7 @@ export async function migrateDiary(
     if (installed > migrations.length) {
       throw new Error("This diary was saved by a newer version of Edo");
     }
+    requireDiaryIdentity(db, installed);
     if (installed < migrations.length) {
       if (installed === 0) {
         const existing = db.get("SELECT name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'");

@@ -1,5 +1,11 @@
 import { type DiarySqliteConnection, type OpenDiaryOptions, openDiary } from "@edo/storage";
-import { backupDatabaseAsync, openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
+import { File } from "expo-file-system";
+import {
+  backupDatabaseAsync,
+  deleteDatabaseAsync,
+  openDatabaseAsync,
+  type SQLiteDatabase,
+} from "expo-sqlite";
 
 const diaryName = "edo-diary.db";
 
@@ -20,28 +26,45 @@ const backupBeforeMigration: OpenDiaryOptions["backupBeforeMigration"] = async (
 ) => {
   const sourceDatabase = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
+    const sourceUri = `file://${sourceDatabase.databasePath.split("/").map(encodeURIComponent).join("/")}`;
+    const directory = new File(sourceUri).parentDirectory;
+    // The diary migration holds its write lock, so no other backup can own these partial copies.
+    for (const entry of directory.list()) {
+      if (
+        entry instanceof File &&
+        /^\.edo-diary-v\d+-[0-9a-f]{32}\.db\.partial$/.test(entry.name)
+      ) {
+        await deleteDatabaseAsync(entry.name);
+      }
+    }
     const identity = await sourceDatabase.getFirstAsync<{ id: string }>(
       "SELECT lower(hex(randomblob(16))) AS id",
     );
     if (!identity || !/^[0-9a-f]{32}$/.test(identity.id)) {
       throw new Error("Could not generate a diary backup name");
     }
-    const destDatabase = await openDatabaseAsync(`edo-diary-v${version}-${identity.id}.db`, {
-      useNewConnection: true,
-    });
+    const backupName = `edo-diary-v${version}-${identity.id}.db`;
+    const stagedName = `.${backupName}.partial`;
+    const staged = new File(directory, stagedName);
+    if (staged.exists || new File(directory, backupName).exists) {
+      throw new Error("Diary backup destination is already in use");
+    }
     try {
-      const header = await destDatabase.getFirstAsync<{ user_version: number }>(
-        "PRAGMA user_version",
-      );
-      const table = await destDatabase.getFirstAsync("SELECT name FROM sqlite_schema");
-      if (header?.user_version !== 0 || table) {
-        throw new Error("Diary backup destination is already in use");
+      const destDatabase = await openDatabaseAsync(stagedName, { useNewConnection: true });
+      try {
+        await backupDatabaseAsync({ sourceDatabase, destDatabase });
+        const journal = await destDatabase.getFirstAsync<{ journal_mode: string }>(
+          "PRAGMA journal_mode = DELETE",
+        );
+        if (journal?.journal_mode !== "delete") throw new Error("Diary backup must be standalone");
+        verify(connectionFor(destDatabase));
+      } finally {
+        await destDatabase.closeAsync();
       }
-      await backupDatabaseAsync({ sourceDatabase, destDatabase });
-      // The migration proceeds only after it verifies the published recovery copy.
-      verify(connectionFor(destDatabase));
-    } finally {
-      await destDatabase.closeAsync();
+      staged.rename(backupName);
+    } catch (error) {
+      await deleteDatabaseAsync(stagedName).catch(() => undefined);
+      throw error;
     }
   } finally {
     await sourceDatabase.closeAsync();

@@ -14,11 +14,14 @@ export interface DiaryMeal {
   readonly localDay: string;
   /** Event instant in milliseconds since the Unix epoch. */
   readonly occurredAt: number;
+  /** Minutes east of UTC at the event, when captured. */
+  readonly utcOffsetMinutes?: number;
   readonly items: readonly DiaryItem[];
 }
 
 export interface DiaryStore {
   saveMeal(meal: DiaryMeal): void;
+  deleteMeal(id: string): void;
   getMeal(id: string): DiaryMeal | null;
   listMeals(localDay: string): DiaryMeal[];
 }
@@ -48,8 +51,16 @@ function readInstant(value: unknown): number {
   return value;
 }
 
+function readUtcOffset(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || Math.abs(value) >= 24 * 60) {
+    throw new TypeError("Invalid diary UTC offset");
+  }
+  return value;
+}
+
 const selectMeals = `
-  SELECT meals.id AS meal_id, meals.local_day, meals.occurred_at,
+  SELECT meals.id AS meal_id, meals.local_day, meals.occurred_at, meals.utc_offset_minutes,
     items.id AS item_id, items.snapshot
   FROM diary_meals AS meals
   LEFT JOIN diary_items AS items ON meals.id = items.meal_id
@@ -62,10 +73,12 @@ function readMeals(rows: SqlRow[]): DiaryMeal[] {
     const id = diaryId(row.meal_id, "meal ID");
     let meal = meals.get(id);
     if (meal === undefined) {
+      const utcOffsetMinutes = readUtcOffset(row.utc_offset_minutes);
       meal = {
         id,
         localDay: readDay(row.local_day),
         occurredAt: readInstant(row.occurred_at),
+        ...(utcOffsetMinutes === undefined ? {} : { utcOffsetMinutes }),
         items: [],
       };
       meals.set(id, meal);
@@ -99,6 +112,7 @@ function saveMeal(db: DiarySqliteConnection, meal: DiaryMeal): void {
   const id = diaryId(meal.id, "meal ID");
   const localDay = readDay(meal.localDay);
   const occurredAt = readInstant(meal.occurredAt);
+  const utcOffsetMinutes = readUtcOffset(meal.utcOffsetMinutes) ?? null;
   const items = meal.items.map((item) => ({
     id: diaryId(item.id, "item ID"),
     snapshot: JSON.stringify(readSnapshot(item)),
@@ -106,11 +120,20 @@ function saveMeal(db: DiarySqliteConnection, meal: DiaryMeal): void {
 
   inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
     db.run(
-      `INSERT INTO diary_meals (id, local_day, occurred_at) VALUES (?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET local_day = excluded.local_day, occurred_at = excluded.occurred_at`,
+      `INSERT INTO diary_meals (id, local_day, occurred_at, utc_offset_minutes) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        local_day = excluded.local_day,
+        occurred_at = excluded.occurred_at,
+        utc_offset_minutes = CASE
+          WHEN excluded.local_day = diary_meals.local_day
+            AND excluded.occurred_at = diary_meals.occurred_at
+          THEN coalesce(excluded.utc_offset_minutes, diary_meals.utc_offset_minutes)
+          ELSE excluded.utc_offset_minutes
+        END`,
       id,
       localDay,
       occurredAt,
+      utcOffsetMinutes,
     );
     db.run("DELETE FROM diary_items WHERE meal_id = ?", id);
     for (const [position, item] of items.entries()) {
@@ -135,6 +158,10 @@ export async function openDiary({
   });
   return {
     saveMeal: (meal) => saveMeal(db, meal),
+    deleteMeal: (id) =>
+      inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
+        db.run("DELETE FROM diary_meals WHERE id = ?", diaryId(id, "meal ID"));
+      }),
     getMeal: (id) =>
       inCurrentDiary(
         db,

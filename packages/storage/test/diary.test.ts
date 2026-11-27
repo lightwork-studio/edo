@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { diaryMigrations, migrateDiary } from "../src/migrations.ts";
 import { decodeSnapshot } from "../src/snapshot.ts";
 
+const currentVersion = diaryMigrations.length;
 let directory: string;
 const databases: DatabaseSync[] = [];
 
@@ -124,6 +125,96 @@ test("reopens locally, preserving the event day, stable IDs and nutrition after 
   });
 });
 
+test("round-trips the captured offset for two occurrences of a DST wall time", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const earlier: DiaryMeal = {
+    ...meal,
+    localDay: "2026-11-01",
+    occurredAt: Date.parse("2026-11-01T05:30:00Z"),
+    utcOffsetMinutes: -240,
+  };
+  const later: DiaryMeal = {
+    id: "meal-fallback",
+    localDay: earlier.localDay,
+    occurredAt: Date.parse("2026-11-01T06:30:00Z"),
+    utcOffsetMinutes: -300,
+    items: [],
+  };
+  diary.saveMeal(earlier);
+  diary.saveMeal(later);
+  expect(() => diary.saveMeal({ ...earlier, utcOffsetMinutes: -240.5 })).toThrow(/UTC offset/);
+  expect(() => diary.saveMeal({ ...earlier, utcOffsetMinutes: 1440 })).toThrow(/UTC offset/);
+  source.db.close();
+
+  const reopened = await createDatabase().start();
+  expect(reopened.listMeals(earlier.localDay)).toEqual([earlier, later]);
+  reopened.saveMeal({ ...earlier, utcOffsetMinutes: undefined });
+  expect(reopened.getMeal(earlier.id)).toEqual(earlier);
+  const moved = { ...earlier, occurredAt: later.occurredAt, utcOffsetMinutes: undefined };
+  reopened.saveMeal(moved);
+  expect(reopened.getMeal(earlier.id)?.utcOffsetMinutes).toBeUndefined();
+});
+
+test("deletes a meal and its items in a retryable transaction", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  diary.saveMeal(meal);
+  diary.saveMeal({ ...meal, id: "other-meal", items: [] });
+  diary.deleteMeal(meal.id);
+  diary.deleteMeal(meal.id);
+  source.db.close();
+
+  const reopened = createDatabase();
+  const restored = await reopened.start();
+  expect(restored.getMeal(meal.id)).toBeNull();
+  expect(restored.listMeals(meal.localDay).map(({ id }) => id)).toEqual(["other-meal"]);
+  expect(reopened.options.connection.get("SELECT id FROM diary_items")).toBeUndefined();
+});
+
+test("migrates a version-one diary while preserving its snapshots and absent offset", async () => {
+  const source = createDatabase();
+  const { connection, backupBeforeMigration } = source.options;
+  await migrateDiary(connection, diaryMigrations.slice(0, 1), backupBeforeMigration, () => {});
+  connection.run(
+    "INSERT INTO diary_meals VALUES (?, ?, ?)",
+    meal.id,
+    meal.localDay,
+    meal.occurredAt,
+  );
+  const item = meal.items[0];
+  if (!item) throw new Error("Expected a legacy diary item fixture");
+  const { id, ...snapshot } = item;
+  connection.run(
+    "INSERT INTO diary_items VALUES (?, ?, 0, ?)",
+    id,
+    meal.id,
+    JSON.stringify(snapshot),
+  );
+
+  const upgraded = await source.start();
+  expect(upgraded.getMeal(meal.id)).toEqual(meal);
+  expect(connection.get("PRAGMA user_version")?.user_version).toBe(currentVersion);
+  expect(connection.get("PRAGMA application_id")?.application_id).toBe(0x45444f44);
+  expect(source.snapshots).toHaveLength(1);
+});
+
+test.each([1, currentVersion])(
+  "rejects a version-%i catalog at the diary open boundary",
+  async (version) => {
+    const source = createDatabase();
+    source.db.exec(
+      `CREATE TABLE catalog_metadata (release TEXT); PRAGMA user_version = ${version}`,
+    );
+    await expect(source.start()).rejects.toThrow(/does not belong to the Edo diary/);
+    expect(source.options.connection.get("PRAGMA user_version")?.user_version).toBe(version);
+    expect(source.options.connection.all("SELECT name FROM sqlite_schema")).toEqual([
+      { name: "catalog_metadata" },
+    ]);
+    expect(source.snapshots).toEqual([]);
+  },
+);
+
 test("rolls back all writes in an incomplete meal replacement", async () => {
   const source = createDatabase();
   const diary = await source.start();
@@ -224,7 +315,7 @@ test("backs up old data and rolls back invalid migrated rows before changing the
       checkItems,
     ),
   ).rejects.toThrow(/Invalid diary portion/);
-  expect(connection.get("PRAGMA user_version")?.user_version).toBe(1);
+  expect(connection.get("PRAGMA user_version")?.user_version).toBe(currentVersion);
   expect(connection.all("PRAGMA table_info(diary_meals)").map((row) => row.name)).not.toContain(
     "memo",
   );
@@ -246,18 +337,20 @@ test("backs up old data and rolls back invalid migrated rows before changing the
     backupBeforeMigration,
     checkItems,
   );
-  expect(connection.get("PRAGMA user_version")?.user_version).toBe(2);
+  expect(connection.get("PRAGMA user_version")?.user_version).toBe(currentVersion + 1);
   const migratedItem = decodeSnapshot(connection.get("SELECT snapshot FROM diary_items")?.snapshot);
   expect({ id: "item-drink", ...migratedItem }).toEqual(editedMeal.items[0]);
   source.db.close();
 
   const upgraded = createDatabase();
   await expect(upgraded.start()).rejects.toThrow(/newer version/);
-  expect(upgraded.options.connection.get("PRAGMA user_version")?.user_version).toBe(2);
+  expect(upgraded.options.connection.get("PRAGMA user_version")?.user_version).toBe(
+    currentVersion + 1,
+  );
   expect(source.snapshots).toHaveLength(2);
   const priorSnapshot = new DatabaseSync(snapshotPath, { readOnly: true });
   try {
-    expect(priorSnapshot.prepare("PRAGMA user_version").get()?.user_version).toBe(1);
+    expect(priorSnapshot.prepare("PRAGMA user_version").get()?.user_version).toBe(currentVersion);
     const previousItem = decodeSnapshot(
       priorSnapshot.prepare("SELECT snapshot FROM diary_items").get()?.snapshot,
     );
@@ -306,7 +399,7 @@ test("rejects a silent incomplete backup and a stale copy with the correct versi
       migrateDiary(source.options.connection, steps, attempt.backup, () => {}),
     ).rejects.toThrow(attempt.error);
   }
-  expect(source.options.connection.get("PRAGMA user_version")?.user_version).toBe(1);
+  expect(source.options.connection.get("PRAGMA user_version")?.user_version).toBe(currentVersion);
   expect(
     source.options.connection.all("PRAGMA table_info(diary_meals)").map((row) => row.name),
   ).not.toContain("memo");
@@ -334,6 +427,7 @@ test("blocks reads and writes on an open handle after another connection upgrade
   expect(() => legacy.getMeal(meal.id)).toThrow(/version has changed/);
   expect(() => legacy.listMeals(meal.localDay)).toThrow(/version has changed/);
   expect(() => legacy.saveMeal({ ...meal, localDay: "2026-11-01" })).toThrow(/version has changed/);
+  expect(() => legacy.deleteMeal(meal.id)).toThrow(/version has changed/);
   expect(connection.get("SELECT memo FROM diary_items WHERE id = ?", "item-drink")?.memo).toBe(
     "Retained note",
   );
