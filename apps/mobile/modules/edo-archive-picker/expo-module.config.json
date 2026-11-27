@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["EdoArchivePickerModule"]
+  },
+  "android": {
+    "modules": ["studio.lightwork.edo.archive.EdoArchivePickerModule"]
+  }
+}

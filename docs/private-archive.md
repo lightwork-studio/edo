@@ -30,10 +30,11 @@ The archive contains private diary data in clear text. Keep the file in a locati
 for personal records.
 
 On iOS or Android, open **Progress**, then **Diary files**. Share a new archive through the
-system share sheet or choose a previously exported file to preview its restore. The phone
-applies the preview only after you select **Restore records**.
-The mobile file picker and share flow accept archives up to 16 MiB.
+system share sheet. An Edo development or release build can open a previously exported file
+in place to preview its restore. The picker reads up to 16 MiB plus one byte to detect an
+oversized file, and the app checks JSON depth and structure before parsing. The phone applies
+the preview only after you select **Restore records**.
 
 Sharing uses a temporary copy in the application cache. The app clears expired staging copies
-when Diary files opens or another archive is shared. The staging window is one day to give the
-receiving app time to read the file.
+on startup, on resume or when another archive is shared. The staging window is one day to
+give the receiving app time to read the file.

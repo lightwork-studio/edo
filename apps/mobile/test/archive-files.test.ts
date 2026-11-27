@@ -1,18 +1,12 @@
+import { createDiaryItem, type Food } from "@edo/core";
 import { beforeEach, expect, it, vi } from "vitest";
-import {
-  ArchiveComplexityError,
-  ArchiveSizeError,
-  chooseArchive,
-  pruneArchiveExports,
-  shareArchive,
-} from "../src/archive-files";
+import { pruneArchiveExports, shareArchive } from "../src/archive-files";
 
 const mock = vi.hoisted(() => ({
   directories: new Set<string>(),
   files: new Map<string, string>(),
-  sizes: new Map<string, number>(),
-  read: vi.fn(),
-  choose: vi.fn(),
+  measuredSize: undefined as number | undefined,
+  undeletable: undefined as string | undefined,
   share: vi.fn(),
   sharingAvailable: vi.fn(),
 }));
@@ -21,7 +15,6 @@ vi.mock("expo-crypto", () => ({
   randomUUID: () => "a1234567-1234-4321-abcd-123456789abc",
 }));
 
-vi.mock("expo-document-picker", () => ({ getDocumentAsync: mock.choose }));
 vi.mock("expo-sharing", () => ({
   isAvailableAsync: mock.sharingAvailable,
   shareAsync: mock.share,
@@ -48,6 +41,7 @@ vi.mock("expo-file-system", () => {
       mock.directories.add(this.uri.slice(0, this.uri.lastIndexOf("/")));
     }
     delete() {
+      if (this.uri === mock.undeletable) throw new Error("Cache delete failed");
       mock.directories.delete(this.uri);
       for (const path of mock.files.keys()) {
         if (path.startsWith(`${this.uri}/`)) mock.files.delete(path);
@@ -66,31 +60,14 @@ vi.mock("expo-file-system", () => {
     constructor(...parts: (string | Directory)[]) {
       this.uri = uri(parts);
     }
-    get parentDirectory() {
-      return new Directory(this.uri.slice(0, this.uri.lastIndexOf("/")));
-    }
-    get exists() {
-      return mock.files.has(this.uri);
-    }
     get size() {
-      return (
-        mock.sizes.get(this.uri) ?? new TextEncoder().encode(mock.files.get(this.uri) ?? "").length
-      );
+      return mock.measuredSize ?? Buffer.byteLength(mock.files.get(this.uri) ?? "");
     }
     create() {
       mock.files.set(this.uri, "");
     }
     async write(text: string) {
       mock.files.set(this.uri, text);
-    }
-    async text() {
-      mock.read(this.uri);
-      const source = mock.files.get(this.uri);
-      if (source === undefined) throw new Error("Missing selected file");
-      return source;
-    }
-    delete() {
-      mock.files.delete(this.uri);
     }
   }
 
@@ -100,9 +77,8 @@ vi.mock("expo-file-system", () => {
 beforeEach(() => {
   mock.directories.clear();
   mock.files.clear();
-  mock.sizes.clear();
-  mock.read.mockReset();
-  mock.choose.mockReset();
+  mock.measuredSize = undefined;
+  mock.undeletable = undefined;
   mock.share.mockReset();
   mock.sharingAvailable.mockReset().mockResolvedValue(true);
 });
@@ -118,6 +94,8 @@ it("writes an export in its private cache, shares it, and later removes expired 
   expect(uri).toBe(`${root}/100-a1234567-1234-4321-abcd-123456789abc/edo-diary.json`);
   expect(options).toEqual({ mimeType: "application/json", UTI: "public.json" });
   expect(mock.files.get(uri)).toBe(source);
+  pruneArchiveExports(100 + 24 * 60 * 60 * 1000 - 1);
+  expect(mock.files.get(uri)).toBe(source);
   pruneArchiveExports(100 + 24 * 60 * 60 * 1000);
   expect(mock.files.get(uri)).toBeUndefined();
   expect(mock.files.get(`${unowned}/keep.json`)).toBe("keep");
@@ -129,66 +107,77 @@ it("cleans up the export if the native share operation fails", async () => {
   expect(mock.files.size).toBe(0);
 });
 
-it("reads and removes the picker copy, and keeps a file the picker returns outside its cache", async () => {
-  const copy = "file:///cache/DocumentPicker/copy.json";
-  const selected = "file:///documents/original.json";
-  mock.files.set(copy, "picked copy");
-  mock.files.set(selected, "original");
-  mock.choose
-    .mockResolvedValueOnce({ canceled: false, assets: [{ uri: copy }] })
-    .mockResolvedValueOnce({ canceled: false, assets: [{ uri: selected }] })
-    .mockResolvedValueOnce({ canceled: true, assets: null });
-  await expect(chooseArchive()).resolves.toBe("picked copy");
-  expect(mock.files.has(copy)).toBe(false);
-  await expect(chooseArchive()).resolves.toBe("original");
-  expect(mock.files.get(selected)).toBe("original");
-  await expect(chooseArchive()).resolves.toBeNull();
-  expect(mock.choose).toHaveBeenCalledWith(
-    expect.objectContaining({ copyToCacheDirectory: true, multiple: false }),
-  );
+it("keeps pruning expired exports when deleting one staging directory fails", async () => {
+  await shareArchive("{}", 100);
+  await shareArchive("{}", 200);
+  mock.undeletable = "file:///cache/edo-diary-exports/100-a1234567-1234-4321-abcd-123456789abc";
+  pruneArchiveExports(200 + 24 * 60 * 60 * 1000);
+  expect([...mock.files.keys()]).toEqual([`${mock.undeletable}/edo-diary.json`]);
+  mock.undeletable = undefined;
+  pruneArchiveExports(200 + 24 * 60 * 60 * 1000);
+  expect(mock.files.size).toBe(0);
 });
 
-it("rejects oversized input before reading and cleans up oversized export staging", async () => {
-  const oversized = 16 * 1024 * 1024 + 1;
-  const uri = "file:///cache/DocumentPicker/large.json";
-  mock.files.set(uri, "synthetic oversized source");
-  mock.sizes.set(uri, oversized);
-  mock.choose.mockResolvedValueOnce({ canceled: false, assets: [{ uri }] });
-  await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveSizeError);
-  expect(mock.read).not.toHaveBeenCalled();
-  expect(mock.files.has(uri)).toBe(false);
-
-  const staged =
-    "file:///cache/edo-diary-exports/300-a1234567-1234-4321-abcd-123456789abc/edo-diary.json";
-  mock.sizes.set(staged, oversized);
-  await expect(shareArchive("synthetic oversized export", 300)).rejects.toBeInstanceOf(
-    ArchiveSizeError,
-  );
-  expect(mock.share).not.toHaveBeenCalled();
-  expect(mock.files.has(staged)).toBe(false);
-});
-
-it("rejects a small archive with millions of objects before offering a restore preview", async () => {
-  const uri = "file:///cache/DocumentPicker/repetitive.json";
-  const source = `{"format":"edo-diary","formatVersion":1,"meals":[${"{},".repeat(4_999_999)}{}]}`;
-  mock.files.set(uri, source);
-  mock.choose.mockResolvedValueOnce({ canceled: false, assets: [{ uri }] });
-
-  await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveComplexityError);
-  expect(mock.files.has(uri)).toBe(false);
-  await expect(shareArchive(source)).rejects.toBeInstanceOf(ArchiveComplexityError);
+it("does not stage private data if the system share sheet is unavailable", async () => {
+  mock.sharingAvailable.mockResolvedValueOnce(false);
+  await expect(shareArchive("{}")).rejects.toThrow(/unavailable/i);
   expect(mock.share).not.toHaveBeenCalled();
   expect(mock.files.size).toBe(0);
 });
 
-it("rejects excessive JSON nesting and ignores structural symbols inside quoted strings", async () => {
-  const uri = "file:///cache/DocumentPicker/nesting.json";
-  mock.files.set(uri, `${"[".repeat(256)}0${"]".repeat(256)}`);
-  mock.choose.mockResolvedValueOnce({ canceled: false, assets: [{ uri }] });
-  await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveComplexityError);
+it("removes a staged file when its size cannot be verified", async () => {
+  mock.measuredSize = 0;
+  await expect(shareArchive("{}")).rejects.toThrow(/verify the staged archive/);
+  expect(mock.share).not.toHaveBeenCalled();
+  expect(mock.files.size).toBe(0);
+});
 
-  const source = JSON.stringify({ format: "edo-diary", note: 'a\\"[{,'.repeat(175_000) });
-  mock.files.set(uri, source);
-  mock.choose.mockResolvedValueOnce({ canceled: false, assets: [{ uri }] });
-  await expect(chooseArchive()).resolves.toBe(source);
+it("shares a multi-year diary that exceeds 16 MiB without truncation", async () => {
+  const food: Food = {
+    id: { provider: "local", sourceId: "synthetic-juice" },
+    name: "Apfelsaft, ungesüßt",
+    release: null,
+    preparation: "unknown",
+    nutrition: {
+      basis: "per-100-ml",
+      nutrients: { kcal: 46, proteinG: 0, availableCarbohydratesG: 11, fatG: 0, fiberG: null },
+    },
+  };
+  const meals = Array.from({ length: 4 * 365 * 3 }, (_, index) => {
+    const occurredAt = Date.UTC(2022, 0, 1 + Math.floor(index / 3), 8 + 5 * (index % 3));
+    return {
+      id: `meal-${index}`,
+      localDay: new Date(occurredAt).toISOString().slice(0, 10),
+      occurredAt,
+      items: Array.from({ length: 5 }, (_, slot) =>
+        createDiaryItem(`item-${index}-${slot}`, food, { amount: 150, unit: "ml" }),
+      ),
+    };
+  });
+  const source = JSON.stringify({ format: "edo-diary", formatVersion: 1, meals }, null, 2);
+  expect(Buffer.byteLength(source)).toBeGreaterThan(16 * 1024 * 1024);
+  await shareArchive(source);
+  expect(mock.files.get(mock.share.mock.calls[0]?.[0])).toBe(source);
+});
+
+it("keeps pending handoffs alive during cleanup and prevents overlapping shares", async () => {
+  let finish: (() => void) | undefined;
+  mock.share.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const first = shareArchive("{}", 100);
+  await vi.waitFor(() => expect(mock.share).toHaveBeenCalledOnce());
+  const expiry = 100 + 24 * 60 * 60 * 1000;
+  await expect(shareArchive("{}", expiry)).rejects.toThrow(/in progress/);
+  pruneArchiveExports(expiry);
+  expect(mock.files.size).toBe(1);
+  finish?.();
+  await first;
+  pruneArchiveExports(expiry);
+  expect(mock.files.size).toBe(0);
+  await shareArchive("{}", expiry);
+  expect(mock.share).toHaveBeenCalledTimes(2);
 });

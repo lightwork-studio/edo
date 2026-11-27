@@ -26,6 +26,7 @@ import {
   StatusBar,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { pruneArchiveExports } from "./src/archive-files";
 import { ArchiveScreen } from "./src/archive-screen";
 import { foodForPackagedProduct, retainedProducts } from "./src/barcode";
 import { BarcodeEntry, type BarcodeState } from "./src/barcode-entry";
@@ -88,6 +89,7 @@ function useDeviceContext(): DeviceContext {
     function refresh() {
       clearTimeout(timer);
       const now = new Date();
+      pruneArchiveExports(now.getTime());
       setToday(localDay(now));
       const delay = nextMidnight(now) - now.getTime();
       timer = setTimeout(refresh, delay);

@@ -6,13 +6,13 @@ import {
 } from "@edo/storage";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { shareArchive } from "./archive-files";
 import {
   ArchiveComplexityError,
   ArchiveSizeError,
+  archivePickerAvailable,
   chooseArchive,
-  pruneArchiveExports,
-  shareArchive,
-} from "./archive-files";
+} from "./archive-import";
 import type { Strings } from "./strings";
 import { DetailHeader, Notice, PrimaryButton, styles } from "./ui";
 
@@ -44,7 +44,6 @@ export function ArchiveScreen({
   > | null>(null);
   useEffect(() => {
     active.current = true;
-    pruneArchiveExports();
     return () => {
       active.current = false;
     };
@@ -95,27 +94,31 @@ export function ArchiveScreen({
           >
             <Text style={styles.actionText}>{t.shareDiaryArchive}</Text>
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: busy }}
-            disabled={busy}
-            style={styles.action}
-            onPress={() =>
-              void run("choose", async () => {
-                setSelection(null);
-                setResult(null);
-                const source = await chooseArchive();
-                if (source !== null && active.current) {
-                  setSelection({
-                    source,
-                    preview: archive.previewPrivateArchive(source, maxPreviewIssues),
-                  });
-                }
-              })
-            }
-          >
-            <Text style={styles.actionText}>{t.chooseDiaryArchive}</Text>
-          </Pressable>
+          {archivePickerAvailable ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: busy }}
+              disabled={busy}
+              style={styles.action}
+              onPress={() =>
+                void run("choose", async () => {
+                  setSelection(null);
+                  setResult(null);
+                  const source = await chooseArchive();
+                  if (source !== null && active.current) {
+                    setSelection({
+                      source,
+                      preview: archive.previewPrivateArchive(source, maxPreviewIssues),
+                    });
+                  }
+                })
+              }
+            >
+              <Text style={styles.actionText}>{t.chooseDiaryArchive}</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.meta}>{t.archivePickerUnavailable}</Text>
+          )}
         </View>
         {busy && <Notice text={t.loading} pending />}
         {error && (

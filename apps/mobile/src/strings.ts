@@ -106,8 +106,9 @@ export const strings = {
     archivePreview: "Restore preview",
     archiveShareError: "Couldn’t share the diary archive. Try again.",
     archiveOpenError: "Couldn’t open this Edo diary archive.",
+    archivePickerUnavailable: "Restoring archives requires an installed Edo build.",
     archiveRestoreError: "Couldn’t restore the archive. Try again.",
-    archiveSizeError: "The mobile app supports archives up to 16 MiB.",
+    archiveSizeError: "Restore on this phone supports archives up to 16 MiB.",
     archiveComplexityError: "This archive contains too many records or nested values for the app.",
     archiveIssueLimitError: "This archive has too many invalid or conflicting records to preview.",
     archiveCounts: (added: number, existing: number) => `${added} new · ${existing} already saved`,
@@ -263,8 +264,10 @@ export const strings = {
     archivePreview: "Vorschau der Wiederherstellung",
     archiveShareError: "Das Tagebucharchiv konnte nicht geteilt werden. Versuche es erneut.",
     archiveOpenError: "Dieses Edo-Tagebucharchiv konnte nicht geöffnet werden.",
+    archivePickerUnavailable:
+      "Für die Wiederherstellung ist eine installierte Edo-App erforderlich.",
     archiveRestoreError: "Das Archiv konnte nicht wiederhergestellt werden. Versuche es erneut.",
-    archiveSizeError: "Die App unterstützt Archive bis 16 MiB.",
+    archiveSizeError: "Auf diesem Gerät lassen sich Archive bis 16 MiB wiederherstellen.",
     archiveComplexityError:
       "Dieses Archiv enthält zu viele Einträge oder verschachtelte Werte für die App.",
     archiveIssueLimitError:
