@@ -39,7 +39,15 @@ export function ArchiveScreen({
   const [busy, setBusy] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [error, setError] = useState<
-    "share" | "choose" | "restore" | "size" | "complexity" | "issues" | "timeout" | "provider" | null
+    | "share"
+    | "choose"
+    | "restore"
+    | "size"
+    | "complexity"
+    | "issues"
+    | "timeout"
+    | "provider"
+    | null
   >(null);
   const [result, setResult] = useState<Extract<
     PrivateArchiveResult,
