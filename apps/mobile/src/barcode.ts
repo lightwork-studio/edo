@@ -226,7 +226,14 @@ export async function lookupPackagedFood(
     code: options.alternateCode,
     origin: result.status === "not-found" ? options.origin : null,
   });
-  return alternate.status === "found" ? alternate : result;
+  if (
+    alternate.status === "found" ||
+    (result.status === "not-found" &&
+      (alternate.status === "rate-limited" || alternate.status === "unavailable"))
+  ) {
+    return alternate;
+  }
+  return result;
 }
 
 async function lookupCode({

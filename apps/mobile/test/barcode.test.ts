@@ -334,3 +334,21 @@ it("uses the printed code first for manual entry and finds an expanded UPC-E onl
     cached: true,
   });
 });
+
+it("reports that an expanded-code lookup is rate-limited after a printed-code miss", async () => {
+  const printed = "01234558";
+  const request = async (url: string) =>
+    url.endsWith(printed)
+      ? jsonResponse({ status: "not-found" }, 404)
+      : jsonResponse({ status: "rate-limited" }, 429);
+  await expect(
+    lookupPackagedFood({
+      ...barcodeLookupOrder(printed, false),
+      origin: "https://example.test",
+      cache: null,
+      keep: () => [],
+      signal: new AbortController().signal,
+      request,
+    }),
+  ).resolves.toEqual({ status: "rate-limited" });
+});
