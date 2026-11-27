@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { gzipSync } from "node:zlib";
 import { expect, test } from "vitest";
 import { refreshOpenFoodFactsDeltas } from "../src/delta.ts";
 import { publishOpenFoodFactsCatalog } from "../src/index.ts";
-import { openFoodFactsCatalog } from "../src/publish.ts";
+import { openFoodFactsCatalog, restoreOpenFoodFactsRelease } from "../src/publish.ts";
 
 const first = 1_790_000_000;
 const second = first + 86_400;
@@ -22,6 +23,7 @@ function product(code: string, name: string, modified: number, market = "en:germ
     product_name_de: name,
     countries_tags: [market],
     last_modified_t: modified,
+    rev: 1,
   };
 }
 
@@ -147,6 +149,73 @@ test("a missing window or corrupt input leaves the preceding release and cursor 
         ]),
       }),
     ).rejects.toThrow("ID or timestamp");
+    expect(await readFile(activePath)).toEqual(initial);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a concurrent restore wins over deltas based on the release it replaced", async () => {
+  const { root, activePath } = await setup();
+  try {
+    const baseline = await readFile(activePath);
+    const baselineSha256 = createHash("sha256").update(baseline).digest("hex");
+    await refreshOpenFoodFactsDeltas(root, {
+      bootstrapFrom: first,
+      fetcher: feed([[first, second, archive([product("10000000", "Newer", first + 60)])]]),
+      now,
+    });
+    const next = feed([[second, third, archive([product("10000000", "Newest", second + 60)])]]);
+    await expect(
+      refreshOpenFoodFactsDeltas(root, {
+        async fetcher(input) {
+          if (String(input) !== openFoodFactsCatalog.deltaIndexUrl) {
+            await restoreOpenFoodFactsRelease(root, baselineSha256);
+          }
+          return next(input);
+        },
+        now,
+      }),
+    ).rejects.toThrow("Active catalog changed before publication");
+    expect(await readFile(activePath)).toEqual(baseline);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects old bootstrap windows, incomplete products, and invalid UTF-8 without activating them", async () => {
+  const { root, activePath } = await setup();
+  try {
+    const initial = await readFile(activePath);
+    const prior = first - 86_400;
+    await expect(
+      refreshOpenFoodFactsDeltas(root, {
+        bootstrapFrom: prior,
+        fetcher: feed([
+          [prior, first, archive([product("10000003", "Deleted before full export", prior + 60)])],
+          [first, second, archive([])],
+        ]),
+        now,
+      }),
+    ).rejects.toThrow("window adjacent");
+    await expect(
+      refreshOpenFoodFactsDeltas(root, {
+        bootstrapFrom: first,
+        fetcher: feed([
+          [first, second, archive([{ _id: "10000000", last_modified_t: first + 60 }])],
+        ]),
+        now,
+      }),
+    ).rejects.toThrow("Incomplete Open Food Facts delta product");
+    const encoded = Buffer.from(JSON.stringify(product("10000000", "_", first + 60)));
+    encoded[encoded.indexOf('"_",') + 1] = 0xff;
+    await expect(
+      refreshOpenFoodFactsDeltas(root, {
+        bootstrapFrom: first,
+        fetcher: feed([[first, second, gzipSync(encoded)]]),
+        now,
+      }),
+    ).rejects.toThrow("encoded data");
     expect(await readFile(activePath)).toEqual(initial);
   } finally {
     await rm(root, { recursive: true, force: true });

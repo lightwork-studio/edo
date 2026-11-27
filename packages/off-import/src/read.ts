@@ -37,21 +37,29 @@ export async function readOpenFoodFactsExport(
 export async function readOpenFoodFactsLines(
   inputPath: string,
   consume: (line: string) => void,
-  maxLineLength = Infinity,
+  options?: { maxLineLength: number; strictUtf8: boolean },
 ): Promise<void> {
   await pipeline(createReadStream(inputPath), createGunzip(), async (stream) => {
     const decoder = new StringDecoder("utf8");
+    const strict = options?.strictUtf8 ? new TextDecoder("utf-8", { fatal: true }) : null;
+    const maxLength = options?.maxLineLength ?? Infinity;
+    const checkLength = (length: number) => {
+      if (length > maxLength) throw new Error("Open Food Facts record is too large");
+    };
     let rest = "";
     for await (const chunk of stream) {
-      const text = rest + decoder.write(chunk);
+      const text = rest + (strict ? strict.decode(chunk, { stream: true }) : decoder.write(chunk));
       let start = 0;
       for (let end = text.indexOf("\n"); end !== -1; end = text.indexOf("\n", start)) {
+        checkLength(end - start);
         consume(text.slice(start, end));
         start = end + 1;
       }
       rest = text.slice(start);
-      if (rest.length > maxLineLength) throw new Error("Open Food Facts record is too large");
+      checkLength(rest.length);
     }
-    consume(rest + decoder.end());
+    const finalLine = rest + (strict ? strict.decode() : decoder.end());
+    checkLength(finalLine.length);
+    consume(finalLine);
   });
 }

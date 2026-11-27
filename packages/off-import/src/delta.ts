@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pipeline } from "node:stream/promises";
@@ -52,8 +52,8 @@ function windowsAfter(index: string, cursor: number, now: number): Window[] {
     throw new Error("Open Food Facts delta index is behind the saved checkpoint");
   }
   let expected = cursor;
-  for (const [index, window] of planned.entries()) {
-    if (window.start > expected || (index > 0 && window.start !== expected)) {
+  for (const window of planned) {
+    if (window.start !== expected) {
       throw new Error("Open Food Facts delta windows are missing or overlap");
     }
     expected = window.end;
@@ -156,14 +156,27 @@ function parseRecord(line: string, window: Window) {
   ) {
     throw new Error("Invalid Open Food Facts delta product ID or timestamp");
   }
-  return { row, id: id.trim(), modified };
+  if (
+    row.deleted !== true &&
+    row.deleted !== "on" &&
+    (typeof row.code !== "string" ||
+      !row.code.trim() ||
+      typeof row.rev !== "number" ||
+      !Number.isSafeInteger(row.rev) ||
+      row.rev < 1 ||
+      (row.countries_tags !== undefined &&
+        (!Array.isArray(row.countries_tags) ||
+          row.countries_tags.some((country) => typeof country !== "string"))))
+  ) {
+    throw new Error("Incomplete Open Food Facts delta product");
+  }
+  return { row, id: id.trim() };
 }
 
 async function applyWindows(
   database: DatabaseSync,
   windows: Awaited<ReturnType<typeof download>>[],
   release: string,
-  cursor: number,
 ) {
   const removeBarcode = database.prepare("DELETE FROM barcode WHERE source_id = ?");
   const removeFood = database.prepare("DELETE FROM food WHERE source_id = ?");
@@ -176,21 +189,19 @@ async function applyWindows(
       window.path,
       (line) => {
         if (!line.trim()) return;
-        const { row, id, modified } = parseRecord(line, window);
+        const { row, id } = parseRecord(line, window);
         if (ids.has(id)) throw new Error("Open Food Facts delta contains duplicate product IDs");
         ids.add(id);
-        if (modified <= cursor) return;
-
+        const product = readOpenFoodFactsProduct(row, release);
         removeBarcode.run(id);
         removeFood.run(id);
-        const product = readOpenFoodFactsProduct(row, release);
         if (product === "outside-scope") skipped += 1;
         else if (!product) rejected += 1;
         else if (product.food.id.sourceId !== id || !insertFood(product)) {
           throw new Error("Open Food Facts delta product could not be written");
         }
       },
-      16 * 1024 * 1024,
+      { maxLineLength: 16 * 1024 * 1024, strictUtf8: true },
     );
   }
 
@@ -206,6 +217,9 @@ export async function refreshOpenFoodFactsDeltas(
 ): Promise<{ status: "published" | "unchanged"; cursor: number; manifest: CatalogManifest }> {
   const { bootstrapFrom, fetcher = fetch, now = new Date() } = options;
   return runCatalogJob(root, async (providerRoot) => {
+    const scratch = join(providerRoot, ".delta-work");
+    // This directory holds only worker scratch. The job lock has no surviving owner after a crash.
+    await rm(scratch, { recursive: true, force: true });
     const current = await readCatalogManifestFile(join(providerRoot, "active.json"));
     const baseline = compatibleOpenFoodFactsManifest(JSON.parse(current.toString("utf8")));
     if (!baseline || baseline.importerVersion !== importerVersion) {
@@ -223,11 +237,14 @@ export async function refreshOpenFoodFactsDeltas(
       Math.floor(now.getTime() / 1000),
     );
     const through = windows.at(-1)?.end ?? cursor;
-    if (through * 1000 < Date.parse(baseline.source.lastModified ?? "")) {
-      throw new Error("Open Food Facts deltas have not caught up to the full export");
+    if (bootstrapFrom !== undefined) {
+      const adjacent = windows[0];
+      if (!adjacent || adjacent.end * 1000 < Date.parse(baseline.source.lastModified ?? "")) {
+        throw new Error("Bootstrap requires the delta window adjacent to the full export");
+      }
     }
 
-    const scratch = await mkdtemp(join(providerRoot, ".delta-"));
+    await mkdir(scratch, { mode: 0o700 });
     try {
       const base = join(scratch, "baseline.sqlite");
       await copyVerifiedCatalog(
@@ -249,13 +266,15 @@ export async function refreshOpenFoodFactsDeltas(
         through,
         deltas: downloads.map(({ url, sha256, bytes }) => ({ url, sha256, bytes })),
       });
-      const release = `off-delta-v1:${through}:${digest(receipt)}`;
+      const receiptDigest = digest(receipt);
+      const release = `off-delta-v1:${through}:${receiptDigest}`;
       const manifest = await publishCatalog(
         {
           root,
           provider,
           schemaVersion,
           importerVersion,
+          expectedActiveSha256: parent,
           source: {
             url: deltaIndexUrl,
             release,
@@ -263,6 +282,30 @@ export async function refreshOpenFoodFactsDeltas(
           },
           attribution: openFoodFactsNotice,
           prepareInput: async (path) => {
+            const receipts = join(providerRoot, "delta-sources");
+            await mkdir(receipts, { recursive: true });
+            if (!(await lstat(receipts)).isDirectory()) {
+              throw new Error("Open Food Facts delta receipt path must be a real directory");
+            }
+            const receiptPath = join(receipts, `${receiptDigest}.json`);
+            const stagedReceipt = join(scratch, "receipt.json");
+            await writeFile(stagedReceipt, receipt, { flag: "wx", mode: 0o600, flush: true });
+            try {
+              await link(stagedReceipt, receiptPath);
+            } catch (error) {
+              if (
+                !error ||
+                typeof error !== "object" ||
+                !("code" in error) ||
+                error.code !== "EEXIST" ||
+                (await readCatalogManifestFile(receiptPath)).toString("utf8") !== receipt
+              )
+                throw error;
+            }
+            if (process.platform !== "win32") {
+              await using directory = await open(receipts, "r");
+              await directory.sync();
+            }
             await writeFile(path, receipt, { flag: "wx", mode: 0o600 });
           },
         },
@@ -272,7 +315,7 @@ export async function refreshOpenFoodFactsDeltas(
             await copyVerifiedCatalog(base, destination, baseline.artifact);
             using database = new DatabaseSync(destination);
             database.exec("BEGIN");
-            const counts = await applyWindows(database, downloads, release, cursor);
+            const counts = await applyWindows(database, downloads, release);
             database
               .prepare("UPDATE catalog_metadata SET release = ?, source_url = ?")
               .run(release, deltaIndexUrl);

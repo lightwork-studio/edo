@@ -19,9 +19,10 @@ pnpm --filter @edo/off-import run delta "$CATALOG_ROOT" "$BOOTSTRAP_UNIX_SECONDS
 
 Use a checkpoint that predates the start of the full export. The full export's HTTP
 Last-Modified describes the published file, so it cannot establish that checkpoint by
-itself. The first delta run requires the retained windows to cover the checkpoint and
-catch up to the full export's Last-Modified. Rows from overlapping windows at or before
-the checkpoint are skipped.
+itself. Choose the delta window adjacent to the full export. Its start must match the
+checkpoint and its end must be at or after the full export's Last-Modified. Starting with an
+earlier closed window could replay a product that had already been removed by the time of the
+full export.
 
 After bootstrapping, run this for both scheduled refreshes and retries:
 
@@ -33,11 +34,12 @@ The importer verifies the active manifest and SQLite artifact, then applies cont
 windows in chronological order to a private copy. Each changed record is re-evaluated for
 the German catalog. Validation checks SQLite integrity, indexes, foreign keys and row counts
 before activating the new manifest. An interrupted or rejected batch leaves the prior manifest
-and checkpoint active.
+and checkpoint active. A retry clears the previous job's private `.delta-work` scratch.
 
 The delta manifest records the end timestamp in `source.lastModified` and in its
 `off-delta-v1` release identifier. Its source SHA-256 covers the receipt containing the parent
 manifest checksum, the applied window, and each downloaded file's URL, checksum and size.
+Receipts are retained at `open-food-facts/delta-sources/<source-sha256>.json`.
 The accepted count describes the complete output catalog. Rejected and skipped counts
 describe rows processed in the delta batch.
 
