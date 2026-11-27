@@ -18,7 +18,7 @@ const realFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs
 const provider = "bls";
 const license = "https://creativecommons.org/licenses/by/4.0/";
 const source = "https://doi.org/10.25826/Data20251217-134202-0";
-const attribution = "Max Rubner-Institut (2025), Bundeslebensmittelschlüssel (BLS), Version 4.0";
+const attribution = "Max Rubner-Institut";
 const changes = "Indexed symmetric fixture labels";
 const prefix = "/catalog-preview/bls";
 let root: string;
@@ -58,7 +58,7 @@ function digest(bytes: Uint8Array) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-async function publish(release: string, storedRelease = release) {
+async function publish(release: string, storedRelease = release, singleton = 1) {
   const inputPath = join(root, "source.txt");
   await writeFile(inputPath, release);
   return publishCatalog(
@@ -82,8 +82,8 @@ async function publish(release: string, storedRelease = release) {
           PRAGMA user_version = 1;
         `);
         database
-          .prepare("INSERT INTO catalog_metadata VALUES (1, ?, ?, ?, ?, ?, ?)")
-          .run(provider, storedRelease, source, attribution, license, changes);
+          .prepare("INSERT INTO catalog_metadata VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .run(singleton, provider, storedRelease, source, attribution, license, changes);
         return { accepted: 1, rejected: 0 };
       },
       async validate() {},
@@ -159,6 +159,10 @@ it("withholds staged immutable paths until activation and keeps the displaced re
   expect((await get(artifactPath(stagedManifest), { method: "HEAD" })).status).toBe(200);
   expect((await get(previousPath)).status).toBe(200);
   expect((await get(artifactPath(previous), { method: "HEAD" })).status).toBe(200);
+
+  const wrongSingleton = await publish("latest singleton", "latest singleton", 2);
+  expect((await get("active.json")).status).toBe(503);
+  expect((await get(artifactPath(wrongSingleton), { method: "HEAD" })).status).toBe(503);
 });
 
 it("rejects a checksum-valid SQLite artifact whose metadata claims a different release", async () => {

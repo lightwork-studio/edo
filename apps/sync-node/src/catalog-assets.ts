@@ -11,8 +11,9 @@ import {
   type CatalogProvider,
   compatibleCatalog,
   listPublishedCatalogReleases,
+  matchesCatalogDatabaseMetadata,
 } from "@edo/catalog-import";
-import { openFoodFactsCatalog } from "@edo/off-import";
+import { compatibleOpenFoodFactsManifest } from "@edo/off-import";
 
 const blsLicense = "https://creativecommons.org/licenses/by/4.0/";
 const blsSource = "https://doi.org/10.25826/Data20251217-134202-0";
@@ -25,16 +26,11 @@ const providers = {
   bls: {
     schema: 1,
     origin: blsSource,
-    name: "Max Rubner-Institut (2025), Bundeslebensmittelschlüssel (BLS), Version 4.0",
     license: `CC BY 4.0 (${blsLicense})`,
     licenseUrl: blsLicense,
     source: blsSource,
   },
   "open-food-facts": {
-    schema: openFoodFactsCatalog.schemaVersion,
-    origin: openFoodFactsCatalog.sourceUrl,
-    name: openFoodFactsAttribution.name,
-    license: "ODbL-1.0",
     licenseUrl: openFoodFactsAttribution.license,
     source: openFoodFactsAttribution.source,
   },
@@ -97,6 +93,16 @@ async function openRegularFile(path: string) {
   }
 }
 
+function compatibleManifest(value: unknown, provider: CatalogProvider) {
+  if (provider === "open-food-facts") return compatibleOpenFoodFactsManifest(value);
+  const expected = providers.bls;
+  const manifest = compatibleCatalog(value, provider, [expected.schema]);
+  return manifest?.source.url === expected.origin &&
+    manifest.attribution.license === expected.license
+    ? manifest
+    : null;
+}
+
 async function readRelease(
   root: string,
   provider: CatalogProvider,
@@ -107,7 +113,7 @@ async function readRelease(
     join(directory, digest ? `${digest}.json` : "active.json"),
   );
   const stat = await file.stat();
-  if (!stat.isFile() || stat.size <= 0 || stat.size > 16 * 1024) {
+  if (!stat.isFile() || stat.size <= 0 || (provider === "bls" && stat.size > 16 * 1024)) {
     throw new Error("Invalid catalog manifest size or type");
   }
   const buffer = Buffer.alloc(stat.size + 1);
@@ -118,15 +124,8 @@ async function readRelease(
   if (digest && actual !== digest) throw new Error("Catalog release checksum mismatch");
   const text = body.toString("utf8");
   if (!Buffer.from(text).equals(body)) throw new Error("Invalid catalog manifest UTF-8");
-  const expected = providers[provider];
-  const manifest = compatibleCatalog(JSON.parse(text), provider, [expected.schema]);
-  if (
-    manifest?.source.url !== expected.origin ||
-    manifest.attribution.license !== expected.license ||
-    manifest.attribution.name !== expected.name
-  ) {
-    throw new Error("Unsupported catalog release");
-  }
+  const manifest = compatibleManifest(JSON.parse(text), provider);
+  if (!manifest) throw new Error("Unsupported catalog release");
   return { body, manifest, digest: actual };
 }
 
@@ -185,28 +184,17 @@ async function snapshotArtifact(
     throw new Error("Catalog artifact checksum mismatch");
   }
   using database = new DatabaseSync(destination, { readOnly: true });
-  const rows = database
-    .prepare(
-      "SELECT provider, release, source_url, attribution, license_url, changes FROM catalog_metadata LIMIT 2",
-    )
-    .all();
-  const [metadata] = rows;
-  const version = database.prepare("PRAGMA user_version").get()?.user_version;
-  const matched = candidates.find(
-    ({ manifest }) =>
-      version === manifest.schemaVersion &&
-      metadata?.provider === manifest.provider &&
-      metadata.release === manifest.source.release &&
-      metadata.source_url === manifest.source.url &&
-      metadata.attribution === manifest.attribution.name &&
-      metadata.changes === manifest.attribution.changes &&
-      metadata.license_url === providers[provider].licenseUrl,
-  );
   if (
     database.prepare("PRAGMA journal_mode").get()?.journal_mode !== "delete" ||
-    rows.length !== 1 ||
-    !matched
+    (provider === "bls" &&
+      database.prepare("SELECT singleton FROM catalog_metadata").get()?.singleton !== 1)
   ) {
+    throw new Error("Catalog artifact has incompatible SQLite metadata");
+  }
+  const matched = candidates.find(({ manifest }) =>
+    matchesCatalogDatabaseMetadata(database, manifest, providers[provider].licenseUrl),
+  );
+  if (!matched) {
     throw new Error("Catalog artifact metadata does not match its manifest");
   }
   return matched;
