@@ -6,13 +6,43 @@ import { isAvailableAsync, shareAsync } from "expo-sharing";
 const exportFolder = "edo-diary-exports";
 const exportLifetimeMs = 24 * 60 * 60 * 1000;
 const maxArchiveBytes = 16 * 1024 * 1024;
+const maxArchiveJsonStructureTokens = 512_000;
+const maxArchiveJsonDepth = 32;
 
 export class ArchiveSizeError extends RangeError {}
+export class ArchiveComplexityError extends RangeError {}
 
 function checkArchiveSize(bytes: number): void {
   if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error("Could not measure the archive");
   if (bytes > maxArchiveBytes)
     throw new ArchiveSizeError("Diary archive exceeds the mobile file limit");
+}
+
+function checkArchiveComplexity(source: string): void {
+  let inString = false;
+  let depth = 0;
+  let structureTokens = 0;
+  // Bound parser allocations before JSON.parse materializes object-heavy or deeply nested input.
+  // JSON.parse still validates syntax and the archive store still validates record content.
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    if (inString) {
+      if (char === "\\") index++;
+      else if (char === '"') inString = false;
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      depth++;
+      structureTokens++;
+    } else if (char === "}" || char === "]") {
+      depth--;
+    } else if (char === ",") {
+      structureTokens++;
+    }
+    if (structureTokens > maxArchiveJsonStructureTokens || depth > maxArchiveJsonDepth) {
+      throw new ArchiveComplexityError("Diary archive exceeds mobile JSON limits");
+    }
+  }
 }
 
 export function pruneArchiveExports(now = Date.now()): void {
@@ -34,6 +64,7 @@ export function pruneArchiveExports(now = Date.now()): void {
 export async function shareArchive(source: string, now = Date.now()): Promise<void> {
   if (!(await isAvailableAsync())) throw new Error("Archive sharing is unavailable");
   checkArchiveSize(source.length);
+  checkArchiveComplexity(source);
   pruneArchiveExports(now);
   const directory = new Directory(Paths.cache, exportFolder, `${now}-${randomUUID()}`);
   directory.create({ intermediates: true });
@@ -66,7 +97,10 @@ export async function chooseArchive(): Promise<string | null> {
   const pickerCache = new Directory(Paths.cache, "DocumentPicker");
   try {
     checkArchiveSize(file.size);
-    return await file.text();
+    const source = await file.text();
+    checkArchiveSize(source.length);
+    checkArchiveComplexity(source);
+    return source;
   } finally {
     // Remove only Expo's imported cache copy. The selected file outside that directory remains owned by its provider.
     try {

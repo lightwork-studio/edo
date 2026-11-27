@@ -108,6 +108,7 @@ export const strings = {
     archiveOpenError: "Couldn’t open this Edo diary archive.",
     archiveRestoreError: "Couldn’t restore the archive. Try again.",
     archiveSizeError: "The mobile app supports archives up to 16 MiB.",
+    archiveComplexityError: "This archive contains too many records or nested values for the app.",
     archiveIssueLimitError: "This archive has too many invalid or conflicting records to preview.",
     archiveCounts: (added: number, existing: number) => `${added} new · ${existing} already saved`,
     archiveRestored: (added: number, existing: number) =>
@@ -264,6 +265,8 @@ export const strings = {
     archiveOpenError: "Dieses Edo-Tagebucharchiv konnte nicht geöffnet werden.",
     archiveRestoreError: "Das Archiv konnte nicht wiederhergestellt werden. Versuche es erneut.",
     archiveSizeError: "Die App unterstützt Archive bis 16 MiB.",
+    archiveComplexityError:
+      "Dieses Archiv enthält zu viele Einträge oder verschachtelte Werte für die App.",
     archiveIssueLimitError:
       "Für eine Vorschau enthält dieses Archiv zu viele ungültige oder widersprüchliche Einträge.",
     archiveCounts: (added: number, existing: number) =>

@@ -7,6 +7,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import {
+  ArchiveComplexityError,
   ArchiveSizeError,
   chooseArchive,
   pruneArchiveExports,
@@ -34,9 +35,9 @@ export function ArchiveScreen({
   const active = useRef(false);
   const [busy, setBusy] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [error, setError] = useState<"share" | "choose" | "restore" | "size" | "issues" | null>(
-    null,
-  );
+  const [error, setError] = useState<
+    "share" | "choose" | "restore" | "size" | "complexity" | "issues" | null
+  >(null);
   const [result, setResult] = useState<Extract<
     PrivateArchiveResult,
     { status: "restored" }
@@ -59,6 +60,7 @@ export function ArchiveScreen({
     } catch (error) {
       if (active.current) {
         if (error instanceof ArchiveSizeError) setError("size");
+        else if (error instanceof ArchiveComplexityError) setError("complexity");
         else if (error instanceof ArchiveIssueLimitError) {
           setSelection(null);
           setError("issues");
@@ -75,6 +77,7 @@ export function ArchiveScreen({
     choose: t.archiveOpenError,
     restore: t.archiveRestoreError,
     size: t.archiveSizeError,
+    complexity: t.archiveComplexityError,
     issues: t.archiveIssueLimitError,
   };
   return (

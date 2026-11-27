@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import {
+  ArchiveComplexityError,
   ArchiveSizeError,
   chooseArchive,
   pruneArchiveExports,
@@ -165,4 +166,29 @@ it("rejects oversized input before reading and cleans up oversized export stagin
   );
   expect(mock.share).not.toHaveBeenCalled();
   expect(mock.files.has(staged)).toBe(false);
+});
+
+it("rejects a small archive with millions of objects before offering a restore preview", async () => {
+  const uri = "file:///cache/DocumentPicker/repetitive.json";
+  const source = `{"format":"edo-diary","formatVersion":1,"meals":[${"{},".repeat(4_999_999)}{}]}`;
+  mock.files.set(uri, source);
+  mock.choose.mockResolvedValueOnce({ canceled: false, assets: [{ uri }] });
+
+  await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveComplexityError);
+  expect(mock.files.has(uri)).toBe(false);
+  await expect(shareArchive(source)).rejects.toBeInstanceOf(ArchiveComplexityError);
+  expect(mock.share).not.toHaveBeenCalled();
+  expect(mock.files.size).toBe(0);
+});
+
+it("rejects excessive JSON nesting and ignores structural symbols inside quoted strings", async () => {
+  const uri = "file:///cache/DocumentPicker/nesting.json";
+  mock.files.set(uri, `${"[".repeat(256)}0${"]".repeat(256)}`);
+  mock.choose.mockResolvedValueOnce({ canceled: false, assets: [{ uri }] });
+  await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveComplexityError);
+
+  const source = JSON.stringify({ format: "edo-diary", note: 'a\\"[{,'.repeat(175_000) });
+  mock.files.set(uri, source);
+  mock.choose.mockResolvedValueOnce({ canceled: false, assets: [{ uri }] });
+  await expect(chooseArchive()).resolves.toBe(source);
 });
