@@ -19,17 +19,22 @@ after review.
 - Resolve blocking findings and outstanding comments. Changes to review gates, merge automation or
   the [data compatibility standard](data-compatibility.md) require explicit maintainer approval
   of the final diff.
-- Fetch `origin/main` and verify a successful CI `check` for the exact head to be merged. Require
-  that the head includes the current base, or verify that the pull request is mergeable and the
-  base's new commits touch none of the pull request's changed paths. If either side changes
-  the same paths or changes protected compatibility fixtures, bring the head up to date and
-  wait for CI again.
+- Before the final fetch, the maintainer must designate one writer for `main` until the merge
+  completes or the attempt ends. Coordinate every update to `main` through that process, including
+  direct pushes, bypasses and automation. Let queued updates finish first and stop unless all
+  other writers are paused for this interval.
+- Immediately before merging, fetch `main` from the PR's base repository
+  (`git fetch <base-repo-url> refs/heads/main`). Once the fetch succeeds, confirm that the fetched
+  commit is an ancestor of the exact PR head (`git merge-base --is-ancestor FETCH_HEAD <head-sha>`).
+  If the head is behind, bring it up to date and wait for a successful CI `check` on the new head.
+  Verify that the exact head to be merged has a successful CI `check`. Recheck both requirements
+  if the base or head changes.
 - Check the most recent completed CI `check` on `main`. If it failed, merge only its fix or
   revert. The first PR that establishes CI may proceed once its own check passes and the
   maintainer has approved the final diff.
-- Squash merge the verified head. When the PR author is also the only eligible code owner,
-  the maintainer's configured bypass may be used solely for the unavailable code-owner approval
-  after all other merge gates pass.
+- Squash merge with `gh pr merge <pr-url> --squash --match-head-commit <head-sha>`. When the PR
+  author is also the only eligible code owner, the maintainer's configured bypass may be used
+  solely for the unavailable code-owner approval after all other merge gates pass.
 
 ## Changes that need additional review
 
