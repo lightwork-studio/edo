@@ -241,7 +241,11 @@ export function RecipeEditor({
               <IngredientRow
                 key={ingredient.original.id}
                 draft={ingredient}
-                kcal={items[index] ? recipeIngredientNutrition(items[index]).kcal : null}
+                kcal={
+                  items[index]
+                    ? roundNutritionForDisplay(recipeIngredientNutrition(items[index])).kcal
+                    : null
+                }
                 language={language}
                 locale={locale}
                 onChange={(changes) =>

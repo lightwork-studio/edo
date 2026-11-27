@@ -1,4 +1,4 @@
-import { createDiaryItem, type Food } from "@edo/core";
+import { createDiaryItem, type Food, roundNutritionForDisplay } from "@edo/core";
 import { expect, it } from "vitest";
 import {
   ingredientUnitChange,
@@ -105,4 +105,23 @@ it("uses the same captured food and portion for the batch and logged serving pre
   expect(recipeIngredientNutrition(legacy).kcal).toBe(captured.nutrients.kcal);
   expect(preview?.batch.kcal).toBe(captured.nutrients.kcal);
   expect(preview?.portion.nutrients.kcal).toBe((captured.nutrients.kcal ?? 0) / 2);
+});
+
+it("rounds the ingredient, batch and serving alike at an energy midpoint", () => {
+  const food: Food = {
+    ...baseFood,
+    nutrition: {
+      ...baseFood.nutrition,
+      basis: "per-100-g",
+      nutrients: { ...baseFood.nutrition.nutrients, kcal: 25 },
+    },
+  };
+  const ingredient = createDiaryItem("midpoint", food, { amount: 58, unit: "g" });
+  const preview = previewRecipe("One portion", [ingredient], 1, undefined);
+  if (!preview) throw new Error("Expected a valid recipe");
+  expect(
+    [recipeIngredientNutrition(ingredient), preview.batch, preview.portion.nutrients].map(
+      (value) => roundNutritionForDisplay(value).kcal,
+    ),
+  ).toEqual([15, 15, 15]);
 });
