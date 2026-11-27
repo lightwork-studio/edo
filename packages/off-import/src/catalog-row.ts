@@ -14,7 +14,9 @@ export const barcodeRows = `
 `;
 
 function requiredText(value: SQLOutputValue | undefined): string {
-  if (typeof value !== "string" || value === "") throw new Error("Invalid packaged-food text");
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error("Invalid packaged-food text");
+  }
   return value;
 }
 

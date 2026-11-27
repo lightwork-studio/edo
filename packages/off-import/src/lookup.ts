@@ -1,13 +1,17 @@
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
-import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CatalogManifest } from "@edo/catalog-import";
 import type { PackagedFood } from "@edo/core";
 import { barcodeRows, readProduct } from "./catalog-row.ts";
-import { copyVerifiedCatalog, validateCatalogSnapshot } from "./catalog-snapshot.ts";
+import {
+  copyVerifiedCatalog,
+  readCatalogManifestFile,
+  validateCatalogSnapshot,
+} from "./catalog-snapshot.ts";
 import { normalizeLookupCode } from "./format.ts";
 import { createOpenFoodFactsLiveLookup, type LiveBarcodeResult } from "./live-lookup.ts";
 import { compatibleOpenFoodFactsManifest } from "./publish.ts";
@@ -55,16 +59,14 @@ async function readActiveManifest(providerRoot: string): Promise<ActiveManifest 
     if (!(await lstat(providerRoot)).isDirectory()) {
       throw new Error("Open Food Facts provider must be a real directory");
     }
-    const active = join(providerRoot, "active.json");
-    if (!(await lstat(active)).isFile()) {
-      throw new Error("Open Food Facts activation must be a regular file");
-    }
-    text = await readFile(active);
+    text = await readCatalogManifestFile(join(providerRoot, "active.json"));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }
-  const active = compatibleOpenFoodFactsManifest(JSON.parse(text.toString("utf8")));
+  const decoded = text.toString("utf8");
+  if (!Buffer.from(decoded).equals(text)) throw new Error("Invalid Open Food Facts manifest UTF-8");
+  const active = compatibleOpenFoodFactsManifest(JSON.parse(decoded));
   if (!active) {
     throw new Error("Unsupported Open Food Facts catalog manifest");
   }
@@ -74,6 +76,7 @@ async function readActiveManifest(providerRoot: string): Promise<ActiveManifest 
 async function openVerifiedCatalog(
   providerRoot: string,
   { manifest, text, sha256 }: ActiveManifest,
+  signal?: AbortSignal,
 ): Promise<OpenFoodFactsReader> {
   const releaseDirectory = join(providerRoot, "releases");
   const artifactDirectory = join(providerRoot, "artifacts");
@@ -83,10 +86,7 @@ async function openVerifiedCatalog(
     }
   }
   const releasePath = join(releaseDirectory, `${sha256}.json`);
-  if (!(await lstat(releasePath)).isFile()) {
-    throw new Error("Open Food Facts immutable manifest must be a regular file");
-  }
-  const immutableManifest = await readFile(releasePath);
+  const immutableManifest = await readCatalogManifestFile(releasePath);
   if (!immutableManifest.equals(text))
     throw new Error("Open Food Facts release manifest does not match activation");
 
@@ -95,8 +95,9 @@ async function openVerifiedCatalog(
   const snapshot = join(scratch, "catalog.sqlite");
   let database: DatabaseSync | undefined;
   try {
-    await copyVerifiedCatalog(source, snapshot, manifest.artifact);
-    await validateCatalogSnapshot(snapshot, manifest);
+    await copyVerifiedCatalog(source, snapshot, manifest.artifact, signal);
+    await validateCatalogSnapshot(snapshot, manifest, signal);
+    signal?.throwIfAborted();
     const db = new DatabaseSync(snapshot, { readOnly: true });
     database = db;
     const release = manifest.source.release;
@@ -146,13 +147,14 @@ export async function openOpenFoodFactsCatalog(root: string): Promise<OpenFoodFa
   return manifest ? openVerifiedCatalog(providerRoot, manifest) : null;
 }
 
-/** Use one instance per server. A verified catalog is reused until an active release changes. */
+/** Use one instance per server. Keep serving the current verified catalog during an update. */
 export function createBarcodeLookup(
   root: string,
   options: BarcodeLookupOptions = {},
 ): BarcodeLookup {
   const providerRoot = join(root, "open-food-facts");
   const { liveLookup = createOpenFoodFactsLiveLookup(), now = Date.now } = options;
+  const stop = new AbortController();
   let reader: OpenFoodFactsReader | null = null;
   let current: string | null = null;
   let rejected: { manifest: string; retryAt: number } | null = null;
@@ -168,12 +170,13 @@ export function createBarcodeLookup(
     }
     let next: OpenFoodFactsReader;
     try {
-      next = await openVerifiedCatalog(providerRoot, manifest);
+      next = await openVerifiedCatalog(providerRoot, manifest, stop.signal);
     } catch {
       rejected = { manifest: candidate, retryAt: now() + retryAfterCatalogFailureMs };
       return;
     }
-    if (closed) {
+    const latest = await readActiveManifest(providerRoot).catch(() => null);
+    if (closed || latest?.sha256 !== candidate) {
       next[Symbol.dispose]();
       return;
     }
@@ -195,7 +198,7 @@ export function createBarcodeLookup(
         .finally(() => {
           refresh = null;
         });
-      await refresh;
+      if (!reader) await refresh;
       if (closed) return { status: "unavailable" };
       try {
         const products = reader?.lookupBarcode(code);
@@ -230,6 +233,7 @@ export function createBarcodeLookup(
     },
     [Symbol.dispose]() {
       closed = true;
+      stop.abort();
       reader?.[Symbol.dispose]();
       reader = null;
       current = null;

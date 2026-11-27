@@ -175,11 +175,13 @@ it("uses the latest verified catalog before a live fallback and keeps the last g
   expect(live).toHaveBeenCalledExactlyOnceWith("12345678");
 
   await publishOpenFoodFactsCatalog({ root, inputPath, release: "second" });
-  await expect(lookup.lookupBarcode(baseProduct.code)).resolves.toMatchObject({
-    status: "found",
-    source: "catalog",
-    products: [{ release: "second" }],
-  });
+  await expect
+    .poll(() => lookup.lookupBarcode(baseProduct.code), { timeout: 8_000 })
+    .toMatchObject({
+      status: "found",
+      source: "catalog",
+      products: [{ release: "second" }],
+    });
   const damaged = await publishOpenFoodFactsCatalog({ root, inputPath, release: "damaged" });
   const artifact = join(root, provider, "artifacts", `${damaged.artifact.sha256}.sqlite`);
   const correctBytes = await readFile(artifact);
@@ -198,9 +200,11 @@ it("uses the latest verified catalog before a live fallback and keeps the last g
     products: [{ release: "second" }],
   });
   clock += 30_000;
-  await expect(lookup.lookupBarcode(baseProduct.code)).resolves.toMatchObject({
-    products: [{ release: "damaged" }],
-  });
+  await expect
+    .poll(() => lookup.lookupBarcode(baseProduct.code), { timeout: 8_000 })
+    .toMatchObject({
+      products: [{ release: "damaged" }],
+    });
   lookup[Symbol.dispose]();
   await expect(lookup.lookupBarcode(baseProduct.code)).resolves.toEqual({ status: "unavailable" });
 });
