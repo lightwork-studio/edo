@@ -42,10 +42,11 @@ vi.mock("expo-file-system", async () => {
 
 vi.mock("expo-file-system/legacy", async () => {
   const { renameSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
   return {
     moveAsync: async ({ from, to }: { from: string; to: string }) => {
       if (fixture.blockMove) throw new Error("Could not publish backup");
-      renameSync(new URL(from), new URL(to));
+      renameSync(fileURLToPath(from), fileURLToPath(to));
     },
   };
 });
