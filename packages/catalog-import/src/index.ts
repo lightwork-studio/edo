@@ -157,6 +157,7 @@ async function activateManifest(root: string, stage: string, manifest: CatalogMa
     join(releases, `${releaseDigest.sha256}.json`),
     releaseDigest,
   );
+  await rm(stagedRelease);
 
   const activation = join(stage, "active.json");
   await writeFile(activation, manifestText, { flush: true });
@@ -291,6 +292,8 @@ export async function publishCatalog(
 
     await syncFile(stagedDatabase);
     await installImmutable(stagedDatabase, join(artifacts, `${artifact.sha256}.sqlite`), artifact);
+    // Drop the temporary link before readers can observe the artifact in the activation.
+    await rm(stagedDatabase);
     await activateManifest(root, stage, manifest);
     return manifest;
   } finally {

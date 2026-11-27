@@ -11,17 +11,90 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { gzipSync } from "node:zlib";
 import { publishOpenFoodFactsCatalog } from "@edo/off-import";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createHealthServer } from "../src/server.ts";
 
 const route = "/catalog-preview/open-food-facts";
 const blsRoute = "/catalog-preview/bls";
 const blsLicense = "https://creativecommons.org/licenses/by/4.0/";
 const blsSource = "https://doi.org/10.25826/Data20251217-134202-0";
+
+vi.mock("node:fs/promises", async (original) => {
+  const fs = await original<typeof import("node:fs/promises")>();
+  return { ...fs, rm: vi.fn(fs.rm) };
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((finish) => {
+    resolve = finish;
+  });
+  return { promise, resolve };
+}
+
+test("keeps a newly activated barcode reader valid when publisher cleanup completes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "edo-catalog-activation-"));
+  const server = createHealthServer({ catalogRoot: root });
+  const entered = deferred();
+  const resume = deferred();
+  const { rm: remove } =
+    await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  let publishing: ReturnType<typeof publishOpenFoodFactsCatalog> | undefined;
+  try {
+    const inputPath = join(root, "fixture.jsonl.gz");
+    const barcode = "0034000470693";
+    await writeFile(
+      inputPath,
+      gzipSync(
+        JSON.stringify({
+          code: barcode,
+          product_name_de: "Haferdrink",
+          countries_tags: ["en:germany"],
+        }),
+      ),
+    );
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing loopback address");
+    const lookup = () => fetch(`http://127.0.0.1:${address.port}${route}/barcodes/${barcode}`);
+    vi.mocked(rm).mockImplementation(async (path, options) => {
+      if (typeof path === "string" && options?.recursive && basename(path).startsWith(".stage-")) {
+        entered.resolve();
+        await resume.promise;
+      }
+      await remove(path, options);
+    });
+
+    publishing = publishOpenFoodFactsCatalog({ inputPath, root, release: "publisher-cleanup" });
+    await Promise.race([
+      entered.promise,
+      publishing.then(() => {
+        throw new Error("Publication finished without reaching staged cleanup");
+      }),
+    ]);
+    const manifest = await readFile(join(root, "open-food-facts", "active.json"));
+    const releaseManifestSha256 = createHash("sha256").update(manifest).digest("hex");
+    const before = await lookup();
+    expect(before.status).toBe(200);
+    expect(await before.json()).toMatchObject({ releaseManifestSha256 });
+    resume.resolve();
+    await publishing;
+    const after = await lookup();
+    expect(after.status).toBe(200);
+    expect(await after.json()).toMatchObject({ releaseManifestSha256 });
+  } finally {
+    resume.resolve();
+    await publishing?.catch(() => undefined);
+    vi.mocked(rm).mockImplementation(remove);
+    await server[Symbol.asyncDispose]();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("previews public barcode candidates and the corresponding ODbL release on loopback", async () => {
   const root = await mkdtemp(join(tmpdir(), "edo-catalog-preview-"));
