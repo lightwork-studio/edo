@@ -3,6 +3,7 @@ import {
   link,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   readlink,
@@ -13,16 +14,23 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   type CatalogBuilder,
   type CatalogImportInput,
   clearPreparedCatalogSource,
+  listPublishedCatalogReleases,
   publishCatalog,
+  restoreCatalogRelease,
 } from "../src/index.ts";
 import { compatibleCatalog } from "../src/manifest.ts";
+
+vi.mock("node:fs/promises", async (original) => {
+  const fs = await original<typeof import("node:fs/promises")>();
+  return { ...fs, open: vi.fn(fs.open), rename: vi.fn(fs.rename) };
+});
 
 let directory: string;
 let input: CatalogImportInput;
@@ -67,6 +75,10 @@ async function active(): Promise<unknown> {
   return JSON.parse(await readFile(join(input.root, input.provider, "active.json"), "utf8"));
 }
 
+function restore(releaseSha256: string) {
+  return restoreCatalogRelease(input.root, input.provider, releaseSha256, () => undefined);
+}
+
 it("publishes a readable SQLite artifact and reproducible manifest without duplicating a release", async () => {
   const first = await publishCatalog(input, builder);
   const second = await publishCatalog(input, builder);
@@ -88,6 +100,127 @@ it("publishes a readable SQLite artifact and reproducible manifest without dupli
   using database = new DatabaseSync(artifactPath, { readOnly: true });
   expect(database.prepare("SELECT name FROM food").get()).toMatchObject({ name: "Sample food" });
 });
+
+it("archives only releases that reached the activation commit point", async () => {
+  const digestOf = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const root = join(input.root, input.provider);
+  const activation = join(root, "active.json");
+  await publishCatalog(input, builder);
+  const first = digestOf(await readFile(activation));
+  expect(await listPublishedCatalogReleases(input.root, input.provider)).toEqual([first]);
+  expect(await listPublishedCatalogReleases(input.root, "open-food-facts")).toEqual([]);
+
+  await writeFile(input.inputPath, "Next published food");
+  const next = { ...input, source: { ...input.source, release: "fixture-2" } };
+  const { rename: move } =
+    await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  vi.mocked(rename).mockImplementation(async (source, destination) => {
+    if (destination === activation) throw new Error("Interrupted before activation");
+    await move(source, destination);
+  });
+  try {
+    await expect(publishCatalog(next, builder)).rejects.toThrow("Interrupted before activation");
+  } finally {
+    vi.mocked(rename).mockImplementation(move);
+  }
+  const stored = await readdir(join(root, "releases"));
+  expect(stored).toHaveLength(2);
+  expect(await readdir(join(root, "artifacts"))).toHaveLength(2);
+  const interrupted = stored.find((file) => file !== `${first}.json`)?.slice(0, -5);
+  if (!interrupted) throw new Error("Expected a staged immutable catalog release");
+  await expect(restore(interrupted)).rejects.toThrow(/previously activated/);
+  expect(digestOf(await readFile(activation))).toBe(first);
+  expect(await listPublishedCatalogReleases(input.root, input.provider)).toEqual([first]);
+
+  await publishCatalog(next, builder);
+  const second = digestOf(await readFile(activation));
+  expect(second).not.toBe(first);
+  expect(new Set(await listPublishedCatalogReleases(input.root, input.provider))).toEqual(
+    new Set([first, second]),
+  );
+  expect(await readFile(join(root, "published", `${first}.sha256`), "utf8")).toBe(`${first}\n`);
+
+  await restore(first);
+  expect(digestOf(await readFile(activation))).toBe(first);
+  expect(new Set(await listPublishedCatalogReleases(input.root, input.provider))).toEqual(
+    new Set([first, second]),
+  );
+});
+
+it("keeps the latest successful release available for recovery if its pointer is damaged", async () => {
+  await publishCatalog(input, builder);
+  const activation = join(input.root, input.provider, "active.json");
+  const original = await readFile(activation);
+  const digest = createHash("sha256").update(original).digest("hex");
+  await writeFile(activation, "broken catalog pointer");
+  expect(await listPublishedCatalogReleases(input.root, input.provider)).toEqual([digest]);
+  await restore(digest);
+  expect(await readFile(activation)).toEqual(original);
+});
+
+it("rejects a symlinked publisher lock before opening SQLite", async () => {
+  await publishCatalog(input, builder);
+  const root = join(input.root, input.provider);
+  const activation = await readFile(join(root, "active.json"));
+  const digest = createHash("sha256").update(activation).digest("hex");
+  const lockPath = join(root, ".publisher.sqlite");
+  const moved = join(directory, "outside.sqlite");
+  await rename(lockPath, moved);
+  await symlink(moved, lockPath, "file");
+  await expect(restore(digest)).rejects.toThrow(/publisher lock must be a regular file/);
+  await expect(publishCatalog(input, builder)).rejects.toThrow(
+    /publisher lock must be a regular file/,
+  );
+  expect(await readFile(join(root, "active.json"))).toEqual(activation);
+});
+
+it.each(["provider", "artifacts", "releases", "published"] as const)(
+  "rejects a symlinked %s directory before publishing",
+  async (kind) => {
+    const root = join(input.root, input.provider);
+    const path = kind === "provider" ? root : join(root, kind);
+    const outside = join(directory, "outside");
+    await mkdir(dirname(path), { recursive: true });
+    await mkdir(outside);
+    await symlink(outside, path, "dir");
+
+    await expect(publishCatalog(input, builder)).rejects.toThrow(/must be (a )?real director/);
+    expect(await readdir(outside)).toEqual([]);
+    await expect(readFile(join(root, "active.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "syncs an existing receipt again before retrying activation",
+  async () => {
+    const root = join(input.root, input.provider);
+    const first = await publishCatalog(input, builder);
+    const next = { ...input, source: { ...input.source, release: "fixture-2" } };
+    const real = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    let attempts = 0;
+    vi.mocked(open).mockImplementation(async (path, flags, mode) => {
+      const handle = await real.open(path, flags, mode);
+      if (path === join(root, "published")) {
+        const sync = handle.sync.bind(handle);
+        vi.spyOn(handle, "sync").mockImplementation(async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("Interrupted before receipt directory sync");
+          await sync();
+        });
+      }
+      return handle;
+    });
+    try {
+      await expect(publishCatalog(next, builder)).rejects.toThrow(/before receipt directory sync/);
+      expect(await active()).toEqual(first);
+      const second = await publishCatalog(next, builder);
+      expect(await active()).toEqual(second);
+      expect(attempts).toBe(3);
+    } finally {
+      vi.mocked(open).mockImplementation(real.open);
+    }
+  },
+);
 
 it.each(["artifact", "manifest"] as const)(
   "rejects an immutable %s symlink with matching bytes",

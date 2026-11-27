@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { copyFile, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import {
   openOpenFoodFactsCatalog,
   publishOpenFoodFactsCatalog,
 } from "../src/index.ts";
+import { restoreOpenFoodFactsRelease } from "../src/publish.ts";
 
 let directory: string;
 let inputPath: string;
@@ -54,6 +56,50 @@ const baseProduct = {
     },
   },
 };
+
+it.each([
+  {
+    schemaVersion: 2,
+    change: "PRAGMA user_version = 2",
+    error: /unsupported Open Food Facts catalog manifest/i,
+  },
+  {
+    schemaVersion: 1,
+    change: "UPDATE catalog_metadata SET release = 'another release'",
+    error: /catalog metadata does not match/i,
+  },
+])(
+  "preserves the active release when the restore target fails $error",
+  async ({ schemaVersion, change, error }) => {
+    await exportRows(baseProduct);
+    const supported = await publishOpenFoodFactsCatalog({ root, inputPath, release: "fixture-1" });
+    const activation = join(root, provider, "active.json");
+    const supportedBytes = await readFile(activation);
+    const supportedDigest = createHash("sha256").update(supportedBytes).digest("hex");
+    await publishCatalog(
+      { ...supported, root, inputPath, schemaVersion },
+      {
+        async build(_input, output) {
+          await copyFile(
+            join(root, provider, "artifacts", `${supported.artifact.sha256}.sqlite`),
+            output,
+          );
+          using database = new DatabaseSync(output);
+          database.exec(change);
+          return supported.counts;
+        },
+        async validate() {},
+      },
+    );
+    const incompatibleDigest = createHash("sha256")
+      .update(await readFile(activation))
+      .digest("hex");
+
+    await expect(restoreOpenFoodFactsRelease(root, supportedDigest)).resolves.toEqual(supported);
+    await expect(restoreOpenFoodFactsRelease(root, incompatibleDigest)).rejects.toThrow(error);
+    expect(await readFile(activation)).toEqual(supportedBytes);
+  },
+);
 
 it("opens a verified release and preserves exact and alternate barcode candidates", async () => {
   await expect(openOpenFoodFactsCatalog(root)).resolves.toBeNull();
