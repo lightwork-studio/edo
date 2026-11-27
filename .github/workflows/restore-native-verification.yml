@@ -11,7 +11,7 @@ jobs:
   android:
     name: Restore an archive through Android Downloads
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -72,6 +72,14 @@ jobs:
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
+          (
+            export JAVA_HOME="$JAVA_HOME_17_X64"
+            cd apps/mobile/android
+            ./gradlew :edo-archive-picker:connectedDebugAndroidTest --console=plain \
+              -PreactNativeArchitectures=x86_64
+          )
+          grep -R -F 'canceledPipeReleasesItsReaderWhileTheWriterRemainsOpen' \
+            apps/mobile/modules/edo-archive-picker/android/build/outputs/androidTest-results/
           adb install apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           adb shell cmd connectivity airplane-mode enable
           adb shell svc wifi disable
