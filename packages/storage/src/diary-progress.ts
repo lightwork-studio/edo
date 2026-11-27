@@ -4,6 +4,7 @@ import { diaryId, readDay, readInstant } from "./snapshot.ts";
 import type { DiarySqliteConnection, SqlRow } from "./sqlite.ts";
 
 export interface NutritionTargetRecord {
+  /** Stable ID of one target revision. */
   readonly id: string;
   readonly effectiveDay: string;
   readonly configuredAt: number;
@@ -14,6 +15,7 @@ export interface NutritionTargetRecord {
 export interface DiaryProgressStore {
   saveWeighIn(entry: WeighIn): void;
   listWeighIns(from: string, through: string): WeighIn[];
+  /** Save a new revision. An exact retry preserves the existing save order. */
   saveNutritionTarget(entry: NutritionTargetRecord): void;
   nutritionTargetAt(day: string): NutritionTargetRecord | null;
 }
