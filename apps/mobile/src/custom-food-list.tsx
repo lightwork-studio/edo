@@ -30,15 +30,22 @@ export function CustomFoodList({
   onPick: (food: Food) => void;
   onRetry: () => void;
 }) {
+  const names = new Intl.Collator(locale);
+  const ordered = foods
+    ? [...foods].sort(
+        (left, right) =>
+          names.compare(left.name, right.name) || left.id.sourceId.localeCompare(right.id.sourceId),
+      )
+    : null;
   return (
     <>
       <DetailHeader title={t.myFoods} subtitle={date} back={t.back} onBack={onBack} />
-      {foods === null ? (
+      {ordered === null ? (
         <Notice text={t.myFoodsError} action={{ label: t.retry, onPress: onRetry }} />
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          {foods.length === 0 && <Notice text={t.noCustomFoods} />}
-          {foods.map((food) => (
+          {ordered.length === 0 && <Notice text={t.noCustomFoods} />}
+          {ordered.map((food) => (
             <View key={food.id.sourceId} style={[styles.card, styles.row]}>
               <Pressable
                 accessibilityRole="button"
@@ -64,7 +71,7 @@ export function CustomFoodList({
           ))}
         </ScrollView>
       )}
-      {foods !== null && (
+      {ordered !== null && (
         <View style={styles.footer}>
           <PrimaryButton title={t.createCustomFood} onPress={onCreate} />
         </View>
