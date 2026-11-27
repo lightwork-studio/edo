@@ -18,6 +18,7 @@ export function SearchScreen({
   onQuery,
   packagedCache,
   onBarcode,
+  onMyFoods,
   onCatalogRetry,
   onPick,
   onBack,
@@ -31,6 +32,7 @@ export function SearchScreen({
   onQuery: (query: string) => void;
   packagedCache: PackagedFoodCache | null;
   onBarcode: () => void;
+  onMyFoods: () => void;
   onCatalogRetry: () => void;
   onPick: (food: Food) => void;
   onBack: () => void;
@@ -53,18 +55,23 @@ export function SearchScreen({
           clearButtonMode="while-editing"
           style={local.search}
         />
-        <Pressable accessibilityRole="button" style={local.source} onPress={onBarcode}>
-          <Text style={styles.actionText}>{t.scanBarcode}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityLabel={credit ? t.closeSource : t.source}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: credit }}
-          onPress={() => setCredit(!credit)}
-          style={local.source}
-        >
-          <Text style={styles.actionText}>{t.source}</Text>
-        </Pressable>
+        <View style={[styles.row, local.actions]}>
+          <Pressable accessibilityRole="button" style={local.source} onPress={onBarcode}>
+            <Text style={styles.actionText}>{t.scanBarcode}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={local.source} onPress={onMyFoods}>
+            <Text style={styles.actionText}>{t.myFoods}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityLabel={credit ? t.closeSource : t.source}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: credit }}
+            onPress={() => setCredit(!credit)}
+            style={local.source}
+          >
+            <Text style={styles.actionText}>{t.source}</Text>
+          </Pressable>
+        </View>
         {credit && (
           <View style={styles.card}>
             <Text style={styles.body}>{t.credit}</Text>
@@ -245,6 +252,7 @@ function Results({
 
 const local = StyleSheet.create({
   controls: { paddingHorizontal: 16, paddingTop: 12, gap: 8 },
+  actions: { flexWrap: "wrap", gap: 8 },
   search: {
     minHeight: 52,
     paddingHorizontal: 14,

@@ -79,6 +79,12 @@ export function FoodDetail({
       : previewNutrition(food, amount, unit);
   const values = [{ label: "energy", nutrient: "kcal", color: colors.accent } as const, ...macros];
   const base = roundNutritionForDisplay(food.nutrition.nutrients);
+  const source = {
+    bls: t.bls,
+    "open-food-facts": t.openFoodFactsCredit,
+    local: t.myFoods,
+    usda: null,
+  }[food.id.provider];
   const noPackagedNutrition =
     food.id.provider === "open-food-facts" &&
     Object.values(food.nutrition.nutrients).every((value) => value === null);
@@ -120,9 +126,9 @@ export function FoodDetail({
           <Text accessibilityRole="header" style={styles.heading}>
             {food.name}
           </Text>
-          {(food.id.provider === "bls" || food.id.provider === "open-food-facts") && (
+          {source && (
             <Text style={styles.meta}>
-              {food.id.provider === "bls" ? t.bls : t.openFoodFactsCredit}
+              {source}
               {!noPackagedNutrition && ` · ${t[reference[food.nutrition.basis]]}`}
             </Text>
           )}
