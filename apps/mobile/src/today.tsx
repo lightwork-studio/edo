@@ -27,10 +27,12 @@ export function TodayScreen({
   day,
   week,
   meals,
+  kcalTarget,
   feedback,
   onDay,
   onWeek,
   onAdd,
+  onProgress,
   onEdit,
   onRetry,
 }: {
@@ -41,10 +43,12 @@ export function TodayScreen({
   day: string;
   week: WeekDay[];
   meals: DiaryMeal[] | null;
+  kcalTarget: number | null;
   feedback: string | null;
   onDay: (day: string) => void;
   onWeek: (offset: number) => void;
   onAdd?: () => void;
+  onProgress: () => void;
   onEdit: (mealId: string, itemId: string) => void;
   onRetry: () => void;
 }) {
@@ -121,6 +125,11 @@ export function TodayScreen({
               <Text style={styles.meta}>kcal</Text>
             </Ring>
             <View style={local.macros}>
+              {kcalTarget !== null && (
+                <Text style={styles.meta}>
+                  {t.nutritionTargets} · {displayNumber(kcalTarget, locale, 0)} kcal
+                </Text>
+              )}
               {macros.map(({ label, nutrient, color }) => (
                 <View key={label} style={[styles.row, local.macro]}>
                   <Ring size={19} color={color}>
@@ -193,11 +202,14 @@ export function TodayScreen({
           </>
         )}
       </ScrollView>
-      {onAdd && (
-        <View style={styles.footer}>
-          <PrimaryButton title={`+  ${t.addFood}`} onPress={onAdd} />
+      <View style={[styles.footer, styles.row]}>
+        <View style={styles.stretch}>
+          {onAdd && <PrimaryButton title={`+  ${t.addFood}`} onPress={onAdd} />}
         </View>
-      )}
+        <Pressable accessibilityRole="button" style={styles.action} onPress={onProgress}>
+          <Text style={styles.actionText}>{t.progress}</Text>
+        </Pressable>
+      </View>
     </>
   );
 }
