@@ -15,6 +15,7 @@ let choosingArchive = false;
 
 export class ArchiveSizeError extends RangeError {}
 export class ArchiveComplexityError extends RangeError {}
+export class ArchiveReadTimeoutError extends Error {}
 
 function checkArchiveComplexity(source: string): void {
   let inString = false;
@@ -54,6 +55,16 @@ export async function chooseArchive(): Promise<string | null> {
     const source = result.source.startsWith("\uFEFF") ? result.source.slice(1) : result.source;
     checkArchiveComplexity(source);
     return source;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ERR_EDO_ARCHIVE_TIMEOUT"
+    ) {
+      throw new ArchiveReadTimeoutError("Timed out reading the selected diary archive");
+    }
+    throw error;
   } finally {
     choosingArchive = false;
   }

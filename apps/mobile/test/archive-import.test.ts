@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import {
   ArchiveComplexityError,
+  ArchiveReadTimeoutError,
   ArchiveSizeError,
   archivePickerAvailable,
   chooseArchive,
@@ -38,6 +39,14 @@ it("reports the native size rejection and permits another choice", async () => {
     .mockResolvedValueOnce({ status: "too-large" })
     .mockResolvedValueOnce({ status: "selected", source: "{}" });
   await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveSizeError);
+  await expect(chooseArchive()).resolves.toBe("{}");
+});
+
+it("reports a provider deadline and permits a new selection", async () => {
+  mock.pickArchiveAsync
+    .mockRejectedValueOnce({ code: "ERR_EDO_ARCHIVE_TIMEOUT" })
+    .mockResolvedValueOnce({ status: "selected", source: "{}" });
+  await expect(chooseArchive()).rejects.toBeInstanceOf(ArchiveReadTimeoutError);
   await expect(chooseArchive()).resolves.toBe("{}");
 });
 

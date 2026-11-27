@@ -6,6 +6,7 @@ import {
   foodForRecipe,
   type Recipe,
 } from "@edo/core";
+import { insertArchiveRows } from "./archive-sql.ts";
 import { inCurrentDiary } from "./migrations.ts";
 import {
   diaryId,
@@ -123,22 +124,18 @@ function readCollection<T>(
   });
 }
 
-function writeRecord(
-  db: DiarySqliteConnection,
-  table: Table,
-  id: string,
-  value: unknown,
-  replace: boolean,
-) {
-  const insert = `INSERT INTO ${table} (id, content) VALUES (?, ?)`;
-  const operation = replace
-    ? `${insert} ON CONFLICT(id) DO UPDATE SET content = excluded.content`
-    : insert;
-  db.run(operation, id, JSON.stringify(value));
+function insertRecordSql(table: Table) {
+  return `INSERT INTO ${table} (id, content)`;
 }
 
 function saveRecord(db: DiarySqliteConnection, table: Table, id: string, value: unknown) {
-  inCurrentDiary(db, "BEGIN IMMEDIATE", () => writeRecord(db, table, id, value, true));
+  inCurrentDiary(db, "BEGIN IMMEDIATE", () =>
+    db.run(
+      `${insertRecordSql(table)} VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET content = excluded.content`,
+      id,
+      JSON.stringify(value),
+    ),
+  );
 }
 
 function customFoods(db: DiarySqliteConnection) {
@@ -177,13 +174,26 @@ export function insertMyFoodsRecords(
   db: DiarySqliteConnection,
   records: ReturnType<typeof readMyFoodsRecords>,
 ) {
-  for (const food of records.customFoods)
-    writeRecord(db, "diary_custom_foods", food.id.sourceId, food, false);
-  for (const recipe of records.recipes) writeRecord(db, "diary_recipes", recipe.id, recipe, false);
-  for (const meal of records.mealTemplates)
-    writeRecord(db, "diary_meal_templates", meal.id, meal, false);
-  for (const { provider, sourceId } of records.favorites)
-    db.run("INSERT INTO diary_favorites VALUES (?, ?)", provider, sourceId);
+  insertArchiveRows(
+    db,
+    insertRecordSql("diary_custom_foods"),
+    records.customFoods.map((food) => [food.id.sourceId, JSON.stringify(food)]),
+  );
+  insertArchiveRows(
+    db,
+    insertRecordSql("diary_recipes"),
+    records.recipes.map((recipe) => [recipe.id, JSON.stringify(recipe)]),
+  );
+  insertArchiveRows(
+    db,
+    insertRecordSql("diary_meal_templates"),
+    records.mealTemplates.map((meal) => [meal.id, JSON.stringify(meal)]),
+  );
+  insertArchiveRows(
+    db,
+    "INSERT INTO diary_favorites",
+    records.favorites.map(({ provider, sourceId }) => [provider, sourceId]),
+  );
 }
 
 export function myFoods(db: DiarySqliteConnection): MyFoodsStore {

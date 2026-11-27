@@ -10,7 +10,9 @@ export { type MyFoodsStore, mealFromTemplate, type SavedMealTemplate } from "./m
 export * from "./packaged-food-cache.ts";
 export {
   ArchiveIssueLimitError,
+  ArchiveRecordLimitError,
   type PrivateArchiveIssue,
+  type PrivateArchiveLimits,
   type PrivateArchivePreview,
   type PrivateArchiveResult,
 } from "./private-archive.ts";

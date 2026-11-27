@@ -5,6 +5,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.CancellationSignal
 import android.provider.OpenableColumns
 import expo.modules.kotlin.activityresult.AppContextActivityResultContract
 import expo.modules.kotlin.activityresult.AppContextActivityResultLauncher
@@ -12,28 +13,50 @@ import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.util.UUID
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+
+private const val READ_TIMEOUT_MS = 45_000L
 
 class EdoArchivePickerModule : Module() {
+  // A broken provider may ignore cancellation. Allow one retry without building an unbounded queue.
+  private val readWorkers = ThreadPoolExecutor(0, 2, 30, TimeUnit.SECONDS, SynchronousQueue())
+  private var pendingPicker: ArchivePickerRequest? = null
+
   override fun definition() = ModuleDefinition {
     Name("EdoArchivePicker")
 
     lateinit var launcher: AppContextActivityResultLauncher<String, Uri?>
     RegisterActivityContracts {
-      launcher = registerForActivityResult(ArchivePickerContract())
+      launcher = registerForActivityResult(ArchivePickerContract()) { requestId, _ ->
+        pendingPicker?.takeIf { it.id == requestId }?.result?.completeExceptionally(pickerInterrupted())
+      }
     }
+    OnActivityDestroys { pendingPicker?.result?.completeExceptionally(pickerInterrupted()) }
+    OnDestroy { readWorkers.shutdownNow() }
 
     AsyncFunction("pickArchiveAsync") Coroutine { ->
       try {
-        val uri = launcher.launch("application/json")
+        val uri = chooseFile(launcher)
         if (uri == null) {
           mapOf("status" to "cancelled")
         } else {
           val resolver = requireNotNull(appContext.reactContext).contentResolver
-          withContext(Dispatchers.IO) { readSelection(resolver, uri) }
+          readFromProvider(resolver, uri)
         }
+      } catch (_: TimeoutCancellationException) {
+        throw CodedException("ERR_EDO_ARCHIVE_TIMEOUT", "Timed out reading the selected diary archive", null)
+      } catch (error: CodedException) {
+        throw error
       } catch (error: CancellationException) {
         throw error
       } catch (_: Exception) {
@@ -41,14 +64,48 @@ class EdoArchivePickerModule : Module() {
       }
     }
   }
+
+  private suspend fun chooseFile(launcher: AppContextActivityResultLauncher<String, Uri?>): Uri? =
+    withContext(Dispatchers.Main.immediate) {
+      if (pendingPicker != null) throw pickerInterrupted()
+      val request = ArchivePickerRequest(UUID.randomUUID().toString(), CompletableDeferred())
+      pendingPicker = request
+      try {
+        launcher.launch(request.id) { uri -> request.result.complete(uri) }
+        request.result.await()
+      } finally {
+        pendingPicker = null
+      }
+    }
+
+  private suspend fun readFromProvider(resolver: ContentResolver, uri: Uri): Map<String, String> =
+    withTimeout(READ_TIMEOUT_MS) {
+      suspendCancellableCoroutine { continuation ->
+        val signal = CancellationSignal()
+        continuation.invokeOnCancellation { signal.cancel() }
+        readWorkers.execute {
+          val result = try {
+            Result.success(readSelection(resolver, uri, signal))
+          } catch (error: Exception) {
+            Result.failure(error)
+          }
+          continuation.resumeWith(result)
+        }
+      }
+    }
 }
+
+private data class ArchivePickerRequest(val id: String, val result: CompletableDeferred<Uri?>)
+
+private fun pickerInterrupted() =
+  CodedException("ERR_EDO_ARCHIVE_PICKER", "The archive picker was interrupted. Choose the file again.", null)
 
 private class ArchivePickerContract : AppContextActivityResultContract<String, Uri?> {
   override fun createIntent(context: Context, input: String) =
-    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+    Intent(Intent.ACTION_GET_CONTENT).apply {
       addCategory(Intent.CATEGORY_OPENABLE)
       type = "*/*"
-      putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(input, "text/plain", "application/octet-stream"))
+      putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
@@ -56,18 +113,21 @@ private class ArchivePickerContract : AppContextActivityResultContract<String, U
     if (resultCode == Activity.RESULT_OK) intent?.data else null
 }
 
-private fun readSelection(resolver: ContentResolver, uri: Uri): Map<String, String> {
+private fun readSelection(resolver: ContentResolver, uri: Uri, signal: CancellationSignal): Map<String, String> {
   require(uri.scheme == ContentResolver.SCHEME_CONTENT)
   // Some providers omit or misreport size. The stream limit is always enforced.
   val declaredSize = runCatching {
-    resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+    resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null, signal)?.use { cursor ->
       if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
     }
   }.getOrNull()
   if (declaredSize != null && declaredSize > MAX_ARCHIVE_BYTES) {
     return mapOf("status" to "too-large")
   }
-  val source = requireNotNull(resolver.openInputStream(uri)).use { readArchive(it) }
+  signal.throwIfCanceled()
+  val source = requireNotNull(resolver.openAssetFileDescriptor(uri, "r", signal)).use { descriptor ->
+    descriptor.createInputStream().use { readArchive(it, checkCancellation = signal::throwIfCanceled) }
+  }
   return if (source == null) mapOf("status" to "too-large")
   else mapOf("status" to "selected", "source" to source)
 }

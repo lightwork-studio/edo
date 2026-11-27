@@ -1,4 +1,5 @@
 import type { DiaryItem, DiaryMeal } from "@edo/core";
+import { archiveBatches, archivePlaceholders, insertArchiveRows } from "./archive-sql.ts";
 import { type DiaryProgressStore, diaryProgress, verifyDiaryProgress } from "./diary-progress.ts";
 import { type DiaryBackup, diaryMigrations, inCurrentDiary, migrateDiary } from "./migrations.ts";
 import { type MyFoodsStore, myFoods, verifyMyFoods } from "./my-foods.ts";
@@ -7,6 +8,7 @@ import {
   createPrivateArchive,
   insertPrivateRecords,
   type PrivateArchiveIssue,
+  type PrivateArchiveLimits,
   type PrivateArchivePreview,
   type PrivateArchiveResult,
   planPrivateRecords,
@@ -34,9 +36,9 @@ export interface DiaryStore {
 
 export interface PrivateArchiveStore {
   exportPrivateArchive(): string;
-  /** Throws ArchiveIssueLimitError if the supplied validation and conflict budget is exhausted. */
-  previewPrivateArchive(source: string, maxIssues?: number): PrivateArchivePreview;
-  restorePrivateArchive(source: string, maxIssues?: number): PrivateArchiveResult;
+  /** Optional limits bound interactive preview and restore work. */
+  previewPrivateArchive(source: string, limits?: PrivateArchiveLimits): PrivateArchivePreview;
+  restorePrivateArchive(source: string, limits?: PrivateArchiveLimits): PrivateArchiveResult;
 }
 
 export interface OpenDiaryOptions {
@@ -91,15 +93,10 @@ function prepareMeal(meal: DiaryMeal) {
   };
 }
 
-function writeMeal(
-  db: DiarySqliteConnection,
-  meal: ReturnType<typeof prepareMeal>,
-  update: boolean,
-): void {
-  const insert =
-    "INSERT INTO diary_meals (id, local_day, occurred_at, utc_offset_minutes) VALUES (?, ?, ?, ?)";
-  const write = update
-    ? `${insert} ON CONFLICT(id) DO UPDATE SET
+function writeMeal(db: DiarySqliteConnection, meal: ReturnType<typeof prepareMeal>): void {
+  db.run(
+    `INSERT INTO diary_meals (id, local_day, occurred_at, utc_offset_minutes) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
         local_day = excluded.local_day,
         occurred_at = excluded.occurred_at,
         utc_offset_minutes = CASE
@@ -107,10 +104,13 @@ function writeMeal(
             AND excluded.occurred_at = diary_meals.occurred_at
           THEN coalesce(excluded.utc_offset_minutes, diary_meals.utc_offset_minutes)
           ELSE excluded.utc_offset_minutes
-        END`
-    : insert;
-  db.run(write, meal.id, meal.localDay, meal.occurredAt, meal.utcOffsetMinutes);
-  if (update) db.run("DELETE FROM diary_items WHERE meal_id = ?", meal.id);
+        END`,
+    meal.id,
+    meal.localDay,
+    meal.occurredAt,
+    meal.utcOffsetMinutes,
+  );
+  db.run("DELETE FROM diary_items WHERE meal_id = ?", meal.id);
   for (const [position, item] of meal.items.entries()) {
     db.run(
       "INSERT INTO diary_items (id, meal_id, position, snapshot) VALUES (?, ?, ?, ?)",
@@ -118,6 +118,24 @@ function writeMeal(
       meal.id,
       position,
       item.snapshot,
+    );
+  }
+}
+
+function insertArchiveMeals(db: DiarySqliteConnection, meals: readonly DiaryMeal[]): void {
+  for (const batch of archiveBatches(meals, 200)) {
+    const prepared = batch.map(prepareMeal);
+    insertArchiveRows(
+      db,
+      "INSERT INTO diary_meals (id, local_day, occurred_at, utc_offset_minutes)",
+      prepared.map((meal) => [meal.id, meal.localDay, meal.occurredAt, meal.utcOffsetMinutes]),
+    );
+    insertArchiveRows(
+      db,
+      "INSERT INTO diary_items (id, meal_id, position, snapshot)",
+      prepared.flatMap((meal) =>
+        meal.items.map((item, position) => [item.id, meal.id, position, item.snapshot]),
+      ),
     );
   }
 }
@@ -159,26 +177,46 @@ function planPrivateRestore(
   }
   const meals: DiaryMeal[] = [];
   let alreadyPresent = 0;
-  for (const { index, meal } of archive.meals.entries) {
-    const previous = readMeal(db, meal.id);
-    if (previous) {
-      if (JSON.stringify(previous) === JSON.stringify(meal)) alreadyPresent += 1;
-      else
+  for (const batch of archiveBatches(archive.meals.entries, 450)) {
+    const saved = readMeals(
+      db.all(
+        `${selectMeals} WHERE meals.id IN (${archivePlaceholders(batch.length)})
+          ORDER BY meals.id, items.position`,
+        ...batch.map(({ meal }) => meal.id),
+      ),
+    );
+    const previousMeals = new Map(saved.map((meal) => [meal.id, meal]));
+    const incomingItems = batch.flatMap(({ meal }) =>
+      previousMeals.has(meal.id) ? [] : meal.items.map((item) => item.id),
+    );
+    const existingItems = new Set<string>();
+    for (const ids of archiveBatches(incomingItems, 900)) {
+      for (const row of db.all(
+        `SELECT id FROM diary_items WHERE id IN (${archivePlaceholders(ids.length)})`,
+        ...ids,
+      )) {
+        existingItems.add(diaryId(row.id, "item ID"));
+      }
+    }
+    for (const { index, meal } of batch) {
+      const previous = previousMeals.get(meal.id);
+      if (previous) {
+        if (JSON.stringify(previous) === JSON.stringify(meal)) alreadyPresent += 1;
+        else
+          reportIssue({
+            collection: "meals",
+            index,
+            message: "This meal ID has different saved content",
+          });
+      } else if (meal.items.some((item) => existingItems.has(item.id))) {
         reportIssue({
           collection: "meals",
           index,
-          message: "This meal ID has different saved content",
+          message: "An item ID is already used by another saved meal",
         });
-    } else if (
-      meal.items.some((item) => db.get("SELECT id FROM diary_items WHERE id = ?", item.id))
-    ) {
-      reportIssue({
-        collection: "meals",
-        index,
-        message: "An item ID is already used by another saved meal",
-      });
-    } else {
-      meals.push(meal);
+      } else {
+        meals.push(meal);
+      }
     }
   }
   const records = archive.records ? planPrivateRecords(db, archive.records, reportIssue) : null;
@@ -210,7 +248,7 @@ export async function openDiary({
     ...myFoods(db),
     saveMeal: (meal) => {
       const prepared = prepareMeal(meal);
-      inCurrentDiary(db, "BEGIN IMMEDIATE", () => writeMeal(db, prepared, true));
+      inCurrentDiary(db, "BEGIN IMMEDIATE", () => writeMeal(db, prepared));
     },
     deleteMeal: (id) =>
       inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
@@ -245,18 +283,18 @@ export async function openDiary({
         }
         return source;
       }),
-    previewPrivateArchive: (source, maxIssues) => {
-      const onIssue = archiveIssueBudget(maxIssues);
-      const archive = readPrivateArchive(source, onIssue);
+    previewPrivateArchive: (source, limits) => {
+      const onIssue = archiveIssueBudget(limits?.maxIssues);
+      const archive = readPrivateArchive(source, onIssue, limits?.maxRecords);
       return inCurrentDiary(db, "BEGIN", () => planPrivateRestore(db, archive, onIssue).preview);
     },
-    restorePrivateArchive: (source, maxIssues) => {
-      const onIssue = archiveIssueBudget(maxIssues);
-      const archive = readPrivateArchive(source, onIssue);
+    restorePrivateArchive: (source, limits) => {
+      const onIssue = archiveIssueBudget(limits?.maxIssues);
+      const archive = readPrivateArchive(source, onIssue, limits?.maxRecords);
       return inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
         const { meals, records, preview } = planPrivateRestore(db, archive, onIssue);
         if (preview.issues.length > 0) return { status: "rejected", preview };
-        for (const meal of meals) writeMeal(db, prepareMeal(meal), false);
+        insertArchiveMeals(db, meals);
         if (records) insertPrivateRecords(db, records);
         return {
           status: "restored",

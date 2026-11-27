@@ -55,6 +55,12 @@ export interface PrivateArchivePreview {
 }
 
 export class ArchiveIssueLimitError extends RangeError {}
+export class ArchiveRecordLimitError extends RangeError {}
+
+export interface PrivateArchiveLimits {
+  readonly maxIssues?: number;
+  readonly maxRecords?: number;
+}
 
 export type PrivateArchiveResult =
   | { readonly status: "restored"; readonly added: number; readonly alreadyPresent: number }
@@ -144,6 +150,7 @@ function readCollection<T>(
 export function readPrivateArchive(
   source: string,
   onIssue?: () => void,
+  maxRecords?: number,
 ): {
   meals: ReturnType<typeof readMealEntries>;
   records: IndexedRecords | null;
@@ -157,6 +164,17 @@ export function readPrivateArchive(
     throw error;
   }
   const root = archiveRecord(value, ["format", "formatVersion", "meals", ...additionalCollections]);
+  if (maxRecords !== undefined) {
+    if (!Number.isSafeInteger(maxRecords) || maxRecords < 0) {
+      throw new RangeError("Invalid archive record limit");
+    }
+    let records = 0;
+    for (const collection of ["meals", ...additionalCollections]) {
+      const rows = root[collection];
+      if (Array.isArray(rows)) records += rows.length;
+    }
+    if (records > maxRecords) throw new ArchiveRecordLimitError("Too many diary archive records");
+  }
   if (root.format === format && root.formatVersion === 1) {
     return { meals: readDiaryArchiveValue(value, onIssue), records: null, issues: [] };
   }

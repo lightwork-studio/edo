@@ -1,5 +1,6 @@
 package studio.lightwork.edo.archive
 
+import java.io.IOException
 import java.io.InputStream
 import java.nio.charset.CharacterCodingException
 import org.junit.Assert.assertEquals
@@ -26,6 +27,31 @@ class BoundedArchiveReaderTest {
   @Test(expected = CharacterCodingException::class)
   fun rejectsMalformedUtf8() {
     readArchive(byteArrayOf(0xc3.toByte(), 0x28).inputStream(), 8)
+  }
+
+  @Test
+  fun acceptsAnObjectAfterBomAndJsonWhitespace() {
+    val source = "\uFEFF\r\n\t {}"
+    assertEquals(source, readArchive(source.byteInputStream(), 16))
+  }
+
+  @Test(expected = IOException::class)
+  fun rejectsNonObjectTextBeforeNativeConversion() {
+    readArchive("not json".byteInputStream(), 16)
+  }
+
+  @Test
+  fun checksCancellationBeforeReadingAnotherChunk() {
+    val stream = ChunkedInput(ByteArray(20))
+    try {
+      readArchive(stream, 20) {
+        if (stream.consumed > 0) throw IOException("Cancelled")
+      }
+      throw AssertionError("Read continued after cancellation")
+    } catch (error: IOException) {
+      assertEquals("Cancelled", error.message)
+      assertEquals(3, stream.consumed)
+    }
   }
 }
 
