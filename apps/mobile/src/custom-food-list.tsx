@@ -21,6 +21,7 @@ export function CustomFoodList({
   onPick,
   onRetry,
   favorites,
+  recipes,
 }: {
   t: Strings;
   locale: string;
@@ -32,6 +33,7 @@ export function CustomFoodList({
   onPick: (food: Food) => void;
   onRetry: () => void;
   favorites?: ReactNode;
+  recipes?: ReactNode;
 }) {
   const names = new Intl.Collator(locale);
   const ordered = foods
@@ -78,6 +80,7 @@ export function CustomFoodList({
             </Pressable>
           </View>
         ))}
+        {recipes}
       </ScrollView>
       {ordered !== null && (
         <View style={styles.footer}>

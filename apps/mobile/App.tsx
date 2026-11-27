@@ -2,7 +2,9 @@ import {
   type DiaryItem,
   type Food,
   type FoodId,
+  foodForRecipe,
   type Portion,
+  type Recipe,
   sevenDayWeightAverage,
 } from "@edo/core";
 import type { DiaryMeal, DiaryProgressStore, DiaryStore } from "@edo/storage";
@@ -41,6 +43,8 @@ import { openLocalDiary } from "./src/local-diary";
 import { openLocalPackagedCache } from "./src/local-packaged-cache";
 import { ProgressScreen } from "./src/progress";
 import { type ProgressRange, recentWeightEnd, weightWindowStart } from "./src/progress-data";
+import { RecipeEditor } from "./src/recipe-editor";
+import { RecipeList } from "./src/recipe-list";
 import { SearchScreen } from "./src/search";
 import { appLocale, type Language, strings } from "./src/strings";
 import { TargetsScreen } from "./src/targets-screen";
@@ -61,6 +65,7 @@ type Route =
   | ({ kind: "barcode"; state: BarcodeState } & SearchContext)
   | ({ kind: "my-foods" } & SearchContext)
   | ({ kind: "custom-food"; current: Food | null; sourceId: string } & SearchContext)
+  | ({ kind: "recipe"; current: Recipe | null; recipeId: string } & SearchContext)
   | ({ kind: "add"; food: Food; barcode?: BarcodeState; fromCustomFoods?: boolean } & SearchContext)
   | { kind: "edit"; day: string; mealId: string; itemId: string; item: DiaryItem };
 
@@ -196,11 +201,12 @@ function DiaryApp({
     } else if (
       route.kind === "barcode" ||
       route.kind === "my-foods" ||
-      route.kind === "custom-food"
+      route.kind === "custom-food" ||
+      route.kind === "recipe"
     ) {
       const { day, occurredAt, utcOffsetMinutes, query } = route;
       setRoute({
-        kind: route.kind === "custom-food" ? "my-foods" : "search",
+        kind: route.kind === "custom-food" || route.kind === "recipe" ? "my-foods" : "search",
         day,
         occurredAt,
         utcOffsetMinutes,
@@ -368,6 +374,12 @@ function DiaryApp({
     } catch {
       // The library can fail independently of the current diary and bundled catalog.
     }
+    let recipes: Recipe[] | null = null;
+    try {
+      recipes = diary.listRecipes();
+    } catch {
+      // An unavailable recipe collection should leave custom foods usable.
+    }
     return (
       <CustomFoodList
         t={t}
@@ -385,6 +397,7 @@ function DiaryApp({
               t={t}
               ids={favorites}
               localFoods={foods}
+              recipeFoods={recipes?.map(foodForRecipe) ?? null}
               catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
               cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
               language={language}
@@ -398,6 +411,28 @@ function DiaryApp({
             />
           ) : undefined
         }
+        recipes={
+          <RecipeList
+            t={t}
+            locale={locale}
+            recipes={recipes}
+            onCreate={() =>
+              setRoute({ ...route, kind: "recipe", current: null, recipeId: randomUUID() })
+            }
+            onEdit={(current) =>
+              setRoute({ ...route, kind: "recipe", current, recipeId: current.id })
+            }
+            onRetry={() => setRefresh((revision) => revision + 1)}
+            onPick={(recipe) =>
+              setRoute({
+                ...route,
+                kind: "add",
+                food: foodForRecipe(recipe),
+                fromCustomFoods: true,
+              })
+            }
+          />
+        }
         onBack={goBack}
         onCreate={() =>
           setRoute({ ...route, kind: "custom-food", current: null, sourceId: randomUUID() })
@@ -407,6 +442,30 @@ function DiaryApp({
         }
         onPick={(food) => setRoute({ ...route, kind: "add", food, fromCustomFoods: true })}
         onRetry={() => setRefresh((revision) => revision + 1)}
+      />
+    );
+  }
+  if (route.kind === "recipe") {
+    let customFoods: Food[] = [];
+    try {
+      customFoods = diary.listCustomFoods();
+    } catch {
+      // The editor can still add ingredients from the local catalog.
+    }
+    return (
+      <RecipeEditor
+        language={language}
+        locale={locale}
+        current={route.current}
+        customFoods={customFoods}
+        catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
+        onCatalogRetry={catalog.retry}
+        newItemId={randomUUID}
+        onBack={goBack}
+        onSave={(draft) => {
+          diary.saveRecipe({ ...draft, id: route.recipeId });
+          setRoute({ ...route, kind: "my-foods" });
+        }}
       />
     );
   }

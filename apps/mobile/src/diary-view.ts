@@ -91,6 +91,17 @@ export function readAmount(text: string): number | null {
   return amount > 0 && amount <= Number.MAX_SAFE_INTEGER ? amount : null;
 }
 
+export function defaultFoodPortion(food: Food): Portion {
+  switch (food.nutrition.basis) {
+    case "per-portion":
+      return { amount: 1, unit: "portion" };
+    case "per-100-ml":
+      return { amount: 100, unit: "ml" };
+    case "per-100-g":
+      return { amount: 100, unit: "g" };
+  }
+}
+
 export function totalNutrition(meals: readonly DiaryMeal[]): Nutrients | null {
   try {
     return sumNutrition(meals.flatMap((meal) => meal.items.map((item) => item.nutrients)));
