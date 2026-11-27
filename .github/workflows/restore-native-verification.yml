@@ -41,11 +41,12 @@ jobs:
       - name: Generate Android
         working-directory: apps/mobile
         run: pnpm exec expo prebuild --platform android --no-install
-      - name: Build a self-contained Android app
+      - name: Build the Android app and provider regression test
         working-directory: apps/mobile/android
         run: |
           export JAVA_HOME="$JAVA_HOME_17_X64"
-          ./gradlew :app:assembleRelease --console=plain -PreactNativeArchitectures=x86_64
+          ./gradlew :app:assembleRelease :edo-archive-picker:assembleDebugAndroidTest \
+            --console=plain -PreactNativeArchitectures=x86_64
       - name: Boot the Android emulator and exercise restore
         run: |
           set -o pipefail
