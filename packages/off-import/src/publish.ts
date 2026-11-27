@@ -6,16 +6,18 @@ import {
   publishCatalog,
   restoreCatalogRelease,
 } from "@edo/catalog-import";
+import type { ParsedProduct } from "./format.ts";
 import { readOpenFoodFactsExport } from "./read.ts";
 
 export const openFoodFactsCatalog = {
   provider: "open-food-facts",
   schemaVersion: 1,
   importerVersion: "2",
+  deltaIndexUrl: "https://static.openfoodfacts.org/data/delta/index.txt",
   sourceUrl: "https://static.openfoodfacts.org/data/openfoodfacts-products.jsonl.gz",
 } as const;
 const { provider, schemaVersion, importerVersion, sourceUrl } = openFoodFactsCatalog;
-const notice = {
+export const openFoodFactsNotice = {
   name: "Open Food Facts contributors",
   license: "ODbL-1.0",
   licenseUrl: "https://opendatacommons.org/licenses/odbl/1-0/",
@@ -25,9 +27,11 @@ const notice = {
 
 export function compatibleOpenFoodFactsManifest(value: unknown): CatalogManifest | null {
   const manifest = compatibleCatalog(value, provider, [schemaVersion]);
-  return manifest?.source.url === sourceUrl &&
-    manifest.attribution.name === notice.name &&
-    manifest.attribution.license === notice.license
+  return manifest &&
+    (manifest.source.url === sourceUrl ||
+      manifest.source.url === openFoodFactsCatalog.deltaIndexUrl) &&
+    manifest.attribution.name === openFoodFactsNotice.name &&
+    manifest.attribution.license === openFoodFactsNotice.license
     ? manifest
     : null;
 }
@@ -35,7 +39,7 @@ export function compatibleOpenFoodFactsManifest(value: unknown): CatalogManifest
 export function matchesOpenFoodFactsDatabase(database: DatabaseSync, manifest: CatalogManifest) {
   return (
     manifest.provider === provider &&
-    matchesCatalogDatabaseMetadata(database, manifest, notice.licenseUrl)
+    matchesCatalogDatabaseMetadata(database, manifest, openFoodFactsNotice.licenseUrl)
   );
 }
 
@@ -51,7 +55,7 @@ export function restoreOpenFoodFactsRelease(root: string, manifestSha256: string
   });
 }
 
-function validateOpenFoodFactsRows(database: DatabaseSync, accepted: number): void {
+export function validateOpenFoodFactsRows(database: DatabaseSync, accepted: number): void {
   const foreignKeys = database.prepare("PRAGMA foreign_key_check").all();
   const rows = database
     .prepare(
@@ -121,7 +125,7 @@ export async function publishOpenFoodFactsRelease(
       schemaVersion,
       importerVersion,
       source: { release: input.release, url: sourceUrl, lastModified: input.lastModified },
-      attribution: notice,
+      attribution: openFoodFactsNotice,
     },
     {
       async build(inputPath, artifactPath) {
@@ -129,34 +133,17 @@ export async function publishOpenFoodFactsRelease(
         database.exec(schema);
         database
           .prepare("INSERT INTO catalog_metadata VALUES (?, ?, ?, ?, ?, ?)")
-          .run(provider, input.release, sourceUrl, notice.name, notice.licenseUrl, notice.changes);
-        const insert = database.prepare(`
-          INSERT INTO food VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT (source_id) DO NOTHING
-        `);
-        const insertBarcode = database.prepare("INSERT INTO barcode VALUES (?, ?, ?)");
-        database.exec("BEGIN");
-        const counts = await readOpenFoodFactsExport(inputPath, input.release, (product) => {
-          const nutrition = product.food.nutrition;
-          const values = nutrition?.nutrients;
-          const result = insert.run(
-            product.food.id.sourceId,
-            product.food.name,
-            product.nameDe ? product.nameEn : null,
-            product.food.preparation,
-            nutrition?.basis ?? null,
-            values?.kcal ?? null,
-            values?.proteinG ?? null,
-            values?.availableCarbohydratesG ?? null,
-            values?.fatG ?? null,
-            values?.fiberG ?? null,
-            nutrition?.portionSize?.amount ?? null,
-            nutrition?.portionSize?.unit ?? null,
+          .run(
+            provider,
+            input.release,
+            sourceUrl,
+            openFoodFactsNotice.name,
+            openFoodFactsNotice.licenseUrl,
+            openFoodFactsNotice.changes,
           );
-          if (Number(result.changes) !== 1) return false;
-          insertBarcode.run(product.food.id.sourceId, product.barcode, product.lookupCode);
-          return true;
-        });
+        const insert = insertOpenFoodFactsProduct(database);
+        database.exec("BEGIN");
+        const counts = await readOpenFoodFactsExport(inputPath, input.release, insert);
         database.exec(`
           CREATE INDEX barcode_lookup ON barcode (lookup_code);
           CREATE VIRTUAL TABLE food_search USING fts5(
@@ -188,4 +175,33 @@ export async function publishOpenFoodFactsRelease(
       },
     },
   );
+}
+
+export function insertOpenFoodFactsProduct(database: DatabaseSync) {
+  const insert = database.prepare(`
+    INSERT INTO food VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (source_id) DO NOTHING
+  `);
+  const insertBarcode = database.prepare("INSERT INTO barcode VALUES (?, ?, ?)");
+  return (product: ParsedProduct) => {
+    const nutrition = product.food.nutrition;
+    const values = nutrition?.nutrients;
+    const result = insert.run(
+      product.food.id.sourceId,
+      product.food.name,
+      product.nameDe ? product.nameEn : null,
+      product.food.preparation,
+      nutrition?.basis ?? null,
+      values?.kcal ?? null,
+      values?.proteinG ?? null,
+      values?.availableCarbohydratesG ?? null,
+      values?.fatG ?? null,
+      values?.fiberG ?? null,
+      nutrition?.portionSize?.amount ?? null,
+      nutrition?.portionSize?.unit ?? null,
+    );
+    if (Number(result.changes) !== 1) return false;
+    insertBarcode.run(product.food.id.sourceId, product.barcode, product.lookupCode);
+    return true;
+  };
 }

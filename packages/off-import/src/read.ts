@@ -30,6 +30,15 @@ export async function readOpenFoodFactsExport(
     else if (!product || !add(product)) counts.rejected += 1;
     else counts.accepted += 1;
   };
+  await readOpenFoodFactsLines(inputPath, consume);
+  return counts;
+}
+
+export async function readOpenFoodFactsLines(
+  inputPath: string,
+  consume: (line: string) => void,
+  maxLineLength = Infinity,
+): Promise<void> {
   await pipeline(createReadStream(inputPath), createGunzip(), async (stream) => {
     const decoder = new StringDecoder("utf8");
     let rest = "";
@@ -41,8 +50,8 @@ export async function readOpenFoodFactsExport(
         start = end + 1;
       }
       rest = text.slice(start);
+      if (rest.length > maxLineLength) throw new Error("Open Food Facts record is too large");
     }
     consume(rest + decoder.end());
   });
-  return counts;
 }
