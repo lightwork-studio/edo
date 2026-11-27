@@ -1,7 +1,7 @@
 import { roundNutritionForDisplay } from "@edo/core";
 import type { DiaryMeal } from "@edo/storage";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { calendarDate, totalNutrition } from "./diary-view";
+import { calendarDate, showTime, totalNutrition } from "./diary-view";
 import type { Strings } from "./strings";
 import {
   colors,
@@ -14,7 +14,6 @@ import {
   PrimaryButton,
   Ring,
   showDay,
-  showTime,
   styles,
 } from "./ui";
 
@@ -158,7 +157,7 @@ export function TodayScreen({
             )}
             {meals.map((meal) => (
               <View key={meal.id} style={styles.card}>
-                <Text style={styles.meta}>{showTime(meal.occurredAt, locale)}</Text>
+                <Text style={styles.meta}>{showTime(meal, locale)}</Text>
                 {meal.items.map((item) => (
                   <Pressable
                     key={item.id}

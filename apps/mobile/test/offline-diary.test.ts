@@ -222,7 +222,7 @@ test("accepts English and German decimal portions and rejects invalid quantities
   }
 });
 
-test("keeps the selected historical day when a time-zone adjustment crosses midnight", () => {
+test("keeps the historical day and the captured clock time across time zones", () => {
   const moduleUrl = new URL("../src/diary-view.ts", import.meta.url).href;
   execFileSync(
     process.execPath,
@@ -231,10 +231,14 @@ test("keeps the selected historical day when a time-zone adjustment crosses midn
       "-e",
       `
         import assert from "node:assert/strict";
-        import { entryTime, localDay } from ${JSON.stringify(moduleUrl)};
+        import { entryTime, localDay, showTime } from ${JSON.stringify(moduleUrl)};
         const entry = entryTime("2024-03-30", new Date(2024, 3, 1, 23, 45));
         assert.equal(entry.day, "2024-03-30");
         assert.equal(localDay(new Date(entry.occurredAt)), entry.day);
+        const occurredAt = Date.parse("2026-11-27T08:05:00Z");
+        assert.equal(showTime({ occurredAt, utcOffsetMinutes: 60 }, "de-DE"), "09:05");
+        assert.equal(showTime({ occurredAt, utcOffsetMinutes: 0 }, "de-DE"), "08:05");
+        assert.equal(showTime({ occurredAt }, "de-DE"), "06:05");
       `,
     ],
     { env: { ...process.env, TZ: "America/Nuuk" } },

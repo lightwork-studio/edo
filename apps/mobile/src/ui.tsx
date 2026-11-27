@@ -213,7 +213,3 @@ export function showDay(day: string, locale: string, today: string): string {
     year: day.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric",
   }).format(new Date(`${day}T00:00:00Z`));
 }
-
-export function showTime(occurredAt: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(occurredAt);
-}

@@ -57,6 +57,22 @@ export function entryTime(selectedDay: string | null, now: Date): EntryTime {
   return { day, occurredAt: event.getTime(), utcOffsetMinutes: -event.getTimezoneOffset() || 0 };
 }
 
+export function showTime(
+  { occurredAt, utcOffsetMinutes }: Pick<DiaryMeal, "occurredAt" | "utcOffsetMinutes">,
+  locale: string,
+): string {
+  const hasOffset = utcOffsetMinutes !== undefined;
+  // Only the clock time is displayed. Keeping it near the epoch also avoids Date overflow.
+  const clockTime = hasOffset
+    ? (occurredAt % (24 * 60 * 60_000)) + utcOffsetMinutes * 60_000
+    : occurredAt;
+  return new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: hasOffset ? "UTC" : undefined,
+  }).format(clockTime);
+}
+
 export function readAmount(text: string): number | null {
   const trimmed = text.trim();
   if (!/^(?:\d+(?:[.,]\d+)?|[.,]\d+)$/.test(trimmed)) return null;
