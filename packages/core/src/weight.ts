@@ -28,7 +28,6 @@ export function sevenDayWeightAverage(
   const seen = new Map<string, WeighIn>();
   for (const reading of weighIns) {
     const day = calendarDay(reading.localDay);
-    if (day < start || day > end) continue;
     if (
       !Number.isFinite(reading.kg) ||
       reading.kg <= 0 ||
@@ -50,6 +49,7 @@ export function sevenDayWeightAverage(
       throw new TypeError("Weigh-ins with the same ID must describe the same reading");
     }
     seen.set(reading.id, reading);
+    if (day < start || day > end) continue;
     const previous = latestByDay.get(reading.localDay);
     if (
       !previous ||

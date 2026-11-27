@@ -42,7 +42,8 @@ export function manualNutritionTarget(input: ManualTargetInput): DailyNutritionT
   if (!Number.isFinite(proteinAndFatKcal))
     throw new RangeError("Protein and fat exceed the energy target");
   const remainder = kcal - proteinAndFatKcal;
-  const precision = Number.EPSILON * Math.max(kcal, proteinAndFatKcal);
+  // Decimal inputs and the fat conversion can accumulate round-off in either direction.
+  const precision = Math.max(kcal, proteinAndFatKcal) * (2 * Number.EPSILON);
   if (remainder < -precision) throw new RangeError("Protein and fat exceed the energy target");
   const availableCarbohydratesG = remainder <= precision ? 0 : remainder / 4;
   return { kcal, proteinG, fatG, availableCarbohydratesG };
@@ -69,7 +70,11 @@ export function calculateNutritionTarget(input: CalculatedTargetInput): DailyNut
   const restingKcal =
     10 * weightKg + 6.25 * heightCm - 5 * ageYears + (formulaSex === "male" ? 5 : -161);
   requirePositive(restingKcal, "Estimated resting energy");
-  const kcal = Math.round(restingKcal * activityFactor + goalAdjustmentKcal);
+  const dailyEstimate = restingKcal * activityFactor + goalAdjustmentKcal;
+  requirePositive(dailyEstimate, "Energy target");
+  const kcal = roundEnergyKcal(dailyEstimate);
   const { proteinG, fatG } = input;
   return manualNutritionTarget({ kcal, proteinG, fatG });
 }
+
+import { roundEnergyKcal } from "./nutrition.ts";

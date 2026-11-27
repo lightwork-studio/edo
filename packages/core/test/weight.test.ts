@@ -42,3 +42,11 @@ it("uses the same reading on timestamp ties regardless of input order", () => {
     /same ID/,
   );
 });
+
+it("rejects conflicting versions of one reading even when one date is outside the window", () => {
+  const original = reading("corrected", "2024-03-05", "2024-03-05T16:00:00Z", 80);
+  const corrected = reading("corrected", "2024-03-12", "2024-03-12T16:00:00Z", 90);
+  for (const through of ["2024-03-05", "2024-03-13"]) {
+    expect(() => sevenDayWeightAverage(through, [original, corrected])).toThrow(/same ID/);
+  }
+});
