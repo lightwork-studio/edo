@@ -3,6 +3,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   rename,
@@ -24,6 +25,11 @@ import {
   publishOpenFoodFactsCatalog,
 } from "../src/index.ts";
 import { checkOpenFoodFactsHealth, refreshOpenFoodFactsCatalog } from "../src/refresh.ts";
+
+vi.mock("node:fs/promises", async (original) => {
+  const fs = await original<typeof import("node:fs/promises")>();
+  return { ...fs, open: vi.fn(fs.open) };
+});
 
 const product = {
   _id: "0123456789",
@@ -617,6 +623,42 @@ it.each(["headers", "body"] as const)(
     expect((await refreshOpenFoodFactsCatalog(directory, fetchExport)).status).toBe("published");
   },
 );
+
+it("removes the download when the idle deadline passes while opening its destination", async () => {
+  await refreshOpenFoodFactsCatalog(directory, fetchExport);
+  const active = await readFile(activePath);
+  etag = '"after-timeout"';
+  const sourcePath = join(providerRoot, ".catalog-managed-source");
+  const entered = deferred<void>();
+  const resume = deferred<void>();
+  const real = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  vi.mocked(open).mockImplementation(async (path, flags, mode) => {
+    if (path === sourcePath && flags === "wx") {
+      entered.resolve();
+      await resume.promise;
+    }
+    return real.open(path, flags, mode);
+  });
+
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const rejected = expect(refreshOpenFoodFactsCatalog(directory, fetchExport)).rejects.toThrow(
+      "Open Food Facts download stalled for 60 seconds",
+    );
+    await entered.promise;
+    await vi.advanceTimersByTimeAsync(60_000);
+    resume.resolve();
+    await rejected;
+  } finally {
+    resume.resolve();
+    vi.mocked(open).mockImplementation(real.open);
+    vi.useRealTimers();
+  }
+
+  expect(await readFile(activePath)).toEqual(active);
+  await expect(lstat(sourcePath)).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await refreshOpenFoodFactsCatalog(directory, fetchExport)).status).toBe("published");
+});
 
 it("rejects competing refresh and public manual publication under the same lock", async () => {
   await refreshOpenFoodFactsCatalog(directory, fetchExport);
