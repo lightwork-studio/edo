@@ -1,5 +1,6 @@
 import { type DiaryItem, type Food, type Portion, sevenDayWeightAverage } from "@edo/core";
 import type { DiaryMeal, DiaryProgressStore, DiaryStore } from "@edo/storage";
+import { randomUUID } from "expo-crypto";
 import { getLocales } from "expo-localization";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -13,6 +14,8 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { foodForPackagedProduct } from "./src/barcode";
 import { BarcodeEntry, type BarcodeState } from "./src/barcode-entry";
+import { CustomFoodList } from "./src/custom-food-list";
+import { CustomFoodScreen } from "./src/custom-food-screen";
 import {
   addDays,
   diaryDayLimit,
@@ -48,7 +51,9 @@ type Route =
   | { kind: "targets" }
   | ({ kind: "search" } & SearchContext)
   | ({ kind: "barcode"; state: BarcodeState } & SearchContext)
-  | ({ kind: "add"; food: Food; barcode?: BarcodeState } & SearchContext)
+  | ({ kind: "my-foods" } & SearchContext)
+  | ({ kind: "custom-food"; current: Food | null; sourceId: string } & SearchContext)
+  | ({ kind: "add"; food: Food; barcode?: BarcodeState; fromCustomFoods?: boolean } & SearchContext)
   | { kind: "edit"; day: string; mealId: string; itemId: string; item: DiaryItem };
 
 function useDeviceContext(): DeviceContext {
@@ -164,14 +169,26 @@ function DiaryApp({
     if (route.kind === "diary") return false;
     Keyboard.dismiss();
     if (route.kind === "add") {
-      const { day, occurredAt, utcOffsetMinutes, query, barcode } = route;
+      const { day, occurredAt, utcOffsetMinutes, query, barcode, fromCustomFoods } = route;
       const context = { day, occurredAt, utcOffsetMinutes, query };
       setRoute(
-        barcode ? { ...context, kind: "barcode", state: barcode } : { ...context, kind: "search" },
+        barcode
+          ? { ...context, kind: "barcode", state: barcode }
+          : { ...context, kind: fromCustomFoods ? "my-foods" : "search" },
       );
-    } else if (route.kind === "barcode") {
+    } else if (
+      route.kind === "barcode" ||
+      route.kind === "my-foods" ||
+      route.kind === "custom-food"
+    ) {
       const { day, occurredAt, utcOffsetMinutes, query } = route;
-      setRoute({ kind: "search", day, occurredAt, utcOffsetMinutes, query });
+      setRoute({
+        kind: route.kind === "custom-food" ? "my-foods" : "search",
+        day,
+        occurredAt,
+        utcOffsetMinutes,
+        query,
+      });
     } else if (route.kind === "weigh-in" || route.kind === "targets") {
       setRoute({ kind: "progress" });
     } else {
@@ -316,6 +333,61 @@ function DiaryApp({
       />
     );
   }
+  if (route.kind === "my-foods") {
+    let foods: Food[] | null = null;
+    try {
+      foods = diary.listCustomFoods();
+    } catch {
+      // The library can fail independently of the current diary and bundled catalog.
+    }
+    return (
+      <CustomFoodList
+        t={t}
+        locale={locale}
+        date={date}
+        foods={foods}
+        onBack={goBack}
+        onCreate={() =>
+          setRoute({ ...route, kind: "custom-food", current: null, sourceId: randomUUID() })
+        }
+        onEdit={(current) =>
+          setRoute({ ...route, kind: "custom-food", current, sourceId: current.id.sourceId })
+        }
+        onPick={(food) => setRoute({ ...route, kind: "add", food, fromCustomFoods: true })}
+        onRetry={() => setRefresh((revision) => revision + 1)}
+      />
+    );
+  }
+  if (route.kind === "custom-food") {
+    const { current, sourceId } = route;
+    const showLibrary = () => setRoute({ ...route, kind: "my-foods" });
+    return (
+      <CustomFoodScreen
+        language={language}
+        locale={locale}
+        current={current}
+        onBack={goBack}
+        onSave={({ name, nutrition }) => {
+          diary.saveCustomFood({
+            id: { provider: "local", sourceId },
+            name,
+            nutrition,
+            release: null,
+            preparation: current?.preparation ?? "unknown",
+          });
+          showLibrary();
+        }}
+        onDelete={
+          current
+            ? () => {
+                diary.deleteCustomFood(current.id.sourceId);
+                showLibrary();
+              }
+            : undefined
+        }
+      />
+    );
+  }
   if (route.kind === "search") {
     return (
       <SearchScreen
@@ -330,6 +402,10 @@ function DiaryApp({
         onBarcode={() => {
           Keyboard.dismiss();
           setRoute({ ...route, kind: "barcode", state: { code: "", result: null } });
+        }}
+        onMyFoods={() => {
+          Keyboard.dismiss();
+          setRoute({ ...route, kind: "my-foods" });
         }}
         onCatalogRetry={catalog.retry}
         onBack={goBack}
