@@ -10,6 +10,7 @@
     "typecheck": "tsc -p . && tsc -p test"
   },
   "dependencies": {
+    "@edo/catalog-import": "workspace:*",
     "@edo/core": "workspace:*",
     "@edo/storage": "workspace:*",
     "expo": "~58.1.0",
