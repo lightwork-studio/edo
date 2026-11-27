@@ -1,0 +1,17 @@
+{
+  "name": "edo-catalog",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-27",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "edo.timweb.app", "custom_domain": true }],
+  "r2_buckets": [{ "binding": "CATALOGS", "bucket_name": "edo-catalogs" }],
+  "env": {
+    "staging": {
+      "name": "edo-catalog-staging",
+      "workers_dev": true,
+      "routes": [],
+      "r2_buckets": [{ "binding": "CATALOGS", "bucket_name": "edo-catalogs" }]
+    }
+  }
+}
