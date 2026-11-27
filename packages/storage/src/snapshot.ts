@@ -1,0 +1,121 @@
+import type { DiaryItem, Food, FoodNutrition, Nutrients, Portion } from "@edo/core";
+
+function object(value: unknown, name: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`Invalid diary ${name}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function diaryText(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new TypeError(`Invalid diary ${name}`);
+  }
+  return value;
+}
+
+export function diaryId(value: unknown, name: string): string {
+  const id = diaryText(value, name);
+  // SQLite stores UTF-8. A lone surrogate would be replaced and could alias another record ID.
+  if (id.includes("\0") || /[\uD800-\uDFFF]/u.test(id)) {
+    throw new TypeError(`Invalid diary ${name}`);
+  }
+  return id;
+}
+
+export function decodeSnapshot(json: unknown): Omit<DiaryItem, "id"> {
+  return readSnapshot(JSON.parse(diaryText(json, "item snapshot")));
+}
+
+function positive(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError(`Invalid diary ${name}`);
+  }
+  return value;
+}
+
+function readPortion(input: unknown): Portion {
+  const { amount, unit } = object(input, "portion");
+  if (unit !== "g" && unit !== "ml" && unit !== "portion") {
+    throw new TypeError("Invalid diary portion unit");
+  }
+  return { amount: positive(amount, "portion amount"), unit };
+}
+
+function readNutrients(input: unknown): Nutrients {
+  const data = object(input, "nutrients");
+  const nutrient = (key: keyof Nutrients): number | null => {
+    const value = data[key];
+    if (value === null) return null;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new TypeError(`Invalid diary nutrient ${key}`);
+    }
+    return value;
+  };
+  return {
+    kcal: nutrient("kcal"),
+    proteinG: nutrient("proteinG"),
+    availableCarbohydratesG: nutrient("availableCarbohydratesG"),
+    fatG: nutrient("fatG"),
+    fiberG: nutrient("fiberG"),
+  };
+}
+
+function readFoodNutrition(input: unknown): FoodNutrition {
+  const { basis, nutrients, portionSize, gramsPerMilliliter } = object(input, "food nutrition");
+  if (basis !== "per-100-g" && basis !== "per-100-ml" && basis !== "per-portion") {
+    throw new TypeError("Invalid diary nutrition basis");
+  }
+
+  const size = portionSize === undefined ? undefined : readPortion(portionSize);
+  if (size?.unit === "portion") {
+    throw new TypeError("Invalid diary measured portion size");
+  }
+  return {
+    basis,
+    nutrients: readNutrients(nutrients),
+    ...(size === undefined ? {} : { portionSize: { amount: size.amount, unit: size.unit } }),
+    ...(gramsPerMilliliter === undefined
+      ? {}
+      : { gramsPerMilliliter: positive(gramsPerMilliliter, "density") }),
+  };
+}
+
+function readFood(input: unknown): Food {
+  const { id, name, release, preparation, nutrition } = object(input, "food");
+  const { provider, sourceId } = object(id, "food ID");
+  if (
+    provider !== "bls" &&
+    provider !== "open-food-facts" &&
+    provider !== "usda" &&
+    provider !== "local"
+  ) {
+    throw new TypeError("Invalid diary food provider");
+  }
+  if (
+    preparation !== "raw" &&
+    preparation !== "cooked" &&
+    preparation !== "as-sold" &&
+    preparation !== "prepared" &&
+    preparation !== "unknown"
+  ) {
+    throw new TypeError("Invalid diary food preparation");
+  }
+  return {
+    id: { provider, sourceId: diaryText(sourceId, "food source ID") },
+    name: diaryText(name, "food name"),
+    release: release === null ? null : diaryText(release, "catalog release"),
+    preparation,
+    nutrition: readFoodNutrition(nutrition),
+  };
+}
+
+/** Check the stored representation without recalculating a historical nutrient value. */
+export function readSnapshot(input: unknown): Omit<DiaryItem, "id"> {
+  const { portion, food, nutrients } = object(input, "item snapshot");
+  return {
+    portion: readPortion(portion),
+    food: readFood(food),
+    nutrients: readNutrients(nutrients),
+  };
+}
