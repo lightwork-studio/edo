@@ -144,7 +144,13 @@ export function readPrivateArchive(source: string): {
   records: IndexedRecords | null;
   issues: PrivateArchiveIssue[];
 } {
-  const value: unknown = JSON.parse(source);
+  let value: unknown;
+  try {
+    value = JSON.parse(source);
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new TypeError("Invalid diary archive JSON");
+    throw error;
+  }
   const root = archiveRecord(value, ["format", "formatVersion", "meals", ...additionalCollections]);
   if (root.format === format && root.formatVersion === 1) {
     return { meals: readDiaryArchiveValue(value), records: null, issues: [] };

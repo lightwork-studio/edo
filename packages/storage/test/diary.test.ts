@@ -1125,6 +1125,13 @@ test("rechecks archive content after preview and keeps every local record on con
   expect(restore.exportPrivateArchive()).toBe(saved);
 });
 
+test("reports malformed archive JSON without including the input text", async () => {
+  const diary = await createDatabase().start();
+  const malformed = '{"meals":[example-private-text]}';
+  expect(() => diary.previewPrivateArchive(malformed)).toThrow(/^Invalid diary archive JSON$/);
+  expect(() => diary.restorePrivateArchive(malformed)).toThrow(/^Invalid diary archive JSON$/);
+});
+
 test("rolls back a failed archive across all tables and succeeds on retry", async () => {
   const { archive } = await populatedPrivateArchive();
   const destination = createDatabase("archive-destination.db");
