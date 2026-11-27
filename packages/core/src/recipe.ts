@@ -19,7 +19,11 @@ export function foodForRecipe(recipe: Recipe): Food {
     throw new RangeError("Recipe servings must be finite and positive");
   }
   if (ingredients.length === 0) throw new RangeError("A recipe needs at least one ingredient");
-  if (new Set(ingredients.map((ingredient) => ingredient.id)).size !== ingredients.length) {
+  const ingredientIds = ingredients.map(({ id }) => id);
+  if (ingredientIds.some((id) => typeof id !== "string" || id.trim() === "")) {
+    throw new TypeError("A recipe ingredient needs an ID");
+  }
+  if (new Set(ingredientIds).size !== ingredients.length) {
     throw new TypeError("Recipe ingredient IDs must be unique");
   }
   const gramsPerServing = cookedWeightG === undefined ? undefined : cookedWeightG / servings;

@@ -88,6 +88,12 @@ describe("recipe portions", () => {
     expect(() => foodForRecipe({ ...recipe, cookedWeightG: 0 })).toThrow(/cooked weight/);
     expect(() => foodForRecipe({ ...recipe, ingredients: [] })).toThrow(/at least one/);
     expect(() =>
+      foodForRecipe({
+        ...recipe,
+        ingredients: recipe.ingredients.map((ingredient) => ({ ...ingredient, id: " " })),
+      }),
+    ).toThrow(/ingredient needs an ID/);
+    expect(() =>
       foodForRecipe({ ...recipe, ingredients: [...recipe.ingredients, ...recipe.ingredients] }),
     ).toThrow(/unique/);
   });
