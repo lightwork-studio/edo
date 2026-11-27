@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, lstatSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
-import type { CatalogManifest } from "@edo/catalog-import";
+import { type CatalogManifest, requireCatalogDirectory } from "@edo/catalog-import";
 import {
   type FoodNutrition,
   type MeasuredPortion,
@@ -111,6 +111,7 @@ type ActiveManifest = { manifest: CatalogManifest; text: Buffer; sha256: string 
 async function readActiveManifest(providerRoot: string): Promise<ActiveManifest | null> {
   let text: Buffer;
   try {
+    requireCatalogDirectory(providerRoot);
     const active = join(providerRoot, "active.json");
     if (!(await lstat(active)).isFile()) {
       throw new Error("Open Food Facts activation must be a regular file");
@@ -127,21 +128,39 @@ async function readActiveManifest(providerRoot: string): Promise<ActiveManifest 
   return { manifest: active, text, sha256: createHash("sha256").update(text).digest("hex") };
 }
 
+function regularFileIdentity(path: string): string {
+  const file = lstatSync(path, { bigint: true });
+  if (!file.isFile()) throw new Error("Open Food Facts catalog files must be regular files");
+  return [file.dev, file.ino, file.size, file.mtimeNs, file.ctimeNs].join(":");
+}
+
 async function openVerifiedCatalog(
   providerRoot: string,
   { manifest, text, sha256 }: ActiveManifest,
 ): Promise<OpenFoodFactsReader> {
-  const releasePath = join(providerRoot, "releases", `${sha256}.json`);
-  if (!(await lstat(releasePath)).isFile()) {
-    throw new Error("Open Food Facts immutable manifest must be a regular file");
-  }
+  const releases = join(providerRoot, "releases");
+  const artifacts = join(providerRoot, "artifacts");
+  requireCatalogDirectory(providerRoot);
+  requireCatalogDirectory(releases);
+  requireCatalogDirectory(artifacts);
+  const releasePath = join(releases, `${sha256}.json`);
+  const releaseIdentity = regularFileIdentity(releasePath);
   const immutableManifest = await readFile(releasePath);
   if (!immutableManifest.equals(text))
     throw new Error("Open Food Facts release manifest does not match activation");
-  const file = join(providerRoot, "artifacts", `${manifest.artifact.sha256}.sqlite`);
-  if (!(await lstat(file)).isFile()) {
-    throw new Error("Open Food Facts catalog artifact must be a regular file");
-  }
+  const file = join(artifacts, `${manifest.artifact.sha256}.sqlite`);
+  const artifactIdentity = regularFileIdentity(file);
+  const verifyIdentity = () => {
+    requireCatalogDirectory(providerRoot);
+    requireCatalogDirectory(releases);
+    requireCatalogDirectory(artifacts);
+    if (
+      regularFileIdentity(releasePath) !== releaseIdentity ||
+      regularFileIdentity(file) !== artifactIdentity
+    ) {
+      throw new Error("Open Food Facts catalog files changed after verification");
+    }
+  };
   const hash = createHash("sha256");
   let bytes = 0;
   for await (const chunk of createReadStream(file)) {
@@ -151,6 +170,7 @@ async function openVerifiedCatalog(
   if (bytes !== manifest.artifact.bytes || hash.digest("hex") !== manifest.artifact.sha256) {
     throw new Error("Open Food Facts catalog does not match its checksum");
   }
+  verifyIdentity();
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     const release = manifest.source.release;
@@ -177,7 +197,10 @@ async function openVerifiedCatalog(
         const text = barcode.trim();
         const key = normalizeLookupCode(text);
         if (!key) return [];
-        return lookup.all(key, text).map((row) => readProduct(row, release));
+        verifyIdentity();
+        const result = lookup.all(key, text).map((row) => readProduct(row, release));
+        verifyIdentity();
+        return result;
       },
       [Symbol.dispose]: () => db[Symbol.dispose](),
     };

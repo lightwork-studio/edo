@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -103,8 +112,27 @@ test("previews public barcode candidates and the corresponding ODbL release on l
       expect(
         (await get(path, { headers: { "If-None-Match": `"${manifest.artifact.sha256}"` } })).status,
       ).toBe(304);
+      for (const validator of [
+        "*",
+        `W/"${manifest.artifact.sha256}"`,
+        `"other,tag", W/"${manifest.artifact.sha256}"`,
+      ]) {
+        expect(
+          (await get(path, { method: "HEAD", headers: { "If-None-Match": validator } })).status,
+        ).toBe(304);
+      }
       expect((await get(".worker.sqlite")).status).toBe(404);
       expect((await get(`artifacts/${"0".repeat(64)}.sqlite`)).status).toBe(404);
+      const relocated = join(root, "bls");
+      await mkdir(join(relocated, "releases"), { recursive: true });
+      await mkdir(join(relocated, "artifacts"), { recursive: true });
+      await writeFile(join(relocated, "releases", `${releaseHash}.json`), published);
+      await copyFile(join(root, "open-food-facts", path), join(relocated, path));
+      expect(
+        (await fetch(`http://127.0.0.1:${address.port}${blsRoute}/releases/${releaseHash}.json`))
+          .status,
+      ).toBe(503);
+      expect((await fetch(`http://127.0.0.1:${address.port}${blsRoute}/${path}`)).status).toBe(404);
       const second = await publishOpenFoodFactsCatalog({
         inputPath,
         root,
@@ -123,7 +151,12 @@ test("previews public barcode candidates and the corresponding ODbL release on l
       });
       expect((await get(`releases/${releaseHash}.json`)).status).toBe(200);
       expect((await get(path, { method: "HEAD" })).status).toBe(200);
-      await writeFile(join(root, "open-food-facts", path), "damaged fixture");
+      expect((await get("active.json")).status).toBe(503);
+      {
+        using changed = new DatabaseSync(join(root, "open-food-facts", path));
+        changed.exec("UPDATE food SET kcal = 49");
+      }
+      expect((await get("barcodes/034000470693")).status).toBe(503);
       expect((await get(path, { method: "HEAD" })).status).toBe(503);
     } finally {
       await server[Symbol.asyncDispose]();
@@ -221,8 +254,26 @@ test("serves the BLS manifest and SQLite bundle from its own licensed catalog", 
       );
       expect((await get(`${blsRoute}/active.json`)).status).toBe(503);
       expect((await get(`${blsRoute}/${release}`)).status).toBe(200);
+      await writeFile(join(blsRoot, "active.json"), manifestText);
+
+      const mismatched = `${JSON.stringify({ ...manifest, attribution: { ...manifest.attribution, license: "ODbL-1.0" } })}\n`;
+      const wrongDigest = createHash("sha256").update(mismatched).digest("hex");
+      await writeFile(join(blsRoot, "active.json"), mismatched);
+      await writeFile(join(blsRoot, "releases", `${wrongDigest}.json`), mismatched);
+      expect((await get(`${blsRoute}/active.json`)).status).toBe(503);
+      await writeFile(join(blsRoot, "active.json"), manifestText);
+
+      const pending = await get(url);
       await writeFile(join(blsRoot, artifact), "damaged BLS fixture");
+      expect(Buffer.from(await pending.arrayBuffer())).toEqual(bundle);
       expect((await get(url, { method: "HEAD" })).status).toBe(503);
+      await writeFile(join(blsRoot, artifact), bundle);
+
+      const realArtifacts = join(root, "separate-artifacts");
+      await rename(join(blsRoot, "artifacts"), realArtifacts);
+      await symlink(realArtifacts, join(blsRoot, "artifacts"), "dir");
+      expect((await get(url)).status).toBe(503);
+      expect((await get(`${blsRoute}/active.json`)).status).toBe(503);
     } finally {
       await server[Symbol.asyncDispose]();
     }

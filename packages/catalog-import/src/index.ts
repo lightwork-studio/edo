@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, lstatSync } from "node:fs";
 import {
   copyFile,
   link,
@@ -20,6 +20,11 @@ import { DatabaseSync } from "node:sqlite";
 import { type CatalogManifest, isCatalogManifest, isCatalogProvider } from "./manifest.ts";
 
 export * from "./manifest.ts";
+
+/** Catalog provider and release directories must be real directories under the configured root. */
+export function requireCatalogDirectory(path: string): void {
+  if (!lstatSync(path).isDirectory()) throw new Error("Catalog directory must be a real directory");
+}
 
 interface CatalogImportMetadata
   extends Pick<CatalogManifest, "provider" | "schemaVersion" | "importerVersion" | "attribution"> {

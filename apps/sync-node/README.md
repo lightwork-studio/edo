@@ -10,10 +10,10 @@ Use `http://127.0.0.1:8787/catalog-preview/bls` for Bundeslebensmittelschlüssel
 `http://127.0.0.1:8787/catalog-preview/open-food-facts` for Open Food Facts. Each serves files from
 its own provider directory under the configured catalog root.
 
-- `GET /active.json` returns the latest activation manifest after checking that it matches its
-  immutable release manifest.
+- `GET /active.json` verifies the activation against its immutable release manifest and catalog
+  checksum before responding.
 - `GET /releases/<sha256>.json` and `GET /artifacts/<sha256>.sqlite` serve digest-named
-  released files. Both accept `HEAD` and use the digest as the ETag.
+  released files for their licensed provider. Both accept `HEAD` and use the digest as the ETag.
 - `GET /barcodes/<code>` is available under Open Food Facts. It returns candidate products in
   JSON with their original barcodes, release and available nutrition. Set `EDO_LIVE_OPEN_FOOD_FACTS=1`
   to try the rate-limited provider lookup when the local catalog has no match.
@@ -25,3 +25,5 @@ Open Food Facts responses credit Open Food Facts contributors and link to their 
 [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 
 These preview routes serve public catalog data on the loopback development server.
+Each SQLite download uses a private temporary copy verified before sending. Allow enough free space
+for the expected concurrent downloads.
