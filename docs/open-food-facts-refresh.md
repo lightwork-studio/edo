@@ -78,8 +78,8 @@ manifest's SHA-256 in place of `empty`. Obtain the SHA-256 from the provider's R
 if the active manifest is unreadable. Keep refresh paused until the cause is fixed or a fresh
 baseline is seeded so the job does not replay the same bad deltas.
 
-After seeding and configuring credentials, set repository variable
-`EDO_CATALOG_REFRESH_ENABLED=true` to enable the job.
+After seeding and configuring credentials, set `EDO_CATALOG_REFRESH_ENABLED=true` in the
+`catalog-production` environment variables to enable the publish step.
 Run **Refresh Open Food Facts catalog** manually once on `main` to verify the schedule's path.
 Subsequent runs are scheduled for 04:17 UTC. The job restores the prior manifest and artifact
 from R2, then applies retained deltas. It verifies newly written immutable objects before
