@@ -58,14 +58,14 @@ final class ArchiveSmokeUITests: XCTestCase {
             // The picker may initially show Recents or an iCloud Drive folder.
             try tap("Browse", in: providers)
         }
-        if element(["Edo"], in: providers, timeout: 2, hittable: true) == nil {
+        if element(["Archive Fixtures"], in: providers, timeout: 2, hittable: true) == nil {
             try tap("On My iPhone", in: providers)
         }
         if let archive = element(fileNames, in: providers, timeout: 3, hittable: true) {
             archive.tap()
             return
         }
-        try tap("Edo", in: providers)
+        try tap("Archive Fixtures", in: providers)
         try locate(fileNames, in: providers, hittable: true).tap()
     }
 

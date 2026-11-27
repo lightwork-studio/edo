@@ -31,9 +31,6 @@ jobs:
           if ! ruby -e 'require "xcodeproj"'; then
             gem install xcodeproj --version 1.27.0 --user-install --no-document
           fi
-          # Expose only synthetic test fixtures through the local Files provider.
-          /usr/libexec/PlistBuddy -c 'Add :UIFileSharingEnabled bool true' ios/Edo/Info.plist
-          /usr/libexec/PlistBuddy -c 'Add :LSSupportsOpeningDocumentsInPlace bool true' ios/Edo/Info.plist
           cp ../../.github/scripts/ArchiveSmokeUITests.swift ios/
           ruby ../../.github/scripts/add-archive-smoke-target.rb ios/Edo.xcodeproj
       - name: Choose and boot an iPhone simulator
@@ -58,15 +55,7 @@ jobs:
         run: |
           products="$RUNNER_TEMP/edo-ios/Build/Products"
           xcrun simctl install "$EDO_SIMULATOR" "$products/Release-iphonesimulator/Edo.app"
-          container=$(xcrun simctl get_app_container "$EDO_SIMULATOR" studio.lightwork.edo data)
-          mkdir -p "$container/Documents"
-          python3 - "$container/Documents" <<'PYTHON'
-          from pathlib import Path
-          import sys
-          sys.path.insert(0, ".github/scripts")
-          from archive_smoke_fixtures import write_fixtures
-          write_fixtures(Path(sys.argv[1]))
-          PYTHON
+          bash .github/scripts/seed-ios-archive-fixtures.sh
           test_files=("$products"/*.xctestrun)
           test "${#test_files[@]}" = 1
           test -f "${test_files[0]}"

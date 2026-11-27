@@ -12,6 +12,7 @@ test.build_configurations.each do |configuration|
   configuration.build_settings.merge!(
     "GENERATE_INFOPLIST_FILE" => "YES",
     "PRODUCT_BUNDLE_IDENTIFIER" => "studio.lightwork.edo.ArchiveSmokeUITests",
+    "PRODUCT_NAME" => test.name,
     "SWIFT_VERSION" => "5.0",
     "TEST_TARGET_NAME" => app.name
   )
