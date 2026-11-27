@@ -1,10 +1,27 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { type CatalogBuilder, type CatalogImportInput, publishCatalog } from "../src/index.ts";
+import {
+  type CatalogBuilder,
+  type CatalogImportInput,
+  clearPreparedCatalogSource,
+  publishCatalog,
+} from "../src/index.ts";
 import { compatibleCatalog } from "../src/manifest.ts";
 
 let directory: string;
@@ -71,6 +88,34 @@ it("publishes a readable SQLite artifact and reproducible manifest without dupli
   using database = new DatabaseSync(artifactPath, { readOnly: true });
   expect(database.prepare("SELECT name FROM food").get()).toMatchObject({ name: "Sample food" });
 });
+
+it.each(["artifact", "manifest"] as const)(
+  "rejects an immutable %s symlink with matching bytes",
+  async (kind) => {
+    const first = await publishCatalog(input, builder);
+    const providerRoot = join(input.root, input.provider);
+    const activePath = join(providerRoot, "active.json");
+    const activeBytes = await readFile(activePath);
+    const activeStat = await stat(activePath, { bigint: true });
+    const manifestSha = createHash("sha256").update(activeBytes).digest("hex");
+    const destination =
+      kind === "artifact"
+        ? join(providerRoot, "artifacts", `${first.artifact.sha256}.sqlite`)
+        : join(providerRoot, "releases", `${manifestSha}.json`);
+    const original = join(directory, "original");
+    const bytes = await readFile(destination);
+    await rename(destination, original);
+    await symlink(original, destination, "file");
+
+    await expect(publishCatalog(input, builder)).rejects.toThrow(
+      "Stored catalog file does not match its checksum",
+    );
+    expect(await readFile(activePath)).toEqual(activeBytes);
+    expect((await stat(activePath, { bigint: true })).mtimeNs).toBe(activeStat.mtimeNs);
+    expect(await readlink(destination)).toBe(original);
+    expect(await readFile(original)).toEqual(bytes);
+  },
+);
 
 it("keeps the active release when a build is interrupted or validation fails", async () => {
   const first = await publishCatalog(input, builder);
@@ -206,4 +251,72 @@ it("builds from the same staged bytes even if the download path is replaced", as
   );
   using database = new DatabaseSync(artifact, { readOnly: true });
   expect(database.prepare("SELECT name FROM food").get()).toMatchObject({ name: "Sample food" });
+});
+
+it("builds directly from its managed download and keeps that file while the publisher owns it", async () => {
+  const first = await publishCatalog(input, builder);
+  const { inputPath, ...metadata } = input;
+  let managedSource = "";
+
+  const second = await publishCatalog(
+    {
+      ...metadata,
+      async prepareInput(destination) {
+        managedSource = destination;
+        expect(destination).not.toBe(inputPath);
+        await writeFile(destination, "Sample food", { flag: "wx" });
+        await expect(clearPreparedCatalogSource(input.root, input.provider)).rejects.toThrow(
+          /locked/,
+        );
+      },
+    },
+    {
+      ...builder,
+      async build(source, artifact) {
+        expect(source).toBe(managedSource);
+        return builder.build(source, artifact);
+      },
+    },
+  );
+
+  expect(second).toEqual(first);
+  expect(await active()).toEqual(first);
+  await expect(readFile(managedSource)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("rejects an externally linked or changed managed source without affecting the prior release", async () => {
+  const first = await publishCatalog(input, builder);
+  const { inputPath, ...metadata } = input;
+
+  await expect(
+    publishCatalog(
+      {
+        ...metadata,
+        async prepareInput(destination) {
+          await link(inputPath, destination);
+        },
+      },
+      builder,
+    ),
+  ).rejects.toThrow("Catalog source must be a regular file with a single link");
+  await expect(
+    publishCatalog(
+      {
+        ...metadata,
+        async prepareInput(destination) {
+          await writeFile(destination, "Sample food", { flag: "wx" });
+        },
+      },
+      {
+        ...builder,
+        async build(source, artifact) {
+          await writeFile(source, "Replaced managed source");
+          return builder.build(source, artifact);
+        },
+      },
+    ),
+  ).rejects.toThrow("Catalog input changed during import");
+
+  expect(await active()).toEqual(first);
+  expect(await readFile(inputPath, "utf8")).toBe("Sample food");
 });

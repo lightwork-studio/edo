@@ -9,6 +9,7 @@ export interface CatalogManifest {
     release: string;
     url: string;
     sha256: string;
+    lastModified?: string;
   };
   attribution: {
     name: string;
@@ -59,6 +60,9 @@ export function isCatalogManifest(value: unknown): value is CatalogManifest {
     isText(source.release) &&
     isText(source.url) &&
     isDigest(source.sha256) &&
+    (source.lastModified === undefined ||
+      (typeof source.lastModified === "string" &&
+        new Date(source.lastModified).toJSON() === source.lastModified)) &&
     isObject(attribution) &&
     isText(attribution.name) &&
     isText(attribution.license) &&

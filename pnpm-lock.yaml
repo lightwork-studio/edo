@@ -66,6 +66,15 @@ importers:
 
   packages/core: {}
 
+  packages/off-import:
+    dependencies:
+      '@edo/catalog-import':
+        specifier: workspace:*
+        version: link:../catalog-import
+      '@edo/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/storage: {}
 
   packages/sync: {}
