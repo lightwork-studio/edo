@@ -121,8 +121,8 @@ test("restores a favorite by ID from the shipped BLS catalog in the selected lan
     language: "de",
     accessedAt: 1,
   });
-  expect(german.get(foodKey(item.id))).toEqual(item);
-  expect(german.get(foodKey(local.id))).toEqual(local);
+  expect(german.byId.get(foodKey(item.id))).toEqual(item);
+  expect(german.byId.get(foodKey(local.id))).toEqual(local);
   const english = await findBlsFoods(
     catalog,
     [item.id.sourceId, "missing", item.id.sourceId],
@@ -130,6 +130,26 @@ test("restores a favorite by ID from the shipped BLS catalog in the selected lan
   );
   expect(english).toHaveLength(1);
   expect(english[0]).toMatchObject({ id: item.id, release: "4.0-2025" });
+});
+
+test("distinguishes lookup failures from a missing favorite in an available catalog", async () => {
+  const blsId = { provider: "bls", sourceId: "missing" } as const;
+  const packId = { provider: "open-food-facts", sourceId: "stale-handle" } as const;
+  using db = syntheticCatalog();
+  const resolved = await resolveFavoriteFoods({
+    ids: [blsId, packId],
+    localFoods: [],
+    catalog: catalogConnection(db),
+    cache: {
+      findByIds() {
+        throw new Error("A closed cache handle failed to read");
+      },
+    },
+    language: "en",
+    accessedAt: 1,
+  });
+  expect(resolved.byId.size).toBe(0);
+  expect(resolved.failedProviders).toEqual(new Set(["open-food-facts"]));
 });
 
 test("keeps a saved day reachable when the device calendar moves back a week boundary", async () => {

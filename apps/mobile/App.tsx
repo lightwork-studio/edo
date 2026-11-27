@@ -379,12 +379,17 @@ function DiaryApp({
             <FavoriteFoodList
               t={t}
               ids={favorites}
-              localFoods={foods ?? []}
-              catalog={catalog.value === "error" ? null : (catalog.value?.db ?? null)}
-              cache={cachedProducts ?? null}
+              localFoods={foods}
+              catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
+              cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
               language={language}
               onPick={(food) => setRoute({ ...route, kind: "add", food, fromCustomFoods: true })}
               onRemove={(id) => setFavorite(id, false)}
+              onRetry={(provider) => {
+                if (provider === "bls") catalog.retry();
+                if (provider === "open-food-facts") packagedCache.retry();
+                setRefresh((revision) => revision + 1);
+              }}
             />
           ) : undefined
         }

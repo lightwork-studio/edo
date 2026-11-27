@@ -141,17 +141,35 @@ it("retains Open Food Facts favorites and products from the last 30 recorded dia
     amount: 100,
     unit: "ml",
   });
+  const travelItem = {
+    ...item,
+    id: "east-of-date-line",
+    food: { ...item.food, id: { ...product.id, sourceId: "recent-after-travel" } },
+  };
   const diary = {
     listFavorites: () => [
       { ...product.id, sourceId: "favorite" },
       { provider: "bls" as const, sourceId: "bls-favorite" },
     ],
     listMeals: vi.fn((day: string) =>
-      day === "2026-10-29" ? [{ id: "meal", localDay: day, occurredAt: 0, items: [item] }] : [],
+      day === "2026-10-29" || day === "2026-11-29"
+        ? [
+            {
+              id: "meal",
+              localDay: day,
+              occurredAt: 0,
+              items: [day === "2026-11-29" ? travelItem : item],
+            },
+          ]
+        : [],
     ),
   };
-  expect(retainedProducts(diary, "2026-11-27")).toEqual(["favorite", product.id.sourceId]);
-  expect(diary.listMeals).toHaveBeenCalledTimes(30);
+  expect(retainedProducts(diary, "2026-11-27")).toEqual([
+    "favorite",
+    travelItem.food.id.sourceId,
+    product.id.sourceId,
+  ]);
+  expect(diary.listMeals).toHaveBeenCalledTimes(32);
 });
 
 it("keeps a favorite cached over budget and keeps a recent log after unpinning", async () => {
@@ -176,7 +194,7 @@ it("keeps a favorite cached over budget and keeps a recent log after unpinning",
     language: "en",
     accessedAt: 11,
   });
-  const food = found.get(foodKey(product.id));
+  const food = found.byId.get(foodKey(product.id));
   if (!food) throw new Error("Expected to resolve the pinned food offline");
   const ids = ["item", "meal"].values();
   saveFood(

@@ -16,37 +16,39 @@ export function FavoriteFoodList({
   language,
   onPick,
   onRemove,
+  onRetry,
 }: {
   t: Strings;
   ids: readonly FoodId[];
-  localFoods: readonly Food[];
-  catalog: CatalogDatabase | null;
-  cache: PackagedFoodCache | null;
+  localFoods: readonly Food[] | null;
+  catalog: CatalogDatabase | "error" | null;
+  cache: PackagedFoodCache | "error" | null;
   language: Language;
   onPick: (food: Food) => void;
   onRemove: (id: FoodId) => void;
+  onRetry: (provider: FoodId["provider"]) => void;
 }) {
   const [error, setError] = useState(false);
   const [result, setResult] = useState<{
     ids: readonly FoodId[];
-    localFoods: readonly Food[];
-    catalog: CatalogDatabase | null;
-    cache: PackagedFoodCache | null;
+    localFoods: readonly Food[] | null;
+    catalog: CatalogDatabase | "error" | null;
+    cache: PackagedFoodCache | "error" | null;
     language: Language;
-    byId: ReadonlyMap<string, Food>;
+    resolved: Awaited<ReturnType<typeof resolveFavoriteFoods>>;
   } | null>(null);
   useEffect(() => {
     if (!ids.length) return;
     let active = true;
     void resolveFavoriteFoods({
       ids,
-      localFoods,
-      catalog,
-      cache,
+      localFoods: localFoods ?? [],
+      catalog: catalog === "error" ? null : catalog,
+      cache: cache === "error" ? null : cache,
       language,
       accessedAt: Date.now(),
-    }).then((byId) => {
-      if (active) setResult({ ids, localFoods, catalog, cache, language, byId });
+    }).then((resolved) => {
+      if (active) setResult({ ids, localFoods, catalog, cache, language, resolved });
     });
     return () => {
       active = false;
@@ -69,7 +71,26 @@ export function FavoriteFoodList({
       {ready &&
         ids.map((id) => {
           const key = foodKey(id);
-          const food = result.byId.get(key);
+          const food = result.resolved.byId.get(key);
+          const source =
+            id.provider === "bls" ? catalog : id.provider === "open-food-facts" ? cache : undefined;
+          if (!food && source === null) {
+            return <Notice key={key} text={t.loading} pending />;
+          }
+          if (
+            !food &&
+            (source === "error" ||
+              result.resolved.failedProviders.has(id.provider) ||
+              (id.provider === "local" && localFoods === null))
+          ) {
+            return (
+              <Notice
+                key={key}
+                text={t.favoriteReadError(id.sourceId)}
+                action={{ label: t.retry, onPress: () => onRetry(id.provider) }}
+              />
+            );
+          }
           const name = food?.name ?? t.unavailableFavorite(id.sourceId);
           return (
             <View key={key} style={[styles.card, styles.row]}>
@@ -100,7 +121,7 @@ export function FavoriteFoodList({
                     setError(true);
                   }
                 }}
-                style={styles.action}
+                style={[styles.action, { minWidth: 44 }]}
               >
                 <Text style={styles.actionText}>★</Text>
               </Pressable>

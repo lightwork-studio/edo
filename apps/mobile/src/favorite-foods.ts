@@ -22,8 +22,9 @@ export async function resolveFavoriteFoods({
   cache: Pick<PackagedFoodCache, "findByIds"> | null;
   language: Language;
   accessedAt: number;
-}): Promise<ReadonlyMap<string, Food>> {
+}): Promise<{ byId: ReadonlyMap<string, Food>; failedProviders: ReadonlySet<FoodId["provider"]> }> {
   const byId = new Map(localFoods.map((food) => [foodKey(food.id), food]));
+  const failedProviders = new Set<FoodId["provider"]>();
   const offIds = ids
     .filter(({ provider }) => provider === "open-food-facts")
     .map(({ sourceId }) => sourceId);
@@ -34,13 +35,17 @@ export async function resolveFavoriteFoods({
       byId.set(foodKey(food.id), food);
     }
   } catch {
-    // A disposable product cache can fail independently of the bundled and private foods.
+    failedProviders.add("open-food-facts");
   }
   if (catalog) {
     const blsIds = ids.filter(({ provider }) => provider === "bls").map(({ sourceId }) => sourceId);
-    for (const food of await findBlsFoods(catalog, blsIds, language).catch(() => [])) {
-      byId.set(foodKey(food.id), food);
+    try {
+      for (const food of await findBlsFoods(catalog, blsIds, language)) {
+        byId.set(foodKey(food.id), food);
+      }
+    } catch {
+      failedProviders.add("bls");
     }
   }
-  return byId;
+  return { byId, failedProviders };
 }

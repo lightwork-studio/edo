@@ -60,7 +60,8 @@ export function retainedProducts(
   for (const favorite of diary.listFavorites()) {
     if (favorite.provider === "open-food-facts") ids.add(favorite.sourceId);
   }
-  for (let offset = 0; offset < recentDays; offset += 1) {
+  // A captured local day can be up to two calendar days ahead after travel.
+  for (let offset = -2; offset < recentDays; offset += 1) {
     for (const meal of diary.listMeals(addDays(today, -offset))) {
       for (const { food } of meal.items) {
         if (food.id.provider === "open-food-facts") ids.add(food.id.sourceId);
