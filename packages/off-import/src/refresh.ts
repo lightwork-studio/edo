@@ -7,6 +7,7 @@ import {
   type CatalogManifest,
   clearPreparedCatalogSource,
   isCatalogManifest,
+  recordCatalogSourceLastModified,
 } from "@edo/catalog-import";
 import { openFoodFactsCatalog, publishOpenFoodFactsRelease } from "./publish.ts";
 import { runCatalogJob } from "./worker.ts";
@@ -172,7 +173,9 @@ function missingFile(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-async function readActiveRelease(providerRoot: string): Promise<ActiveRelease | null> {
+async function readActiveRelease(
+  providerRoot: string,
+): Promise<(ActiveRelease & { sha256: string }) | null> {
   try {
     const activePath = join(providerRoot, "active.json");
     const entry = await lstat(activePath);
@@ -195,7 +198,11 @@ async function readActiveRelease(providerRoot: string): Promise<ActiveRelease | 
     if (!(await lstat(immutableManifest)).isFile()) return null;
     if ((await readFile(immutableManifest, "utf8")) !== manifestText) return null;
 
-    return { manifest, activatedAt: (await active.stat()).mtime.toISOString() };
+    return {
+      manifest,
+      activatedAt: (await active.stat()).mtime.toISOString(),
+      sha256: manifestDigest,
+    };
   } catch (error) {
     if (error instanceof SyntaxError || missingFile(error)) return null;
     throw error;
@@ -269,31 +276,55 @@ export async function refreshOpenFoodFactsCatalog(
     await rm(join(providerRoot, ".refresh-source.jsonl.gz"), { force: true });
     await clearPreparedCatalogSource(root, provider);
     const upstream = await checkUpstream(fetchExport);
-    const checkedAt = new Date().toISOString();
-    const active = await readActiveRelease(providerRoot);
-    const activeSource = active?.manifest.source;
-    if (
-      upstream.lastModified &&
-      activeSource?.lastModified &&
-      Date.parse(upstream.lastModified) < Date.parse(activeSource.lastModified)
-    ) {
-      throw new Error("Open Food Facts export is older than the active release");
+    const checked = new Date();
+    const checkedAt = checked.toISOString();
+    const sourceTime = upstream.lastModified ? Date.parse(upstream.lastModified) : null;
+    if (sourceTime !== null && sourceTime > checked.getTime()) {
+      throw new Error("Open Food Facts export has a future source timestamp");
     }
+    const active = await readActiveRelease(providerRoot);
     const previous =
       active?.manifest.schemaVersion === schemaVersion &&
       (await verifyActiveArtifact(providerRoot, active.manifest))
         ? active
         : null;
+    const previousTimestamp = previous?.manifest.source.lastModified;
+    const previousTime = previousTimestamp ? Date.parse(previousTimestamp) : null;
+    const previousIsFuture = previousTime !== null && previousTime > checked.getTime();
+    if (
+      !previousIsFuture &&
+      previousTime !== null &&
+      sourceTime !== null &&
+      sourceTime < previousTime
+    ) {
+      throw new Error("Open Food Facts export is older than the active release");
+    }
     if (
       previous?.manifest.source.release === upstream.release &&
       previous.manifest.importerVersion === importerVersion
     ) {
-      return {
-        status: "unchanged",
-        checkedAt,
-        manifest: previous.manifest,
-        activatedAt: previous.activatedAt,
-      };
+      if (upstream.lastModified && (previousTime === null || previousIsFuture)) {
+        const manifest = await recordCatalogSourceLastModified(
+          root,
+          provider,
+          previous.sha256,
+          upstream.lastModified,
+        );
+        return {
+          status: "published",
+          checkedAt,
+          activatedAt: (await stat(join(providerRoot, "active.json"))).mtime.toISOString(),
+          manifest,
+        };
+      }
+      if (!previousIsFuture) {
+        return {
+          status: "unchanged",
+          checkedAt,
+          manifest: previous.manifest,
+          activatedAt: previous.activatedAt,
+        };
+      }
     }
 
     const manifest = await publishOpenFoodFactsRelease({

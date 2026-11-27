@@ -17,7 +17,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { openFoodFactsCatalog, publishOpenFoodFactsCatalog } from "../src/index.ts";
+import {
+  createBarcodeLookup,
+  openFoodFactsCatalog,
+  openOpenFoodFactsCatalog,
+  publishOpenFoodFactsCatalog,
+} from "../src/index.ts";
 import { checkOpenFoodFactsHealth, refreshOpenFoodFactsCatalog } from "../src/refresh.ts";
 
 const product = {
@@ -193,6 +198,42 @@ it("checks age from the source timestamp without reactivating or requesting the 
   expect((await stat(activePath)).mtime.toISOString()).toBe(result.activatedAt);
 });
 
+it("records a newly available source timestamp without downloading an unchanged export", async () => {
+  lastModified = "";
+  const first = await refreshOpenFoodFactsCatalog(directory, fetchExport);
+  expect(first.manifest.source.lastModified).toBeUndefined();
+  const active = await readFile(activePath);
+  const digest = createHash("sha256").update(active).digest("hex");
+  const previous = join(providerRoot, "releases", `${digest}.json`);
+  const artifacts = join(providerRoot, "artifacts");
+  const files = await readdir(artifacts);
+  const file = join(artifacts, `${first.manifest.artifact.sha256}.sqlite`);
+  const before = await stat(file, { bigint: true });
+
+  lastModified = modified;
+  requests.length = 0;
+  const next = await refreshOpenFoodFactsCatalog(directory, fetchExport);
+  expect(requests).toEqual([{ method: "HEAD", condition: undefined }]);
+  expect(next.status).toBe("published");
+  expect(next.manifest.artifact).toEqual(first.manifest.artifact);
+  expect(next.manifest.source).toEqual({
+    ...first.manifest.source,
+    lastModified: new Date(modified).toISOString(),
+  });
+  expect(await readFile(previous)).toEqual(active);
+  expect(await readdir(artifacts)).toEqual(files);
+  expect((await stat(file, { bigint: true })).ino).toBe(before.ino);
+
+  const now = new Date(Date.parse(modified) + 60 * 60 * 1000);
+  await expect(checkOpenFoodFactsHealth(directory, 36, now)).resolves.toMatchObject({
+    status: "healthy",
+  });
+  await expect(refreshOpenFoodFactsCatalog(directory, fetchExport)).resolves.toMatchObject({
+    status: "unchanged",
+    manifest: next.manifest,
+  });
+});
+
 it("reports missing, undated and corrupt releases without changing the filesystem", async () => {
   await expect(checkOpenFoodFactsHealth(directory, 36)).resolves.toMatchObject({
     status: "unverified",
@@ -294,6 +335,48 @@ it("rejects an older upstream source before downloading it", async () => {
   expect((await stat(activePath)).mtime.toISOString()).toBe(first.activatedAt);
 });
 
+it("rejects a future source timestamp without replacing the active release", async () => {
+  const first = await refreshOpenFoodFactsCatalog(directory, fetchExport);
+  const active = await readFile(activePath);
+  etag = '"future-version"';
+  lastModified = "Thu, 26 Nov 2099 05:41:49 GMT";
+  requests.length = 0;
+
+  await expect(refreshOpenFoodFactsCatalog(directory, fetchExport)).rejects.toThrow(
+    "Open Food Facts export has a future source timestamp",
+  );
+  expect(requests).toEqual([{ method: "HEAD", condition: undefined }]);
+  expect(await readFile(activePath)).toEqual(active);
+
+  lastModified = "Fri, 27 Nov 2026 05:41:49 GMT";
+  source = compressed({ ...product, product_name_de: "Corrected chips" });
+  const retry = await refreshOpenFoodFactsCatalog(directory, fetchExport);
+  expect(retry.status).toBe("published");
+  expect(retry.manifest.source.release).not.toBe(first.manifest.source.release);
+});
+
+it("replaces an existing future-dated timestamp without rebuilding identical source bytes", async () => {
+  const first = await refreshOpenFoodFactsCatalog(directory, fetchExport);
+  const future = `${JSON.stringify(
+    {
+      ...first.manifest,
+      source: { ...first.manifest.source, lastModified: "2099-11-26T05:41:49.000Z" },
+    },
+    null,
+    2,
+  )}\n`;
+  const digest = createHash("sha256").update(future).digest("hex");
+  await writeFile(join(providerRoot, "releases", `${digest}.json`), future);
+  await writeFile(activePath, future);
+  requests.length = 0;
+
+  await expect(refreshOpenFoodFactsCatalog(directory, fetchExport)).resolves.toMatchObject({
+    status: "published",
+    manifest: first.manifest,
+  });
+  expect(requests).toEqual([{ method: "HEAD", condition: undefined }]);
+});
+
 it("does not let an unverified active timestamp block recovery", async () => {
   const first = await refreshOpenFoodFactsCatalog(directory, fetchExport);
   const active = await readFile(activePath);
@@ -323,12 +406,39 @@ it("rebuilds the active pointer when it is a symlink to a valid manifest", async
   await rename(activePath, join(directory, "original-active.json"));
   await symlink(immutable, activePath, "file");
 
+  await expect(openOpenFoodFactsCatalog(directory)).rejects.toThrow(/regular file/);
   const retry = await refreshOpenFoodFactsCatalog(directory, fetchExport);
   expect(retry.status).toBe("published");
   expect(retry.manifest).toEqual(first.manifest);
   expect((await lstat(activePath)).isFile()).toBe(true);
   expect(await readFile(activePath)).toEqual(active);
   expect(await readFile(immutable)).toEqual(active);
+});
+
+it("retains the open catalog when the next verified artifact path is replaced with a symlink", async () => {
+  await refreshOpenFoodFactsCatalog(directory, fetchExport);
+  using lookup = createBarcodeLookup(directory, { liveLookup: null });
+  await expect(lookup.lookupBarcode(product.code)).resolves.toMatchObject({
+    status: "found",
+    products: [{ name: "Kartoffelchips" }],
+  });
+
+  source = compressed({ ...product, product_name_de: "Chips" });
+  etag = '"symlink-candidate"';
+  const { manifest } = await refreshOpenFoodFactsCatalog(directory, fetchExport);
+  const artifact = join(providerRoot, "artifacts", `${manifest.artifact.sha256}.sqlite`);
+  const elsewhere = join(directory, "candidate.sqlite");
+  await rename(artifact, elsewhere);
+  await symlink(elsewhere, artifact, "file");
+
+  await expect(checkOpenFoodFactsHealth(directory, 36)).resolves.toMatchObject({
+    status: "unverified",
+  });
+  await expect(openOpenFoodFactsCatalog(directory)).rejects.toThrow(/regular file/);
+  await expect(lookup.lookupBarcode(product.code)).resolves.toMatchObject({
+    status: "found",
+    products: [{ name: "Kartoffelchips" }],
+  });
 });
 
 it("stops the default transport before following an HTTPS downgrade", async () => {

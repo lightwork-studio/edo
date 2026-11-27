@@ -8,6 +8,7 @@ import {
   mkdtemp,
   open,
   readdir,
+  readFile,
   realpath,
   rename,
   rm,
@@ -134,6 +135,79 @@ async function copySource(inputPath: string, stage: string): Promise<string> {
   return snapshot;
 }
 
+async function activateManifest(root: string, stage: string, manifest: CatalogManifest) {
+  if (!isCatalogManifest(manifest)) throw new Error("Invalid catalog release manifest");
+
+  const artifacts = join(root, "artifacts");
+  const releases = join(root, "releases");
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  const releaseDigest = {
+    sha256: createHash("sha256").update(manifestText).digest("hex"),
+    bytes: Buffer.byteLength(manifestText),
+  };
+  const stagedRelease = join(stage, "release.json");
+  await writeFile(stagedRelease, manifestText, { flush: true });
+  await installImmutable(
+    stagedRelease,
+    join(releases, `${releaseDigest.sha256}.json`),
+    releaseDigest,
+  );
+
+  const activation = join(stage, "active.json");
+  await writeFile(activation, manifestText, { flush: true });
+  if (process.platform !== "win32") {
+    // Order immutable files and their directory entries before publishing the pointer.
+    await Promise.all([syncFile(artifacts), syncFile(releases)]);
+    await syncFile(root);
+  }
+  await rename(activation, join(root, "active.json"));
+  if (process.platform !== "win32") {
+    // The rename is the commit point. A flush error here leaves both releases recoverable.
+    await syncFile(root).catch(() => undefined);
+  }
+}
+
+/** Record a source timestamp on the expected active release without rebuilding its database. */
+export async function recordCatalogSourceLastModified(
+  root: string,
+  provider: CatalogManifest["provider"],
+  expectedActiveSha256: string,
+  lastModified: string,
+): Promise<CatalogManifest> {
+  if (!isCatalogProvider(provider)) throw new Error("Unknown catalog provider");
+  const providerRoot = join(root, provider);
+  using _lock = lockPublisher(providerRoot);
+  const active = join(providerRoot, "active.json");
+  if (!(await lstat(active)).isFile()) throw new Error("Catalog activation must be a regular file");
+  const text = await readFile(active, "utf8");
+  const digest = createHash("sha256").update(text).digest("hex");
+  if (digest !== expectedActiveSha256)
+    throw new Error("Active catalog changed before timestamp update");
+  const manifest: unknown = JSON.parse(text);
+  if (!isCatalogManifest(manifest) || manifest.provider !== provider) {
+    throw new Error("Invalid active catalog manifest");
+  }
+  const immutable = join(providerRoot, "releases", `${digest}.json`);
+  if (!(await lstat(immutable)).isFile() || (await readFile(immutable, "utf8")) !== text) {
+    throw new Error("Stored catalog manifest does not match its activation");
+  }
+  const path = join(providerRoot, "artifacts", `${manifest.artifact.sha256}.sqlite`);
+  const artifact = (await lstat(path)).isFile() ? await fileDigest(path) : null;
+  if (artifact?.sha256 !== manifest.artifact.sha256 || artifact.bytes !== manifest.artifact.bytes) {
+    throw new Error("Stored catalog artifact does not match its checksum");
+  }
+  verifyDatabase(path, manifest.schemaVersion);
+
+  const next = { ...manifest, source: { ...manifest.source, lastModified } };
+  const stage = await mkdtemp(join(providerRoot, ".stage-"));
+  try {
+    await activateManifest(providerRoot, stage, next);
+    return next;
+  } finally {
+    await rm(stage, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 /** Serialize writers per provider. Independent providers use separate activation pointers. */
 export async function publishCatalog(
   input: CatalogImportInput | PreparedCatalogImportInput,
@@ -212,31 +286,7 @@ export async function publishCatalog(
 
     await syncFile(stagedDatabase);
     await installImmutable(stagedDatabase, join(artifacts, `${artifact.sha256}.sqlite`), artifact);
-    const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
-    const releaseDigest = {
-      sha256: createHash("sha256").update(manifestText).digest("hex"),
-      bytes: Buffer.byteLength(manifestText),
-    };
-    const stagedRelease = join(stage, "release.json");
-    await writeFile(stagedRelease, manifestText, { flush: true });
-    await installImmutable(
-      stagedRelease,
-      join(releases, `${releaseDigest.sha256}.json`),
-      releaseDigest,
-    );
-
-    const activation = join(stage, "active.json");
-    await writeFile(activation, manifestText, { flush: true });
-    if (process.platform !== "win32") {
-      // Order immutable files and their directory entries before publishing the pointer.
-      await Promise.all([syncFile(artifacts), syncFile(releases)]);
-      await syncFile(root);
-    }
-    await rename(activation, join(root, "active.json"));
-    if (process.platform !== "win32") {
-      // The rename is the commit point. A flush error here leaves both releases recoverable.
-      await syncFile(root).catch(() => undefined);
-    }
+    await activateManifest(root, stage, manifest);
     return manifest;
   } finally {
     // Cleanup must preserve the import result and must not mask the underlying failure.

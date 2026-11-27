@@ -10,7 +10,9 @@ pnpm --silent --filter @edo/off-import run refresh /absolute/path/catalogs
 ```
 
 The command checks the official bulk export with a HEAD request. A matching upstream release and
-verified active catalog result in a single metadata check. For a new release, the worker streams
+verified active catalog result in a single metadata check. If a matching release gains a source
+timestamp, the worker publishes a new manifest for the same SQLite file without downloading the
+export. A future-dated upstream timestamp fails the refresh before download. For a new release, the worker streams
 the gzip into a private publisher staging file and confirms its length and upstream identity before
 the importer reads that same file. An upstream timestamp older than the source timestamp in the
 verified active manifest stops the job before the download. A complete snapshot can
