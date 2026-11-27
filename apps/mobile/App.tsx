@@ -1,4 +1,10 @@
-import { type DiaryItem, type Food, type Portion, sevenDayWeightAverage } from "@edo/core";
+import {
+  type DiaryItem,
+  type Food,
+  type FoodId,
+  type Portion,
+  sevenDayWeightAverage,
+} from "@edo/core";
 import type { DiaryMeal, DiaryProgressStore, DiaryStore } from "@edo/storage";
 import { randomUUID } from "expo-crypto";
 import { getLocales } from "expo-localization";
@@ -12,7 +18,7 @@ import {
   StatusBar,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { foodForPackagedProduct } from "./src/barcode";
+import { foodForPackagedProduct, retainedProducts } from "./src/barcode";
 import { BarcodeEntry, type BarcodeState } from "./src/barcode-entry";
 import { CustomFoodList } from "./src/custom-food-list";
 import { CustomFoodScreen } from "./src/custom-food-screen";
@@ -27,6 +33,8 @@ import {
   saveFood,
   totalNutrition,
 } from "./src/diary-view";
+import { FavoriteFoodList } from "./src/favorite-food-list";
+import { foodKey } from "./src/favorite-foods";
 import { FoodDetail } from "./src/food-detail";
 import { openLocalCatalog } from "./src/local-catalog";
 import { openLocalDiary } from "./src/local-diary";
@@ -151,6 +159,15 @@ function DiaryApp({
   const packagedCache = useDatabase(openLocalPackagedCache, false);
   const t = strings[language];
   const { diary } = connection;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Favorite writes invalidate the SQLite read.
+  const favorites = useMemo(() => {
+    if (route.kind !== "my-foods" && route.kind !== "add") return null;
+    try {
+      return diary.listFavorites();
+    } catch {
+      return null;
+    }
+  }, [diary, route.kind, refresh]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: A committed write or retry invalidates the SQLite read.
   const lastDay = useMemo(() => diaryDayLimit(diary, today), [diary, today, refresh]);
   const day = selectedDay && selectedDay <= lastDay ? selectedDay : today;
@@ -316,6 +333,17 @@ function DiaryApp({
 
   const date = showDay(route.day, locale, today);
   const cachedProducts = packagedCache.value === "error" ? null : packagedCache.value?.cache;
+  function setFavorite(id: FoodId, enabled: boolean) {
+    diary.setFavorite(id, enabled);
+    setRefresh((revision) => revision + 1);
+    if (id.provider === "open-food-facts" && cachedProducts) {
+      try {
+        cachedProducts.prune(retainedProducts(diary, today));
+      } catch {
+        // A favorite is saved even if its disposable cache failed to prune.
+      }
+    }
+  }
   if (route.kind === "barcode") {
     return (
       <BarcodeEntry
@@ -346,6 +374,30 @@ function DiaryApp({
         locale={locale}
         date={date}
         foods={foods}
+        favorites={
+          favorites === null ? (
+            <Notice
+              text={t.favoriteListError}
+              action={{ label: t.retry, onPress: () => setRefresh((revision) => revision + 1) }}
+            />
+          ) : favorites.length ? (
+            <FavoriteFoodList
+              t={t}
+              ids={favorites}
+              localFoods={foods}
+              catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
+              cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
+              language={language}
+              onPick={(food) => setRoute({ ...route, kind: "add", food, fromCustomFoods: true })}
+              onRemove={(id) => setFavorite(id, false)}
+              onRetry={(provider) => {
+                if (provider === "bls") catalog.retry();
+                if (provider === "open-food-facts") packagedCache.retry();
+                setRefresh((revision) => revision + 1);
+              }}
+            />
+          ) : undefined
+        }
         onBack={goBack}
         onCreate={() =>
           setRoute({ ...route, kind: "custom-food", current: null, sourceId: randomUUID() })
@@ -417,12 +469,21 @@ function DiaryApp({
     );
   }
 
+  const food = route.kind === "add" ? route.food : route.item.food;
+  const selected = favorites?.some((id) => foodKey(id) === foodKey(food.id)) ?? false;
   return (
     <FoodDetail
       t={t}
       locale={locale}
       date={date}
-      food={route.kind === "add" ? route.food : route.item.food}
+      food={food}
+      favorite={
+        route.kind === "add"
+          ? favorites
+            ? { selected, toggle: () => setFavorite(food.id, !selected) }
+            : { retry: () => setRefresh((revision) => revision + 1) }
+          : undefined
+      }
       originalItem={route.kind === "edit" ? route.item : undefined}
       onBack={goBack}
       onSave={(portion: Portion) => {

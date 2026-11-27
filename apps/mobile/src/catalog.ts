@@ -19,6 +19,25 @@ export interface CatalogDatabase {
   getAllAsync<T>(sql: string, parameter: string): Promise<T[]>;
 }
 
+function catalogFood(row: CatalogFood, language: Language): Food {
+  return {
+    id: { provider: "bls", sourceId: row.source_id },
+    name: language === "de" ? row.name : row.alternate_name || row.name,
+    release: row.release,
+    preparation: row.preparation,
+    nutrition: {
+      basis: row.nutrition_basis,
+      nutrients: {
+        kcal: row.kcal,
+        proteinG: row.protein_g,
+        availableCarbohydratesG: row.available_carbohydrates_g,
+        fatG: row.fat_g,
+        fiberG: row.fiber_g,
+      },
+    },
+  };
+}
+
 export async function searchBls(
   db: CatalogDatabase,
   query: string,
@@ -38,20 +57,21 @@ export async function searchBls(
      LIMIT 50`,
     match,
   );
-  return rows.map((row) => ({
-    id: { provider: "bls", sourceId: row.source_id },
-    name: language === "de" ? row.name : row.alternate_name || row.name,
-    release: row.release,
-    preparation: row.preparation,
-    nutrition: {
-      basis: row.nutrition_basis,
-      nutrients: {
-        kcal: row.kcal,
-        proteinG: row.protein_g,
-        availableCarbohydratesG: row.available_carbohydrates_g,
-        fatG: row.fat_g,
-        fiberG: row.fiber_g,
-      },
-    },
-  }));
+  return rows.map((row) => catalogFood(row, language));
+}
+
+export async function findBlsFoods(
+  db: CatalogDatabase,
+  ids: readonly string[],
+  language: Language,
+): Promise<Food[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.getAllAsync<CatalogFood>(
+    `SELECT food.*, catalog_metadata.release
+     FROM food JOIN catalog_metadata ON catalog_metadata.singleton = 1
+     WHERE food.source_id IN (SELECT value FROM json_each(?))
+     ORDER BY food.source_id`,
+    JSON.stringify(ids),
+  );
+  return rows.map((row) => catalogFood(row, language));
 }

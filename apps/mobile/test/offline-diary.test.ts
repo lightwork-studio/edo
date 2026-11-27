@@ -3,10 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath, URL } from "node:url";
 import { createDiaryItem, type Food } from "@edo/core";
 import { openDiary } from "@edo/storage";
 import { expect, test } from "vitest";
-import { type CatalogDatabase, searchBls } from "../src/catalog";
+import { type CatalogDatabase, findBlsFoods, searchBls } from "../src/catalog";
 import {
   diaryDayLimit,
   entryTime,
@@ -17,6 +18,7 @@ import {
   saveFood,
   totalNutrition,
 } from "../src/diary-view";
+import { foodKey, resolveFavoriteFoods } from "../src/favorite-foods";
 import { appLocale } from "../src/strings";
 
 function syntheticCatalog() {
@@ -101,6 +103,53 @@ test("searches both BLS name columns offline and localizes the displayed food na
   ]);
   await expect(searchBls(catalog, 'zzedounmatched OR "apple"*', "en")).resolves.toEqual([]);
   await expect(searchBls(catalog, '"*-!', "de")).resolves.toEqual([]);
+});
+
+test("restores a favorite by ID from the shipped BLS catalog in the selected language", async () => {
+  const path = fileURLToPath(new URL("../assets/bls.sqlite", import.meta.url));
+  using seed = new DatabaseSync(path, { readOnly: true });
+  const catalog = catalogConnection(seed);
+  const [item] = await searchBls(catalog, "Banane", "de");
+  if (!item) throw new Error("Expected a BLS banana in the bundled catalog");
+  const localId = { provider: "local" as const, sourceId: item.id.sourceId };
+  const local = { ...item, id: localId, name: "Meine Banane", release: null };
+  const german = await resolveFavoriteFoods({
+    ids: [item.id, localId],
+    localFoods: [local],
+    catalog,
+    cache: null,
+    language: "de",
+    accessedAt: 1,
+  });
+  expect(german.byId.get(foodKey(item.id))).toEqual(item);
+  expect(german.byId.get(foodKey(local.id))).toEqual(local);
+  const english = await findBlsFoods(
+    catalog,
+    [item.id.sourceId, "missing", item.id.sourceId],
+    "en",
+  );
+  expect(english).toHaveLength(1);
+  expect(english[0]).toMatchObject({ id: item.id, release: "4.0-2025" });
+});
+
+test("distinguishes lookup failures from a missing favorite in an available catalog", async () => {
+  const blsId = { provider: "bls", sourceId: "missing" } as const;
+  const packId = { provider: "open-food-facts", sourceId: "stale-handle" } as const;
+  using db = syntheticCatalog();
+  const resolved = await resolveFavoriteFoods({
+    ids: [blsId, packId],
+    localFoods: [],
+    catalog: catalogConnection(db),
+    cache: {
+      findByIds() {
+        throw new Error("A closed cache handle failed to read");
+      },
+    },
+    language: "en",
+    accessedAt: 1,
+  });
+  expect(resolved.byId.size).toBe(0);
+  expect(resolved.failedProviders).toEqual(new Set(["open-food-facts"]));
 });
 
 test("keeps a saved day reachable when the device calendar moves back a week boundary", async () => {

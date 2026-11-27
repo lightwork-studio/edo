@@ -16,6 +16,7 @@ import {
   displayAmount,
   displayNumber,
   macros,
+  Notice,
   nutrientValue,
   PrimaryButton,
   Ring,
@@ -47,6 +48,7 @@ export function FoodDetail({
   date,
   food,
   originalItem,
+  favorite,
   onBack,
   onSave,
 }: {
@@ -55,6 +57,7 @@ export function FoodDetail({
   date: string;
   food: Food;
   originalItem?: DiaryItem;
+  favorite?: { selected: boolean; toggle: () => void } | { retry: () => void };
   onBack: () => void;
   onSave: (portion: Portion) => void;
 }) {
@@ -71,6 +74,8 @@ export function FoodDetail({
   const initialText = displayAmount(initial, locale);
   const [value, setValue] = useState(initialText);
   const [error, setError] = useState<"invalid" | "save" | null>(null);
+  const [favoriteError, setFavoriteError] = useState(false);
+  const star = favorite && "toggle" in favorite ? favorite : undefined;
   const submitted = useRef(false);
   const amount = unit === initialUnit && value === initialText ? initial : readAmount(value);
   const preview =
@@ -123,9 +128,44 @@ export function FoodDetail({
       />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
         <View style={local.food}>
-          <Text accessibilityRole="header" style={styles.heading}>
-            {food.name}
-          </Text>
+          <View style={styles.row}>
+            <Text accessibilityRole="header" style={[styles.heading, styles.stretch]}>
+              {food.name}
+            </Text>
+            {star && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  star.selected ? t.removeFavorite(food.name) : t.addFavorite(food.name)
+                }
+                accessibilityState={{ selected: star.selected }}
+                onPress={() => {
+                  try {
+                    star.toggle();
+                    setFavoriteError(false);
+                  } catch {
+                    setFavoriteError(true);
+                  }
+                }}
+                style={styles.iconButton}
+              >
+                <Text style={[styles.icon, star.selected && local.star]}>
+                  {star.selected ? "★" : "☆"}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+          {favorite && "retry" in favorite && (
+            <Notice
+              text={t.favoriteListError}
+              action={{ label: t.retry, onPress: favorite.retry }}
+            />
+          )}
+          {favoriteError && (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {t.favoriteError}
+            </Text>
+          )}
           {source && (
             <Text style={styles.meta}>
               {source}
@@ -260,6 +300,7 @@ export function FoodDetail({
 
 const local = StyleSheet.create({
   food: { gap: 6, paddingHorizontal: 4 },
+  star: { color: colors.accent },
   amount: {
     backgroundColor: colors.field,
     borderColor: colors.accent,
