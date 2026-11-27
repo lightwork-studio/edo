@@ -1,3 +1,4 @@
+import type { Portion } from "@edo/core";
 import type { SavedMealTemplate } from "@edo/storage";
 import { useRef, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
@@ -5,6 +6,11 @@ import { showTime } from "./diary-view";
 import { type MealTemplateOption, selectedMealItems } from "./meal-template-form";
 import type { Strings } from "./strings";
 import { colors, DetailHeader, displayAmount, Notice, PrimaryButton, styles } from "./ui";
+
+function portionText(portion: Portion, locale: string, t: Strings): string {
+  const unit = portion.unit === "portion" ? t.portion : portion.unit;
+  return `${displayAmount(portion.amount, locale)} ${unit}`;
+}
 
 export function SavedMealEditor({
   t,
@@ -84,9 +90,7 @@ export function SavedMealEditor({
               <View style={styles.stretch}>
                 <Text style={styles.title}>{item.food.name}</Text>
                 <Text style={styles.meta}>
-                  {displayAmount(item.portion.amount, locale)}{" "}
-                  {item.portion.unit === "portion" ? t.portion : item.portion.unit} ·{" "}
-                  {showTime(option, locale)}
+                  {portionText(item.portion, locale, t)} · {showTime(option, locale)}
                 </Text>
               </View>
               {checked && <Text style={styles.actionText}>✓</Text>}
@@ -136,27 +140,35 @@ export function SavedMealList({
       {templates === null && (
         <Notice text={t.savedMealReadError} action={{ label: t.retry, onPress: onRetry }} />
       )}
-      {ordered?.map((template) => (
-        <Pressable
-          key={template.id}
-          accessibilityRole="button"
-          accessibilityLabel={t.logSavedMeal(template.name)}
-          onPress={() => {
-            if (submitting.current) return;
-            submitting.current = true;
-            try {
-              onLog(template);
-            } catch {
-              submitting.current = false;
-              setFailed(true);
-            }
-          }}
-          style={({ pressed }) => [styles.card, styles.row, pressed && styles.pressed]}
-        >
-          <Text style={[styles.title, styles.stretch]}>{template.name}</Text>
-          <Text style={styles.actionText}>{t.logMealAction}</Text>
-        </Pressable>
-      ))}
+      {ordered?.map((template) => {
+        const summary = template.items
+          .map(({ food, portion }) => `${food.name} · ${portionText(portion, locale, t)}`)
+          .join(", ");
+        return (
+          <Pressable
+            key={template.id}
+            accessibilityRole="button"
+            accessibilityLabel={`${t.logSavedMeal(template.name)}, ${summary}`}
+            onPress={() => {
+              if (submitting.current) return;
+              submitting.current = true;
+              try {
+                onLog(template);
+              } catch {
+                submitting.current = false;
+                setFailed(true);
+              }
+            }}
+            style={({ pressed }) => [styles.card, styles.row, pressed && styles.pressed]}
+          >
+            <View style={styles.stretch}>
+              <Text style={styles.title}>{template.name}</Text>
+              <Text style={styles.meta}>{summary}</Text>
+            </View>
+            <Text style={styles.actionText}>{t.logMealAction}</Text>
+          </Pressable>
+        );
+      })}
       {failed && (
         <Text accessibilityRole="alert" style={styles.error}>
           {t.saveError}

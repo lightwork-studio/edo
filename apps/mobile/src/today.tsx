@@ -175,6 +175,10 @@ export function TodayScreen({
                   {meal.items.length > 0 && (
                     <Pressable
                       accessibilityRole="button"
+                      accessibilityLabel={t.saveMealAt(
+                        showTime(meal, locale),
+                        meal.items[0]?.food.name ?? "",
+                      )}
                       onPress={() => onSaveMeal(meal)}
                       style={styles.action}
                     >

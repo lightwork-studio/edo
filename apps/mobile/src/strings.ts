@@ -49,6 +49,8 @@ export const strings = {
     recipes: "Recipes",
     savedMeals: "Saved meals",
     saveMealTemplate: "Save meal",
+    saveMealAt: (time: string, food: string) =>
+      food ? `Save meal at ${time}, ${food}` : `Save meal at ${time}`,
     savedMealName: "Meal name",
     savedMealInvalid: "Enter a name and select at least one food.",
     savedMealWriteError: "Couldn’t save this meal template. Try again.",
@@ -176,6 +178,8 @@ export const strings = {
     recipes: "Rezepte",
     savedMeals: "Gespeicherte Mahlzeiten",
     saveMealTemplate: "Mahlzeit speichern",
+    saveMealAt: (time: string, food: string) =>
+      food ? `Mahlzeit um ${time} speichern, ${food}` : `Mahlzeit um ${time} speichern`,
     savedMealName: "Name der Mahlzeit",
     savedMealInvalid: "Gib einen Namen ein und wähle mindestens ein Lebensmittel aus.",
     savedMealWriteError: "Diese Mahlzeit konnte nicht gespeichert werden. Versuche es erneut.",
