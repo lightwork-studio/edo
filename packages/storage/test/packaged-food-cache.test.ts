@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -172,6 +172,19 @@ it("requires real cache triggers instead of same-named tables", () => {
   expect(() => openPackagedFoodCache(connection(db))).toThrow(/schema is incomplete/);
 });
 
+it("rejects extra tables and triggers before an old or new handle can write", () => {
+  using db = new DatabaseSync(":memory:");
+  const cache = openPackagedFoodCache(connection(db));
+  db.exec(`CREATE TABLE main.other_data(id TEXT);
+    INSERT INTO main.other_data VALUES ('preserve');
+    CREATE TRIGGER main.unexpected AFTER INSERT ON packaged_food BEGIN
+      DELETE FROM other_data;
+    END;`);
+  expect(() => cache.save([food("new", "12345670", "Oat")], 1, [])).toThrow(/schema changed/);
+  expect(() => openPackagedFoodCache(connection(db))).toThrow(/schema is incomplete/);
+  expect(db.prepare("SELECT id FROM main.other_data").get()).toEqual({ id: "preserve" });
+});
+
 it("rejects text SQLite cannot round-trip and preserves well-formed Unicode", () => {
   using db = new DatabaseSync(":memory:");
   const cache = openPackagedFoodCache(connection(db));
@@ -254,6 +267,88 @@ it("does not let an invalid access timestamp push out a healthy cached product",
   expect(cache.search("oat", 4)).toEqual([]);
 });
 
+it.each(["invalid UTF-8 key", "raw NUL in payload"])(
+  "evicts a damaged row with %s before a healthy row",
+  (problem) => {
+    using db = new DatabaseSync(":memory:");
+    const original = connection(db);
+    // Model the Expo iOS adapter's C-string conversion while the SQL still sees the complete bytes.
+    const truncate = (row: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(row).map(([key, value]) => [
+          key,
+          typeof value === "string" ? value.split("\0")[0] : value,
+        ]),
+      );
+    const adapter: SqliteConnection = {
+      ...original,
+      all: (sql, ...params) => original.all(sql, ...params).map(truncate),
+      get: (sql, ...params) => {
+        const row = original.get(sql, ...params);
+        return row && truncate(row);
+      },
+    };
+    const broken = food("broken", "12345670", "Oat");
+    const healthy = food("normal", "12345671", "Rye");
+    const cache = openPackagedFoodCache(adapter, Buffer.byteLength(JSON.stringify(broken)) + 2);
+    cache.save([broken], 100, []);
+    db.exec(
+      problem === "invalid UTF-8 key"
+        ? "UPDATE main.packaged_food SET source_id = CAST(X'FF' AS TEXT)"
+        : "UPDATE main.packaged_food SET payload = payload || CAST(X'0078' AS TEXT)",
+    );
+    cache.save([healthy], 20, []);
+    expect(cache.findByIds([healthy.id.sourceId], 21)).toEqual([
+      { product: healthy, checkedAt: 20 },
+    ]);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM main.packaged_food").get()).toEqual({
+      count: 1,
+    });
+  },
+);
+
+it("rechecks payloads after the cache file changes while it is closed", () => {
+  const directory = mkdtempSync(join(tmpdir(), "edo-cache-bit-flip-"));
+  const path = join(directory, "products.sqlite");
+  const older = food("older", "12345670", "Oat");
+  const corrupt = food("badly", "12345671", "Rye");
+  const incoming = food("newer", "12345672", "Tea");
+  const budget =
+    Buffer.byteLength(JSON.stringify(older)) + Buffer.byteLength(JSON.stringify(corrupt));
+  try {
+    let serialized: unknown;
+    {
+      using db = new DatabaseSync(path);
+      const cache = openPackagedFoodCache(connection(db), budget);
+      cache.save([older], 10, []);
+      cache.save([corrupt], 30, []);
+      serialized = db
+        .prepare("SELECT payload FROM main.packaged_food WHERE source_id = ?")
+        .get(corrupt.id.sourceId)?.payload;
+    }
+    if (typeof serialized !== "string") throw new Error("Expected a stored cache payload");
+    const file = readFileSync(path);
+    const damaged = Buffer.from(serialized);
+    const location = file.indexOf(damaged);
+    const field = damaged.indexOf(Buffer.from('"nutrition":null'));
+    expect(location).toBeGreaterThanOrEqual(0);
+    expect(field).toBeGreaterThanOrEqual(0);
+    file[location + field + '"nutrition":'.length] = "o".charCodeAt(0);
+    writeFileSync(path, file);
+
+    using reopened = new DatabaseSync(path);
+    expect(reopened.prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
+    const cache = openPackagedFoodCache(connection(reopened), budget);
+    cache.save([incoming], 20, []);
+    expect(cache.findByIds([older.id.sourceId, incoming.id.sourceId], 21)).toEqual([
+      { product: older, checkedAt: 10 },
+      { product: incoming, checkedAt: 20 },
+    ]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 it("upgrades a version-one cache and checks its older rows before eviction", () => {
   using db = new DatabaseSync(":memory:");
   const cached = food("cached", "12345670", "Oat");
@@ -262,6 +357,7 @@ it("upgrades a version-one cache and checks its older rows before eviction", () 
   openPackagedFoodCache(connection(db)).save([cached, broken], 1, []);
   db.exec(`DROP TRIGGER main.packaged_food_validate;
     DROP INDEX main.packaged_food_pending;
+    DROP INDEX main.packaged_food_lru;
     ALTER TABLE main.packaged_food DROP COLUMN validation_pending;
     PRAGMA main.user_version = 1;
     UPDATE main.packaged_food SET accessed_at = 9223372036854775807 WHERE source_id = 'broken'`);

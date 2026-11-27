@@ -7,8 +7,16 @@ const defaultByteBudget = 4 * 1024 * 1024;
 const loneSurrogate = /[\uD800-\uDFFF]/u;
 const productColumns = `packaged_food.source_id, packaged_food.barcode, packaged_food.lookup_code,
   packaged_food.name, packaged_food.alternate_name, packaged_food.payload,
+  CAST(packaged_food.rowid AS TEXT) AS row_id,
   CAST(packaged_food.checked_at AS TEXT) AS checked_at,
-  CAST(packaged_food.accessed_at AS TEXT) AS accessed_at`;
+  CAST(packaged_food.accessed_at AS TEXT) AS accessed_at,
+  (instr(packaged_food.payload, char(0)) = 0
+    AND instr(packaged_food.source_id, char(0)) = 0
+    AND instr(packaged_food.barcode, char(0)) = 0
+    AND instr(packaged_food.lookup_code, char(0)) = 0
+    AND instr(packaged_food.name, char(0)) = 0
+    AND coalesce(instr(packaged_food.alternate_name, char(0)), 0) = 0
+  ) AS text_intact`;
 
 export interface CachedPackagedFood {
   readonly product: PackagedFood;
@@ -62,6 +70,7 @@ const validationMigration = `
   ALTER TABLE main.packaged_food ADD COLUMN validation_pending INTEGER NOT NULL DEFAULT 1
     CHECK (validation_pending IN (0, 1));
   CREATE INDEX main.packaged_food_pending ON packaged_food (validation_pending);
+  CREATE INDEX main.packaged_food_lru ON packaged_food (accessed_at, source_id DESC);
   CREATE TRIGGER main.packaged_food_validate AFTER UPDATE OF
     source_id, barcode, lookup_code, name, alternate_name, payload, checked_at, accessed_at
     ON packaged_food WHEN new.validation_pending = 0 BEGIN
@@ -115,7 +124,20 @@ function initialize(db: SqliteConnection): void {
       const fts = db.get(
         "SELECT sql FROM main.sqlite_schema WHERE name = 'packaged_food_search' AND type = 'table'",
       )?.sql;
-      if (objects?.count !== 6 || typeof fts !== "string" || !/\bUSING\s+fts5\s*\(/i.test(fts)) {
+      const shadows = db.get(`SELECT count(*) AS count FROM main.sqlite_schema
+        WHERE type = 'table' AND name IN ('packaged_food_search_data', 'packaged_food_search_idx',
+          'packaged_food_search_docsize', 'packaged_food_search_config')`);
+      const total = db.get(
+        "SELECT count(*) AS count FROM main.sqlite_schema WHERE name NOT GLOB 'sqlite_*'",
+      );
+      const expected = version === 1 ? 10 : 13;
+      if (
+        objects?.count !== 6 ||
+        shadows?.count !== 4 ||
+        total?.count !== expected ||
+        typeof fts !== "string" ||
+        !/\bUSING\s+fts5\s*\(/i.test(fts)
+      ) {
         throw new Error("Packaged-food cache schema is incomplete");
       }
     } else {
@@ -127,12 +149,14 @@ function initialize(db: SqliteConnection): void {
     if (version !== schemaVersion) db.exec(validationMigration);
     const validationObjects = db.get(`SELECT COUNT(*) AS count FROM main.sqlite_schema
       WHERE tbl_name = 'packaged_food' AND (
-        (type = 'index' AND name = 'packaged_food_pending') OR
+        (type = 'index' AND name IN ('packaged_food_pending', 'packaged_food_lru')) OR
         (type = 'trigger' AND name = 'packaged_food_validate')
       )`);
-    if (validationObjects?.count !== 2) {
+    if (validationObjects?.count !== 3) {
       throw new Error("Packaged-food cache schema is incomplete");
     }
+    // A database can change outside SQL while it is closed, so verify its existing rows again.
+    db.run("UPDATE main.packaged_food SET validation_pending = 1 WHERE validation_pending = 0");
   });
   // Only an application-owned cache may be vacuumed. Changing this mode requires a rewrite.
   if (db.get("PRAGMA main.auto_vacuum")?.auto_vacuum !== 1) {
@@ -145,6 +169,22 @@ function markVerified(db: SqliteConnection, sourceId: string): void {
     "UPDATE main.packaged_food SET validation_pending = 0 WHERE source_id = ? AND validation_pending = 1",
     sourceId,
   );
+}
+
+function cacheRowId(row: SqlRow): string {
+  if (typeof row.row_id !== "string") throw new Error("Cache row is missing its SQLite identity");
+  return row.row_id;
+}
+
+function removeRow(db: SqliteConnection, row: SqlRow): void {
+  db.run("DELETE FROM main.packaged_food WHERE rowid = CAST(? AS INTEGER)", cacheRowId(row));
+}
+
+function payloadBytes(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error("Could not measure the catalog cache");
+  }
+  return value;
 }
 
 function writeProduct(
@@ -174,7 +214,7 @@ function writeProduct(
   );
   if (previous && !readCachedRow(previous)) {
     // A corrupt row cannot supply the timestamp that protects a valid recent result.
-    db.run("DELETE FROM main.packaged_food WHERE source_id = ?", stored.id.sourceId);
+    removeRow(db, previous);
   }
   db.run(
     saveRow,
@@ -196,35 +236,48 @@ function evict(db: SqliteConnection, byteBudget: number, retainedIds: readonly s
     db.run("INSERT OR IGNORE INTO temp.retained_packaged_food VALUES (?)", id);
   }
   const ordinary = "source_id NOT IN (SELECT source_id FROM temp.retained_packaged_food)";
-  const used = db.get(`SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) AS bytes
-    FROM main.packaged_food WHERE ${ordinary}`)?.bytes;
-  if (typeof used !== "number") throw new Error("Could not measure the catalog cache");
+  const totals = db.get(`SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) AS bytes,
+    COALESCE(MAX(length(CAST(payload AS BLOB))), 0) AS largest
+    FROM main.packaged_food WHERE ${ordinary}`);
+  let used = payloadBytes(totals?.bytes);
+  const largest = payloadBytes(totals?.largest);
   if (used > byteBudget) {
     // Validate changed and legacy rows before eviction. This avoids decoding the whole cache on every save.
-    const rows = db.all(`SELECT ${productColumns} FROM main.packaged_food
+    const rows =
+      db.all(`SELECT ${productColumns}, length(CAST(payload AS BLOB)) AS payload_bytes FROM main.packaged_food
       WHERE validation_pending = 1 AND ${ordinary}`);
     for (const row of rows) {
-      if (typeof row.source_id !== "string") continue;
-      if (readCachedRow(row)) markVerified(db, row.source_id);
+      const validated = readCachedRow(row);
+      if (validated) markVerified(db, validated.product.id.sourceId);
       else {
-        db.run("DELETE FROM main.packaged_food WHERE source_id = ?", row.source_id);
+        removeRow(db, row);
+        used -= payloadBytes(row.payload_bytes);
       }
     }
-    db.run(
-      `DELETE FROM main.packaged_food WHERE ${ordinary} AND length(CAST(payload AS BLOB)) > ?`,
-      byteBudget,
-    );
-    db.run(
-      `DELETE FROM main.packaged_food WHERE source_id IN (
-        SELECT source_id FROM (
-          SELECT source_id, SUM(length(CAST(payload AS BLOB))) OVER (
-            ORDER BY accessed_at DESC, source_id
-          ) AS running_bytes
-          FROM main.packaged_food WHERE ${ordinary}
-        ) WHERE running_bytes > ?
-      )`,
-      byteBudget,
-    );
+    if (largest > byteBudget) {
+      const oversized = db.all(
+        `SELECT CAST(rowid AS TEXT) AS row_id, length(CAST(payload AS BLOB)) AS payload_bytes
+        FROM main.packaged_food WHERE ${ordinary} AND length(CAST(payload AS BLOB)) > ?`,
+        byteBudget,
+      );
+      for (const row of oversized) {
+        removeRow(db, row);
+        used -= payloadBytes(row.payload_bytes);
+      }
+    }
+    while (used > byteBudget) {
+      const oldest =
+        db.all(`SELECT CAST(rowid AS TEXT) AS row_id, length(CAST(payload AS BLOB)) AS payload_bytes
+        FROM main.packaged_food INDEXED BY packaged_food_lru WHERE ${ordinary}
+        ORDER BY accessed_at, source_id DESC LIMIT 32`);
+      if (oldest.length === 0)
+        throw new Error("The catalog cache budget does not match its contents");
+      for (const row of oldest) {
+        removeRow(db, row);
+        used -= payloadBytes(row.payload_bytes);
+        if (used <= byteBudget) break;
+      }
+    }
   }
   db.exec("DROP TABLE temp.retained_packaged_food");
 }
@@ -240,6 +293,7 @@ function readCachedRow(row: SqlRow): CachedPackagedFood | null {
   const checkedAt = decodeTimestamp(row.checked_at);
   const accessedAt = decodeTimestamp(row.accessed_at);
   if (
+    row.text_intact !== 1 ||
     typeof payload !== "string" ||
     checkedAt === null ||
     accessedAt === null ||
@@ -275,7 +329,13 @@ function touch(
   const results: CachedPackagedFood[] = [];
   for (const row of rows) {
     const data = readCachedRow(row);
-    if (!data) continue;
+    if (!data) {
+      db.run(
+        "UPDATE main.packaged_food SET validation_pending = 1 WHERE rowid = CAST(? AS INTEGER) AND validation_pending = 0",
+        cacheRowId(row),
+      );
+      continue;
+    }
     db.run(
       "UPDATE main.packaged_food SET accessed_at = MAX(accessed_at, ?) WHERE source_id = ?",
       accessedAt,
@@ -297,11 +357,23 @@ export function openPackagedFoodCache(
     throw new RangeError("The packaged-food cache needs a byte budget");
   }
   initialize(db);
+  const schemaCookie = db.get("PRAGMA main.schema_version")?.schema_version;
+  const inCache = <T>(work: () => T): T =>
+    transaction(db, () => {
+      if (
+        db.get("PRAGMA main.schema_version")?.schema_version !== schemaCookie ||
+        db.get("PRAGMA main.application_id")?.application_id !== applicationId ||
+        db.get("PRAGMA main.user_version")?.user_version !== schemaVersion
+      ) {
+        throw new Error("Packaged-food cache schema changed after opening");
+      }
+      return work();
+    });
   return {
     save(products, checkedAt, retainedIds) {
       timestamp(checkedAt);
       const retained = new Set(retainedIds);
-      transaction(db, () => {
+      inCache(() => {
         for (const product of products) {
           writeProduct(db, product, checkedAt, byteBudget, retained.has(product.id.sourceId));
         }
@@ -309,14 +381,14 @@ export function openPackagedFoodCache(
       });
     },
     prune(retainedIds) {
-      transaction(db, () => evict(db, byteBudget, retainedIds));
+      inCache(() => evict(db, byteBudget, retainedIds));
     },
     lookupBarcode(barcode, accessedAt) {
       const text = barcode.trim();
       const key = normalizeOpenFoodFactsBarcode(text);
       if (!key) return [];
       timestamp(accessedAt);
-      return transaction(db, () =>
+      return inCache(() =>
         touch(
           db,
           db.all(
@@ -331,7 +403,7 @@ export function openPackagedFoodCache(
     },
     findByIds(sourceIds, accessedAt) {
       timestamp(accessedAt);
-      return transaction(db, () => {
+      return inCache(() => {
         const rows: SqlRow[] = [];
         for (const id of new Set(sourceIds)) {
           const row = db.get(
@@ -352,7 +424,7 @@ export function openPackagedFoodCache(
       if (tokens.length === 0) return [];
       const expression = tokens.map((token) => `"${token}"*`).join(" ");
       timestamp(accessedAt);
-      return transaction(db, () => {
+      return inCache(() => {
         const results: CachedPackagedFood[] = [];
         const pageSize = 50;
         for (let offset = 0; results.length < pageSize; offset += pageSize) {
