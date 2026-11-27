@@ -109,6 +109,7 @@ export function ProgressScreen({
   onBack,
   onWeight,
   onTargets,
+  onArchive,
 }: {
   diary: DiaryStore & DiaryProgressStore;
   today: string;
@@ -120,6 +121,7 @@ export function ProgressScreen({
   onBack: () => void;
   onWeight: () => void;
   onTargets: () => void;
+  onArchive: () => void;
 }) {
   const [, retry] = useState(0);
   const summary = loadProgress(diary, today, range);
@@ -290,6 +292,11 @@ export function ProgressScreen({
           action={{ label: t.retry, onPress: () => retry((value) => value + 1) }}
         />
       )}
+      <View style={styles.footer}>
+        <Pressable accessibilityRole="button" style={styles.action} onPress={onArchive}>
+          <Text style={styles.actionText}>{t.diaryFiles}</Text>
+        </Pressable>
+      </View>
     </>
   );
 }

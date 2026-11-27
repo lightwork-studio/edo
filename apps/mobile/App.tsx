@@ -26,6 +26,8 @@ import {
   StatusBar,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { pruneArchiveExports } from "./src/archive-files";
+import { ArchiveScreen } from "./src/archive-screen";
 import { foodForPackagedProduct, retainedProducts } from "./src/barcode";
 import { BarcodeEntry, type BarcodeState } from "./src/barcode-entry";
 import { CustomFoodList } from "./src/custom-food-list";
@@ -70,6 +72,7 @@ type Route =
   | { kind: "weigh-in" }
   | { kind: "targets" }
   | { kind: "save-meal-template"; day: string; templateId: string; options: MealTemplateOption[] }
+  | { kind: "archive" }
   | ({ kind: "search" } & SearchContext)
   | ({ kind: "barcode"; state: BarcodeState } & SearchContext)
   | ({ kind: "my-foods" } & SearchContext)
@@ -86,6 +89,7 @@ function useDeviceContext(): DeviceContext {
     function refresh() {
       clearTimeout(timer);
       const now = new Date();
+      pruneArchiveExports(now.getTime());
       setToday(localDay(now));
       const delay = nextMidnight(now) - now.getTime();
       timer = setTimeout(refresh, delay);
@@ -224,7 +228,7 @@ function DiaryApp({
         utcOffsetMinutes,
         query,
       });
-    } else if (route.kind === "weigh-in" || route.kind === "targets") {
+    } else if (route.kind === "weigh-in" || route.kind === "targets" || route.kind === "archive") {
       setRoute({ kind: "progress" });
     } else {
       setRoute({ kind: "diary" });
@@ -307,12 +311,16 @@ function DiaryApp({
         onRange={setProgressRange}
         onBack={goBack}
         onTargets={() => setRoute({ kind: "targets" })}
+        onArchive={() => setRoute({ kind: "archive" })}
         onWeight={() => {
           setSavedWeightDay(null);
           setRoute({ kind: "weigh-in" });
         }}
       />
     );
+  }
+  if (route.kind === "archive") {
+    return <ArchiveScreen t={t} archive={diary} onBack={goBack} />;
   }
   if (route.kind === "weigh-in") {
     return (
