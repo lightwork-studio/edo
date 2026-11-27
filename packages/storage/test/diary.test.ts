@@ -215,6 +215,22 @@ test.each([1, currentVersion])(
   },
 );
 
+test("does not claim a database with lookalike version-one table names", async () => {
+  const source = createDatabase();
+  source.db.exec(`
+    CREATE TABLE diary_meals (id TEXT PRIMARY KEY, local_day TEXT, occurred_at INTEGER);
+    CREATE TABLE diary_items (id TEXT PRIMARY KEY, meal_id TEXT, position INTEGER, snapshot TEXT);
+    INSERT INTO diary_meals VALUES ('other-app', '2026-10-31', 0);
+    PRAGMA user_version = 1;
+  `);
+  await expect(source.start()).rejects.toThrow(/does not belong to the Edo diary/);
+  const { connection } = source.options;
+  expect(connection.get("PRAGMA user_version")?.user_version).toBe(1);
+  expect(connection.get("PRAGMA application_id")?.application_id).toBe(0);
+  expect(connection.get("SELECT id FROM diary_meals")?.id).toBe("other-app");
+  expect(source.snapshots).toEqual([]);
+});
+
 test("rolls back all writes in an incomplete meal replacement", async () => {
   const source = createDatabase();
   const diary = await source.start();

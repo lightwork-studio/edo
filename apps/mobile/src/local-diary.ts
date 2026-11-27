@@ -1,5 +1,6 @@
 import { type DiarySqliteConnection, type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { File } from "expo-file-system";
+import { moveAsync } from "expo-file-system/legacy";
 import {
   backupDatabaseAsync,
   deleteDatabaseAsync,
@@ -8,6 +9,7 @@ import {
 } from "expo-sqlite";
 
 const diaryName = "edo-diary.db";
+let pendingOpen = Promise.resolve();
 
 function connectionFor(db: SQLiteDatabase): DiarySqliteConnection {
   return {
@@ -46,7 +48,8 @@ const backupBeforeMigration: OpenDiaryOptions["backupBeforeMigration"] = async (
     const backupName = `edo-diary-v${version}-${identity.id}.db`;
     const stagedName = `.${backupName}.partial`;
     const staged = new File(directory, stagedName);
-    if (staged.exists || new File(directory, backupName).exists) {
+    const published = new File(directory, backupName);
+    if (staged.exists || published.exists) {
       throw new Error("Diary backup destination is already in use");
     }
     try {
@@ -61,7 +64,8 @@ const backupBeforeMigration: OpenDiaryOptions["backupBeforeMigration"] = async (
       } finally {
         await destDatabase.closeAsync();
       }
-      staged.rename(backupName);
+      // For local files the native legacy move renames in place, including on Android 7.
+      await moveAsync({ from: staged.uri, to: published.uri });
     } catch (error) {
       await deleteDatabaseAsync(stagedName).catch(() => undefined);
       throw error;
@@ -71,8 +75,7 @@ const backupBeforeMigration: OpenDiaryOptions["backupBeforeMigration"] = async (
   }
 };
 
-/** The diary and its migration snapshots are independent of the public catalog databases. */
-export async function openLocalDiary() {
+async function openLocalDiaryConnection() {
   const db = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
     const diary = await openDiary({ connection: connectionFor(db), backupBeforeMigration });
@@ -81,4 +84,14 @@ export async function openLocalDiary() {
     await db.closeAsync();
     throw error;
   }
+}
+
+/** Serialize opens while a migration waits for its backup and return an owned handle to each caller. */
+export function openLocalDiary() {
+  const opened = pendingOpen.then(openLocalDiaryConnection);
+  pendingOpen = opened.then(
+    () => undefined,
+    () => undefined,
+  );
+  return opened;
 }

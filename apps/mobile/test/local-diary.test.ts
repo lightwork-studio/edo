@@ -5,12 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, test, vi } from "vitest";
 import { openLocalDiary } from "../src/local-diary";
 
-const fixture = vi.hoisted(() => ({ directory: "", incomplete: false }));
+const fixture = vi.hoisted(() => ({ directory: "", incomplete: false, blockMove: false }));
 
 vi.mock("expo-file-system", async () => {
-  const { existsSync, readdirSync, renameSync } = await import("node:fs");
+  const { existsSync, readdirSync } = await import("node:fs");
   const { basename, dirname, join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
+  const { fileURLToPath, pathToFileURL } = await import("node:url");
 
   class File {
     private readonly path: string;
@@ -32,12 +32,22 @@ vi.mock("expo-file-system", async () => {
       return existsSync(this.path);
     }
 
-    rename(name: string) {
-      renameSync(this.path, join(dirname(this.path), name));
+    get uri() {
+      return pathToFileURL(this.path).href;
     }
   }
 
   return { File };
+});
+
+vi.mock("expo-file-system/legacy", async () => {
+  const { renameSync } = await import("node:fs");
+  return {
+    moveAsync: async ({ from, to }: { from: string; to: string }) => {
+      if (fixture.blockMove) throw new Error("Could not publish backup");
+      renameSync(new URL(from), new URL(to));
+    },
+  };
 });
 
 vi.mock("expo-sqlite", async () => {
@@ -94,7 +104,7 @@ vi.mock("expo-sqlite", async () => {
   };
 });
 
-test("publishes only a verified mobile migration backup and reclaims an interrupted copy", async () => {
+test("serializes mobile migration opens and publishes only a verified backup", async () => {
   fixture.directory = mkdtempSync(join(tmpdir(), "edo-mobile-backup-"));
   const path = join(fixture.directory, "edo-diary.db");
   const orphan = ".edo-diary-v1-0123456789abcdef0123456789abcdef.db.partial";
@@ -102,12 +112,18 @@ test("publishes only a verified mobile migration backup and reclaims an interrup
     {
       using legacy = new DatabaseSync(path);
       legacy.exec(`
-        CREATE TABLE diary_meals (id TEXT PRIMARY KEY, local_day TEXT, occurred_at INTEGER);
+        CREATE TABLE diary_meals (
+          id TEXT PRIMARY KEY NOT NULL,
+          local_day TEXT NOT NULL,
+          occurred_at INTEGER NOT NULL
+        );
+        CREATE INDEX diary_meals_by_day ON diary_meals (local_day, occurred_at, id);
         CREATE TABLE diary_items (
-          id TEXT PRIMARY KEY,
-          meal_id TEXT REFERENCES diary_meals(id) ON DELETE CASCADE,
-          position INTEGER,
-          snapshot TEXT
+          id TEXT PRIMARY KEY NOT NULL,
+          meal_id TEXT NOT NULL REFERENCES diary_meals(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL CHECK (position >= 0),
+          snapshot TEXT NOT NULL CHECK (json_valid(snapshot)),
+          UNIQUE (meal_id, position)
         );
         INSERT INTO diary_meals VALUES ('meal', '2026-11-01', 1793511000000);
         PRAGMA user_version = 1;
@@ -120,13 +136,29 @@ test("publishes only a verified mobile migration backup and reclaims an interrup
     expect(readdirSync(fixture.directory)).toEqual(["edo-diary.db"]);
 
     fixture.incomplete = false;
-    const { diary, close } = await openLocalDiary();
+    fixture.blockMove = true;
+    await expect(openLocalDiary()).rejects.toThrow(/Could not publish backup/);
+    expect(readdirSync(fixture.directory)).toEqual(["edo-diary.db"]);
+
+    fixture.blockMove = false;
+    const clients = await Promise.allSettled([openLocalDiary(), openLocalDiary()]);
     try {
-      expect(diary.getMeal("meal")).toMatchObject({ localDay: "2026-11-01", items: [] });
-      diary.deleteMeal("meal");
-      expect(diary.getMeal("meal")).toBeNull();
+      const [first, second] = clients;
+      if (first?.status !== "fulfilled" || second?.status !== "fulfilled") {
+        throw new Error("Expected both diary clients to open after the upgrade", {
+          cause: clients,
+        });
+      }
+      expect(first.value.diary.getMeal("meal")).toMatchObject({
+        localDay: "2026-11-01",
+        items: [],
+      });
+      first.value.diary.deleteMeal("meal");
+      expect(second.value.diary.getMeal("meal")).toBeNull();
     } finally {
-      await close();
+      await Promise.all(
+        clients.flatMap((client) => (client.status === "fulfilled" ? [client.value.close()] : [])),
+      );
     }
     const backups = readdirSync(fixture.directory).filter((name) => name !== "edo-diary.db");
     expect(backups).toEqual([expect.stringMatching(/^edo-diary-v1-[a-f0-9]{32}\.db$/)]);

@@ -9,24 +9,24 @@ export type DiaryBackup = (
 
 const diaryApplicationId = 0x45444f44; // EDOD
 
+const legacyDiarySchema = {
+  diary_meals: `CREATE TABLE diary_meals (
+    id TEXT PRIMARY KEY NOT NULL,
+    local_day TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL
+  )`,
+  diary_meals_by_day: "CREATE INDEX diary_meals_by_day ON diary_meals (local_day, occurred_at, id)",
+  diary_items: `CREATE TABLE diary_items (
+    id TEXT PRIMARY KEY NOT NULL,
+    meal_id TEXT NOT NULL REFERENCES diary_meals(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    snapshot TEXT NOT NULL CHECK (json_valid(snapshot)),
+    UNIQUE (meal_id, position)
+  )`,
+};
+
 export const diaryMigrations: readonly Migration[] = [
-  (db) => {
-    db.exec(`
-      CREATE TABLE diary_meals (
-        id TEXT PRIMARY KEY NOT NULL,
-        local_day TEXT NOT NULL,
-        occurred_at INTEGER NOT NULL
-      );
-      CREATE INDEX diary_meals_by_day ON diary_meals (local_day, occurred_at, id);
-      CREATE TABLE diary_items (
-        id TEXT PRIMARY KEY NOT NULL,
-        meal_id TEXT NOT NULL REFERENCES diary_meals(id) ON DELETE CASCADE,
-        position INTEGER NOT NULL CHECK (position >= 0),
-        snapshot TEXT NOT NULL CHECK (json_valid(snapshot)),
-        UNIQUE (meal_id, position)
-      );
-    `);
-  },
+  (db) => db.exec(`${Object.values(legacyDiarySchema).join(";\n")};`),
   (db) => {
     db.exec(`
       ALTER TABLE diary_meals ADD COLUMN utc_offset_minutes INTEGER
@@ -45,18 +45,26 @@ function storageVersion(db: DiarySqliteConnection): number {
   return version;
 }
 
+function matchesLegacyDiary(db: DiarySqliteConnection): boolean {
+  const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
+  const stored = new Map(
+    db
+      .all("SELECT name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'")
+      .map(({ name, sql }) => [name, typeof sql === "string" ? normalize(sql) : null]),
+  );
+  const expected = Object.entries(legacyDiarySchema);
+  return (
+    stored.size === expected.length &&
+    expected.every(([name, sql]) => stored.get(name) === normalize(sql))
+  );
+}
+
 function requireDiaryIdentity(db: DiarySqliteConnection, version: number): void {
   const applicationId = db.get("PRAGMA application_id")?.application_id;
   if (applicationId === diaryApplicationId) return;
   if (applicationId === 0) {
     if (version === 0) return;
-    if (
-      version === 1 &&
-      db.get(`SELECT count(*) AS tables_found FROM sqlite_schema
-        WHERE type = 'table' AND name IN ('diary_meals', 'diary_items')`)?.tables_found === 2
-    ) {
-      return;
-    }
+    if (version === 1 && matchesLegacyDiary(db)) return;
   }
   throw new Error("SQLite file does not belong to the Edo diary");
 }
