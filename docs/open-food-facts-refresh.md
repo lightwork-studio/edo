@@ -53,3 +53,45 @@ fresh baseline. Restore a full release before reverting server code to a version
 delta support. A reconciled scratch root contains only its new Open Food Facts releases. Publish
 that provider's verified release into the existing catalog store, preserving BLS and the known
 Open Food Facts history.
+
+## GitHub Actions and Cloudflare
+
+Create the private R2 bucket `edo-catalogs`. In GitHub, configure the `catalog-production`
+environment with a deployment branch policy that permits only `main`. Production publication
+also requires `main` to be protected with pull requests and the repository's existing check.
+Set environment variable
+`EDO_R2_ACCOUNT_ID` and environment secrets `EDO_R2_ACCESS_KEY_ID` and
+`EDO_R2_SECRET_ACCESS_KEY` using an R2 token limited to object read/write for this bucket.
+
+Seed Open Food Facts from a locally verified delta release with the AWS CLI installed and R2
+credentials in the shell environment:
+
+```sh
+node apps/catalog-edge/publish.ts publish open-food-facts "$CATALOG_ROOT" empty
+```
+
+A reviewed BLS release uses provider `bls` and an additional argument containing the exact
+artifact SHA-256 recorded during review. Use `empty` only for the first publication of a
+provider. To roll back, disable `EDO_CATALOG_REFRESH_ENABLED` and wait
+for any publication already running. Prepare the desired catalog locally and pass the active
+manifest's SHA-256 in place of `empty`. Obtain the SHA-256 from the provider's R2 `state.json`
+if the active manifest is unreadable. Keep refresh paused until the cause is fixed or a fresh
+baseline is seeded so the job does not replay the same bad deltas.
+
+After seeding and configuring credentials, set repository variable
+`EDO_CATALOG_REFRESH_ENABLED=true` to enable the job.
+Run **Refresh Open Food Facts catalog** manually once on `main` to verify the schedule's path.
+Subsequent runs are scheduled for 04:17 UTC. The job restores the prior manifest and artifact
+from R2, then applies retained deltas. It verifies newly written immutable objects before
+updating publication state using a conditional write. The Worker exposes only catalog objects
+listed in that state, including earlier published releases. A source checkpoint over 72 hours old
+fails the job, so GitHub Actions failure notifications can surface stalled publication when the
+job runs. If nightly runs stop appearing, check whether GitHub disabled the schedule after
+repository inactivity. Re-enable the workflow and dispatch it on the current `main`.
+
+The Worker serves the current manifests, immutable artifacts, and barcode lookups under
+`/catalog-preview/` at `edo.timweb.app`. Deploy the staging Worker with
+`wrangler deploy --config apps/catalog-edge/wrangler.jsonc --env staging` and verify its active
+manifest, SQLite digest, and a known barcode. After those checks, deploy the production
+configuration without `--env staging` to attach the custom domain. Keep previous releases in R2
+so they can be republished if an update fails.
