@@ -45,12 +45,24 @@ function sameItem(a: DiaryItem | undefined, b: DiaryItem | undefined): boolean {
   return a === b || (a !== undefined && b !== undefined && snapshotKey(a) === snapshotKey(b));
 }
 
+function sameEvent(a: DiaryMeal, b: DiaryMeal): boolean {
+  return a.localDay === b.localDay && a.occurredAt === b.occurredAt;
+}
+
 function sameTime(a: DiaryMeal, b: DiaryMeal): boolean {
-  return (
-    a.localDay === b.localDay &&
-    a.occurredAt === b.occurredAt &&
-    a.utcOffsetMinutes === b.utcOffsetMinutes
-  );
+  return sameEvent(a, b) && a.utcOffsetMinutes === b.utcOffsetMinutes;
+}
+
+function retainKnownOffset(meal: DiaryMeal | null, known: DiaryMeal | null): DiaryMeal | null {
+  if (
+    meal &&
+    meal.utcOffsetMinutes === undefined &&
+    known?.utcOffsetMinutes !== undefined &&
+    sameEvent(meal, known)
+  ) {
+    return { ...meal, utcOffsetMinutes: known.utcOffsetMinutes };
+  }
+  return meal;
 }
 
 function sameMeal(a: DiaryMeal | null, b: DiaryMeal | null): boolean {
@@ -99,6 +111,14 @@ function mergeOrder(
   here: ReadonlyMap<string, number>,
   there: ReadonlyMap<string, number>,
 ): DiaryItem[] | null {
+  if (here.size === there.size && [...here].every(([id, position]) => there.get(id) === position)) {
+    const ordered: DiaryItem[] = [];
+    for (const id of here.keys()) {
+      const item = items.get(id);
+      if (item) ordered.push(item);
+    }
+    return ordered;
+  }
   const ids = [...items.keys()].sort();
   const predecessors = new Map(ids.map((id) => [id, 0]));
   function compare(a: string, b: string): Choice<number> {
@@ -154,18 +174,21 @@ export function reconcileDiaryMeal(
     local,
     server,
   });
-  const whole = choose(base, local, server, sameMeal);
+  // Match an ordinary save: absence of an old offset does not clear a known offset for the same event.
+  const localWithOffset = retainKnownOffset(retainKnownOffset(local, base), server);
+  const serverWithOffset = retainKnownOffset(retainKnownOffset(server, base), local);
+  const whole = choose(base, localWithOffset, serverWithOffset, sameMeal);
   if ("value" in whole) return { status: "merged", meal: whole.value };
-  if (!base || !local || !server) return conflict([{ kind: "record" }]);
+  if (!base || !localWithOffset || !serverWithOffset) return conflict([{ kind: "record" }]);
 
   const conflicts: DiaryMealConflict[] = [];
-  const time = choose(base, local, server, sameTime);
+  const time = choose(base, localWithOffset, serverWithOffset, sameTime);
   const baseItems = indexedItems(base);
-  const localItems = indexedItems(local);
-  const serverItems = indexedItems(server);
+  const localItems = indexedItems(localWithOffset);
+  const serverItems = indexedItems(serverWithOffset);
   const baseOrder = itemPositions(base);
-  const localOrder = itemPositions(local);
-  const serverOrder = itemPositions(server);
+  const localOrder = itemPositions(localWithOffset);
+  const serverOrder = itemPositions(serverWithOffset);
   const ids = new Set([...baseItems.keys(), ...localItems.keys(), ...serverItems.keys()]);
   const items = new Map<string, DiaryItem>();
   if ("conflict" in time) conflicts.push({ kind: "time" });
@@ -178,12 +201,15 @@ export function reconcileDiaryMeal(
       before &&
       ((!here && there && placementChanged(baseOrder, serverOrder, itemId)) ||
         (!there && here && placementChanged(baseOrder, localOrder, itemId)));
-    if ("conflict" in item || deleteAgainstReorder) conflicts.push({ kind: "item", id: itemId });
-    else if (item.value) items.set(itemId, item.value);
+    if ("conflict" in item || deleteAgainstReorder) {
+      conflicts.push({ kind: "item", id: itemId });
+      // Its position can still be compared when both versions retain the item.
+      if (here && there) items.set(itemId, here);
+    } else if (item.value) items.set(itemId, item.value);
   }
-  if ("conflict" in time || conflicts.length > 0) return conflict(conflicts);
   const sorted = mergeOrder(items, baseOrder, localOrder, serverOrder);
-  if (!sorted) return conflict([{ kind: "item-order" }]);
+  if (!sorted) conflicts.push({ kind: "item-order" });
+  if ("conflict" in time || !sorted || conflicts.length > 0) return conflict(conflicts);
   const { localDay, occurredAt, utcOffsetMinutes } = time.value;
   return {
     status: "merged",

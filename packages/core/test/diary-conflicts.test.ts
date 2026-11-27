@@ -34,7 +34,9 @@ it("reconciles independent edits by stable item ID and keeps each captured snaps
   const withReportedFiber = { ...b, nutrients: { ...b.nutrients, fiberG: 2 } };
   const local = { ...base, items: [smaller, b] };
   const server = { ...base, items: [a, withReportedFiber] };
-  expect(reconcileDiaryMeal(base, local, server)).toEqual({
+  expect(
+    reconcileDiaryMeal(structuredClone(base), structuredClone(local), structuredClone(server)),
+  ).toEqual({
     status: "merged",
     meal: { ...base, items: [smaller, withReportedFiber] },
   });
@@ -83,6 +85,27 @@ it("returns incompatible orderings for review when their combined constraints fo
   expect(reconcileDiaryMeal(original, local, original)).toEqual({ status: "merged", meal: local });
 });
 
+it("reports conflicting order alongside different times and retained item changes", () => {
+  const original = { ...base, items: [a, b, c] };
+  const local = {
+    ...original,
+    occurredAt: original.occurredAt - 3_600_000,
+    items: [b, updateDiaryPortion(a, { amount: 60, unit: "g" }), c],
+  };
+  const server = {
+    ...original,
+    occurredAt: original.occurredAt + 3_600_000,
+    items: [updateDiaryPortion(a, { amount: 90, unit: "g" }), c, b],
+  };
+  expect(reconcileDiaryMeal(original, local, server)).toEqual({
+    status: "conflict",
+    conflicts: [{ kind: "time" }, { kind: "item", id: "a" }, { kind: "item-order" }],
+    base: original,
+    local,
+    server,
+  });
+});
+
 it("treats deleting an item that the other side reordered as a conflict", () => {
   const local = { ...base, items: [b] };
   const server = { ...base, items: [b, a] };
@@ -118,6 +141,24 @@ it("preserves the captured UTC offset from the chosen event time", () => {
   expect(reconcileDiaryMeal(original, local, { ...server, utcOffsetMinutes: 60 })).toMatchObject({
     status: "conflict",
     conflicts: [{ kind: "time" }],
+  });
+});
+
+it("uses a known offset for a legacy copy of the same event", () => {
+  const original = { ...base, utcOffsetMinutes: -240 };
+  const server = { ...original, items: [a, b, c] };
+  expect(reconcileDiaryMeal(original, base, server)).toEqual({
+    status: "merged",
+    meal: server,
+  });
+  expect(reconcileDiaryMeal(original, { ...base, items: [a] }, server)).toEqual({
+    status: "merged",
+    meal: { ...server, items: [a, c] },
+  });
+  const newEvent = { ...base, occurredAt: base.occurredAt + 3_600_000 };
+  expect(reconcileDiaryMeal(original, newEvent, server)).toEqual({
+    status: "merged",
+    meal: { ...newEvent, items: [a, b, c] },
   });
 });
 
