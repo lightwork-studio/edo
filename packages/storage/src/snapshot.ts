@@ -23,6 +23,25 @@ export function diaryId(value: unknown, name: string): string {
   return id;
 }
 
+export function readDay(day: unknown): string {
+  if (typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    const date = new Date(`${day}T00:00:00.000Z`);
+    if (Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === day) return day;
+  }
+  throw new TypeError("Invalid diary calendar day");
+}
+
+export function readInstant(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    !Number.isFinite(new Date(value).getTime())
+  ) {
+    throw new TypeError("Invalid diary event time");
+  }
+  return value;
+}
+
 export function decodeSnapshot(json: unknown): Omit<DiaryItem, "id"> {
   return readSnapshot(JSON.parse(diaryText(json, "item snapshot")));
 }

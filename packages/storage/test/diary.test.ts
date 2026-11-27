@@ -6,6 +6,7 @@ import { createDiaryItem, type Food } from "@edo/core";
 import {
   type DiaryMeal,
   type DiarySqliteConnection,
+  type NutritionTargetRecord,
   type OpenDiaryOptions,
   openDiary,
 } from "@edo/storage";
@@ -88,6 +89,28 @@ const meal: DiaryMeal = {
   localDay: "2026-10-31",
   occurredAt: Date.parse("2026-11-01T02:30:00Z"),
   items: [createDiaryItem("item-drink", sourceFood, { amount: 0.5, unit: "portion" })],
+};
+
+const weighIn = {
+  id: "weigh-in",
+  localDay: "2026-10-31",
+  occurredAt: Date.parse("2026-11-01T02:30:00Z"),
+  kg: 80,
+};
+
+const target: NutritionTargetRecord = {
+  id: "target-one",
+  effectiveDay: "2026-10-31",
+  configuredAt: meal.occurredAt,
+  mode: "manual",
+  target: { kcal: 2000, proteinG: 110, fatG: 60, availableCarbohydratesG: 255 },
+};
+
+const revisedTarget: NutritionTargetRecord = {
+  ...target,
+  id: "target-two",
+  configuredAt: target.configuredAt - 3_600_000,
+  target: { ...target.target, kcal: 2100, availableCarbohydratesG: 280 },
 };
 
 test("reopens locally, preserving the event day, stable IDs and nutrition after a catalog refresh", async () => {
@@ -199,7 +222,166 @@ test("migrates a version-one diary while preserving its snapshots and absent off
   expect(source.snapshots).toHaveLength(1);
 });
 
-test.each([1, currentVersion])(
+test("upgrades a published version-two diary and can restore its verified recovery copy", async () => {
+  const current = createDatabase();
+  const { connection } = current.options;
+  // This is the published schema, including its identity and UTC offset field.
+  connection.exec(`
+    CREATE TABLE diary_meals (
+      id TEXT PRIMARY KEY NOT NULL,
+      local_day TEXT NOT NULL,
+      occurred_at INTEGER NOT NULL
+    );
+    CREATE INDEX diary_meals_by_day ON diary_meals (local_day, occurred_at, id);
+    CREATE TABLE diary_items (
+      id TEXT PRIMARY KEY NOT NULL,
+      meal_id TEXT NOT NULL REFERENCES diary_meals(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position >= 0),
+      snapshot TEXT NOT NULL CHECK (json_valid(snapshot)),
+      UNIQUE (meal_id, position)
+    );
+    ALTER TABLE diary_meals ADD COLUMN utc_offset_minutes INTEGER
+      CHECK (utc_offset_minutes IS NULL OR
+        (typeof(utc_offset_minutes) = 'integer' AND utc_offset_minutes BETWEEN -1439 AND 1439));
+    PRAGMA application_id = 1162104644;
+    PRAGMA user_version = 2;
+  `);
+  const fallBack = [
+    {
+      ...meal,
+      id: "earlier-occurrence",
+      localDay: "2026-11-01",
+      occurredAt: Date.parse("2026-11-01T05:30:00Z"),
+      utcOffsetMinutes: -240,
+      items: [],
+    },
+    {
+      ...meal,
+      id: "later-occurrence",
+      localDay: "2026-11-01",
+      occurredAt: Date.parse("2026-11-01T06:30:00Z"),
+      utcOffsetMinutes: -300,
+      items: [],
+    },
+  ];
+  for (const entry of [meal, ...fallBack]) {
+    connection.run(
+      "INSERT INTO diary_meals VALUES (?, ?, ?, ?)",
+      entry.id,
+      entry.localDay,
+      entry.occurredAt,
+      entry.utcOffsetMinutes ?? null,
+    );
+  }
+  const item = meal.items[0];
+  if (!item) throw new Error("Expected a captured item");
+  const { id, ...captured } = item;
+  connection.run(
+    "INSERT INTO diary_items VALUES (?, ?, 0, ?)",
+    id,
+    meal.id,
+    JSON.stringify(captured),
+  );
+
+  const upgraded = await current.start();
+  expect(connection.get("PRAGMA user_version")?.user_version).toBe(3);
+  expect(upgraded.getMeal(meal.id)).toEqual(meal);
+  expect(upgraded.listMeals("2026-11-01")).toEqual(fallBack);
+  expect(upgraded.listWeighIns("2026-10-31", "2026-11-01")).toEqual([]);
+  expect(upgraded.nutritionTargetAt("2026-11-01")).toBeNull();
+
+  const path = current.snapshots[0];
+  if (!path) throw new Error("Expected a verified recovery copy");
+  using snapshot = new DatabaseSync(path, { readOnly: true });
+  expect(snapshot.prepare("PRAGMA user_version").get()?.user_version).toBe(2);
+  expect(
+    snapshot.prepare("SELECT name FROM sqlite_schema WHERE name = 'diary_targets'").get(),
+  ).toBeUndefined();
+  await backup(snapshot, join(directory, "restored-v2.db"));
+  const restored = await createDatabase("restored-v2.db").start();
+  expect(restored.getMeal(meal.id)).toEqual(meal);
+  expect(restored.listMeals("2026-11-01")).toEqual(fallBack);
+});
+
+test("saves offline weigh-ins and preserves effective target revisions in save order", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  diary.saveWeighIn(weighIn);
+  diary.saveWeighIn({ ...weighIn, kg: 79 });
+  expect(() => diary.saveWeighIn({ ...weighIn, kg: Infinity })).toThrow(/weight/);
+  expect(() => diary.listWeighIns("2026-11-01", "2026-10-31")).toThrow(/range/);
+
+  const future = { ...target, id: "future-target", effectiveDay: "2026-11-03" };
+  diary.saveNutritionTarget(target);
+  diary.saveNutritionTarget(revisedTarget);
+  diary.saveNutritionTarget(target);
+  diary.saveNutritionTarget(future);
+  expect(() => diary.saveNutritionTarget({ ...target, mode: "calculated" })).toThrow(
+    /new revision ID/,
+  );
+  expect(diary.nutritionTargetAt("2026-10-30")).toBeNull();
+  expect(diary.nutritionTargetAt("2026-10-31")).toEqual(revisedTarget);
+  expect(diary.nutritionTargetAt("2026-11-03")).toEqual(future);
+  source.db.close();
+
+  const reopened = await createDatabase().start();
+  expect(reopened.listWeighIns("2026-10-31", "2026-10-31")).toEqual([{ ...weighIn, kg: 79 }]);
+  expect(reopened.listWeighIns("2026-11-01", "2026-11-01")).toEqual([]);
+  expect(reopened.nutritionTargetAt("2026-11-01")).toEqual(revisedTarget);
+});
+
+test("rejects a new target with an inconsistent energy budget", async () => {
+  const diary = await createDatabase().start();
+  diary.saveNutritionTarget(target);
+  expect(() =>
+    diary.saveNutritionTarget({
+      ...revisedTarget,
+      target: { ...revisedTarget.target, kcal: 1 },
+    }),
+  ).toThrow(/protein and fat exceed/i);
+  expect(() =>
+    diary.saveNutritionTarget({
+      ...revisedTarget,
+      target: { ...revisedTarget.target, availableCarbohydratesG: 1 },
+    }),
+  ).toThrow(/carbohydrate target/i);
+  expect(diary.nutritionTargetAt(revisedTarget.effectiveDay)).toEqual(target);
+  diary.saveNutritionTarget(revisedTarget);
+  expect(diary.nutritionTargetAt(revisedTarget.effectiveDay)).toEqual(revisedTarget);
+});
+
+test.each(["weigh-in", "target", "save order"] as const)(
+  "rejects a version-three backup with different progress %s values",
+  async (difference) => {
+    const source = createDatabase();
+    const current = await source.start();
+    const older = createDatabase("older.db");
+    const stale = await older.start();
+    current.saveMeal(meal);
+    stale.saveMeal(meal);
+    current.saveWeighIn(weighIn);
+    stale.saveWeighIn(difference === "weigh-in" ? { ...weighIn, kg: 77 } : weighIn);
+    current.saveNutritionTarget(target);
+    current.saveNutritionTarget(revisedTarget);
+    if (difference === "save order") stale.saveNutritionTarget(revisedTarget);
+    stale.saveNutritionTarget(difference === "target" ? { ...target, mode: "calculated" } : target);
+    if (difference !== "save order") stale.saveNutritionTarget(revisedTarget);
+
+    await expect(
+      migrateDiary(
+        source.options.connection,
+        [...diaryMigrations, (db) => db.exec("ALTER TABLE diary_meals ADD COLUMN memo TEXT")],
+        async (_version, verify) => verify(older.options.connection),
+        () => {},
+      ),
+    ).rejects.toThrow(/backup does not match/i);
+    expect(source.options.connection.get("PRAGMA user_version")?.user_version).toBe(3);
+    expect(current.listWeighIns("2026-10-31", "2026-10-31")).toEqual([weighIn]);
+    expect(current.nutritionTargetAt("2026-10-31")).toEqual(revisedTarget);
+  },
+);
+
+test.each([1, 2, currentVersion])(
   "rejects a version-%i catalog at the diary open boundary",
   async (version) => {
     const source = createDatabase();
@@ -444,6 +626,12 @@ test("blocks reads and writes on an open handle after another connection upgrade
   expect(() => legacy.listMeals(meal.localDay)).toThrow(/version has changed/);
   expect(() => legacy.saveMeal({ ...meal, localDay: "2026-11-01" })).toThrow(/version has changed/);
   expect(() => legacy.deleteMeal(meal.id)).toThrow(/version has changed/);
+  expect(() => legacy.listWeighIns(weighIn.localDay, weighIn.localDay)).toThrow(
+    /version has changed/,
+  );
+  expect(() => legacy.saveWeighIn(weighIn)).toThrow(/version has changed/);
+  expect(() => legacy.nutritionTargetAt(target.effectiveDay)).toThrow(/version has changed/);
+  expect(() => legacy.saveNutritionTarget(target)).toThrow(/version has changed/);
   expect(connection.get("SELECT memo FROM diary_items WHERE id = ?", "item-drink")?.memo).toBe(
     "Retained note",
   );

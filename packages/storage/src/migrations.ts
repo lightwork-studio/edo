@@ -35,6 +35,29 @@ export const diaryMigrations: readonly Migration[] = [
       PRAGMA application_id = ${diaryApplicationId};
     `);
   },
+  (db) => {
+    db.exec(`
+      CREATE TABLE diary_weigh_ins (
+        id TEXT PRIMARY KEY NOT NULL,
+        local_day TEXT NOT NULL,
+        occurred_at INTEGER NOT NULL,
+        kg REAL NOT NULL CHECK (kg > 0)
+      ) STRICT;
+      CREATE INDEX diary_weigh_ins_by_day ON diary_weigh_ins (local_day, occurred_at, id);
+      CREATE TABLE diary_targets (
+        save_order INTEGER PRIMARY KEY CHECK (save_order > 0),
+        id TEXT UNIQUE NOT NULL,
+        effective_day TEXT NOT NULL,
+        configured_at INTEGER NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('manual', 'calculated')),
+        kcal REAL NOT NULL CHECK (kcal > 0),
+        protein_g REAL NOT NULL CHECK (protein_g >= 0),
+        fat_g REAL NOT NULL CHECK (fat_g >= 0),
+        carbohydrate_g REAL NOT NULL CHECK (carbohydrate_g >= 0)
+      ) STRICT;
+      CREATE INDEX diary_targets_by_day ON diary_targets (effective_day, save_order);
+    `);
+  },
 ];
 
 function storageVersion(db: DiarySqliteConnection): number {
@@ -76,6 +99,22 @@ export function requireCurrentDiaryVersion(db: DiarySqliteConnection): void {
   }
 }
 
+export function inCurrentDiary<T>(
+  db: DiarySqliteConnection,
+  begin: "BEGIN" | "BEGIN IMMEDIATE",
+  operation: () => T,
+): T {
+  db.exec(begin);
+  try {
+    requireCurrentDiaryVersion(db);
+    const result = operation();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    return rollback(db, error);
+  }
+}
+
 function verifyIntegrity(db: DiarySqliteConnection, operation: string): void {
   const checks = db.all("PRAGMA quick_check");
   if (checks.length !== 1 || checks[0]?.quick_check !== "ok") {
@@ -102,6 +141,12 @@ async function verifyBackup(
       "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name",
       "SELECT * FROM diary_meals ORDER BY id",
       "SELECT * FROM diary_items ORDER BY id",
+      ...(installed >= 3
+        ? [
+            "SELECT * FROM diary_weigh_ins ORDER BY id",
+            "SELECT * FROM diary_targets ORDER BY save_order",
+          ]
+        : []),
     ]) {
       if (JSON.stringify(source.all(query)) !== JSON.stringify(snapshot.all(query))) {
         throw new Error("Diary backup does not match the current diary");
