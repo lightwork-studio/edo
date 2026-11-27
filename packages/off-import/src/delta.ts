@@ -32,6 +32,10 @@ function digest(value: Buffer | string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function isCatalogText(value: string) {
+  return !value.includes("\0") && Buffer.from(value).toString("utf8") === value;
+}
+
 function windowsAfter(index: string, cursor: number, now: number): Window[] {
   const windows = index
     .trim()
@@ -149,8 +153,7 @@ function parseRecord(line: string, window: Window) {
   if (
     typeof id !== "string" ||
     !id.trim() ||
-    !id.isWellFormed() ||
-    id.includes("\0") ||
+    !isCatalogText(id) ||
     typeof modified !== "number" ||
     !Number.isSafeInteger(modified) ||
     modified <= window.start ||
@@ -167,8 +170,7 @@ function parseRecord(line: string, window: Window) {
       !Number.isSafeInteger(row.rev) ||
       row.rev < 1 ||
       [row.product_name_de, row.product_name_en, row.product_name].some(
-        (name) =>
-          name != null && (typeof name !== "string" || !name.isWellFormed() || name.includes("\0")),
+        (name) => name != null && (typeof name !== "string" || !isCatalogText(name)),
       ) ||
       (row.countries_tags !== undefined &&
         (!Array.isArray(row.countries_tags) ||
