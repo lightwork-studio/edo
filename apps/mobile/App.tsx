@@ -11,6 +11,8 @@ import {
   StatusBar,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { foodForPackagedProduct } from "./src/barcode";
+import { BarcodeEntry, type BarcodeState } from "./src/barcode-entry";
 import {
   addDays,
   diaryDayLimit,
@@ -25,6 +27,7 @@ import {
 import { FoodDetail } from "./src/food-detail";
 import { openLocalCatalog } from "./src/local-catalog";
 import { openLocalDiary } from "./src/local-diary";
+import { openLocalPackagedCache } from "./src/local-packaged-cache";
 import { ProgressScreen } from "./src/progress";
 import { type ProgressRange, recentWeightEnd, weightWindowStart } from "./src/progress-data";
 import { SearchScreen } from "./src/search";
@@ -44,7 +47,8 @@ type Route =
   | { kind: "weigh-in" }
   | { kind: "targets" }
   | ({ kind: "search" } & SearchContext)
-  | ({ kind: "add"; food: Food } & SearchContext)
+  | ({ kind: "barcode"; state: BarcodeState } & SearchContext)
+  | ({ kind: "add"; food: Food; barcode?: BarcodeState } & SearchContext)
   | { kind: "edit"; day: string; mealId: string; itemId: string; item: DiaryItem };
 
 function useDeviceContext(): DeviceContext {
@@ -139,6 +143,7 @@ function DiaryApp({
   const [refresh, setRefresh] = useState(0);
   const [feedback, setFeedback] = useState<{ day: string; kind: "saved" | "updated" } | null>(null);
   const catalog = useDatabase(openLocalCatalog, false);
+  const packagedCache = useDatabase(openLocalPackagedCache, false);
   const t = strings[language];
   const { diary } = connection;
   // biome-ignore lint/correctness/useExhaustiveDependencies: A committed write or retry invalidates the SQLite read.
@@ -159,6 +164,12 @@ function DiaryApp({
     if (route.kind === "diary") return false;
     Keyboard.dismiss();
     if (route.kind === "add") {
+      const { day, occurredAt, utcOffsetMinutes, query, barcode } = route;
+      const context = { day, occurredAt, utcOffsetMinutes, query };
+      setRoute(
+        barcode ? { ...context, kind: "barcode", state: barcode } : { ...context, kind: "search" },
+      );
+    } else if (route.kind === "barcode") {
       const { day, occurredAt, utcOffsetMinutes, query } = route;
       setRoute({ kind: "search", day, occurredAt, utcOffsetMinutes, query });
     } else if (route.kind === "weigh-in" || route.kind === "targets") {
@@ -201,6 +212,7 @@ function DiaryApp({
           day <= today
             ? () => {
                 catalog.start();
+                packagedCache.start();
                 setFeedback(null);
                 setRoute({ kind: "search", ...entryTime(selectedDay, new Date()), query: "" });
               }
@@ -286,6 +298,24 @@ function DiaryApp({
   }
 
   const date = showDay(route.day, locale, today);
+  const cachedProducts = packagedCache.value === "error" ? null : packagedCache.value?.cache;
+  if (route.kind === "barcode") {
+    return (
+      <BarcodeEntry
+        t={t}
+        locale={locale}
+        date={date}
+        today={today}
+        diary={diary}
+        cache={cachedProducts}
+        initial={route.state}
+        onBack={goBack}
+        onPick={(product, barcode) =>
+          setRoute({ ...route, kind: "add", food: foodForPackagedProduct(product), barcode })
+        }
+      />
+    );
+  }
   if (route.kind === "search") {
     return (
       <SearchScreen
@@ -294,8 +324,13 @@ function DiaryApp({
         language={language}
         date={date}
         catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
+        packagedCache={cachedProducts ?? null}
         query={route.query}
         onQuery={(query) => setRoute({ ...route, query })}
+        onBarcode={() => {
+          Keyboard.dismiss();
+          setRoute({ ...route, kind: "barcode", state: { code: "", result: null } });
+        }}
         onCatalogRetry={catalog.retry}
         onBack={goBack}
         onPick={(food) => {

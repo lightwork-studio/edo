@@ -1,26 +1,11 @@
-import { type DiarySqliteConnection, type OpenDiaryOptions, openDiary } from "@edo/storage";
+import { type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { File } from "expo-file-system";
 import { moveAsync } from "expo-file-system/legacy";
-import {
-  backupDatabaseAsync,
-  deleteDatabaseAsync,
-  openDatabaseAsync,
-  type SQLiteDatabase,
-} from "expo-sqlite";
+import { backupDatabaseAsync, deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
+import { connectionFor } from "./local-sqlite";
 
 const diaryName = "edo-diary.db";
 let pendingOpen = Promise.resolve();
-
-function connectionFor(db: SQLiteDatabase): DiarySqliteConnection {
-  return {
-    exec: (sql) => db.execSync(sql),
-    run: (sql, ...parameters) => {
-      db.runSync(sql, ...parameters);
-    },
-    all: (sql, ...parameters) => db.getAllSync(sql, ...parameters),
-    get: (sql, ...parameters) => db.getFirstSync(sql, ...parameters) ?? undefined,
-  };
-}
 
 const backupBeforeMigration: OpenDiaryOptions["backupBeforeMigration"] = async (
   version,

@@ -1,7 +1,9 @@
 import { type Food, roundNutritionForDisplay } from "@edo/core";
+import type { PackagedFoodCache } from "@edo/storage";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { useEffect, useState } from "react";
 import { FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { foodForPackagedProduct, openFoodFactsLicenseUrl } from "./barcode";
 import { searchBls } from "./catalog";
 import type { Language, Strings } from "./strings";
 import { colors, DetailHeader, Notice, nutrientValue, styles } from "./ui";
@@ -14,6 +16,8 @@ export function SearchScreen({
   catalog,
   query,
   onQuery,
+  packagedCache,
+  onBarcode,
   onCatalogRetry,
   onPick,
   onBack,
@@ -25,6 +29,8 @@ export function SearchScreen({
   catalog: SQLiteDatabase | "error" | null;
   query: string;
   onQuery: (query: string) => void;
+  packagedCache: PackagedFoodCache | null;
+  onBarcode: () => void;
   onCatalogRetry: () => void;
   onPick: (food: Food) => void;
   onBack: () => void;
@@ -47,6 +53,9 @@ export function SearchScreen({
           clearButtonMode="while-editing"
           style={local.search}
         />
+        <Pressable accessibilityRole="button" style={local.source} onPress={onBarcode}>
+          <Text style={styles.actionText}>{t.scanBarcode}</Text>
+        </Pressable>
         <Pressable
           accessibilityLabel={credit ? t.closeSource : t.source}
           accessibilityRole="button"
@@ -54,7 +63,7 @@ export function SearchScreen({
           onPress={() => setCredit(!credit)}
           style={local.source}
         >
-          <Text style={styles.actionText}>{t.bls}</Text>
+          <Text style={styles.actionText}>{t.source}</Text>
         </Pressable>
         {credit && (
           <View style={styles.card}>
@@ -65,6 +74,12 @@ export function SearchScreen({
               title="DOI 10.25826/Data20251217-134202-0"
             />
             <SourceLink uri="https://creativecommons.org/licenses/by/4.0/" title="CC BY 4.0" />
+            {packagedCache && (
+              <>
+                <Text style={styles.body}>{t.openFoodFactsCredit}</Text>
+                <SourceLink uri={openFoodFactsLicenseUrl} title={t.openFoodFactsLicense} />
+              </>
+            )}
           </View>
         )}
       </View>
@@ -72,9 +87,10 @@ export function SearchScreen({
       {catalog === "error" && (
         <Notice text={t.catalogError} action={{ label: t.retry, onPress: onCatalogRetry }} />
       )}
-      {catalog && catalog !== "error" && (
+      {((catalog && catalog !== "error") || packagedCache) && (
         <Results
-          db={catalog}
+          db={catalog === "error" ? null : catalog}
+          packagedCache={packagedCache}
           t={t}
           locale={locale}
           language={language}
@@ -103,15 +119,33 @@ function SourceLink({ uri, title }: { uri: string; title: string }) {
   );
 }
 
+const nutritionBasis = {
+  "per-100-g": "per100g",
+  "per-100-ml": "per100ml",
+  "per-portion": "perPortion",
+} as const;
+
+function getCachedFoods(cache: PackagedFoodCache | null, query: string): Food[] {
+  try {
+    return (
+      cache?.search(query, Date.now()).map(({ product }) => foodForPackagedProduct(product)) ?? []
+    );
+  } catch {
+    return [];
+  }
+}
+
 function Results({
   db,
+  packagedCache,
   t,
   locale,
   language,
   query,
   onPick,
 }: {
-  db: SQLiteDatabase;
+  db: SQLiteDatabase | null;
+  packagedCache: PackagedFoodCache | null;
   t: Strings;
   locale: string;
   language: Language;
@@ -122,32 +156,47 @@ function Results({
     query: string;
     language: Language;
     attempt: number;
-    foods: Food[] | null;
+    foods: Food[];
+    usedCache: PackagedFoodCache | null;
+    usedBls: SQLiteDatabase | null;
+    blsFailure: boolean;
   }>();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!query) return;
     let current = true;
     const timer = setTimeout(() => {
-      void searchBls(db, query, language).then(
-        (foods) => {
-          if (current) setResult({ query, language, attempt, foods });
-        },
-        () => {
-          if (current) setResult({ query, language, attempt, foods: null });
-        },
-      );
+      const cached = getCachedFoods(packagedCache, query);
+      const bls = db ? searchBls(db, query, language).catch(() => null) : Promise.resolve([]);
+      void bls.then((foods) => {
+        if (!current) return;
+        setResult({
+          query,
+          language,
+          attempt,
+          foods: [...(foods ?? []), ...cached],
+          usedCache: packagedCache,
+          usedBls: db,
+          blsFailure: foods === null,
+        });
+      });
     }, 150);
     return () => {
       current = false;
       clearTimeout(timer);
     };
-  }, [db, query, language, attempt]);
+  }, [db, packagedCache, query, language, attempt]);
 
   if (!query) return null;
-  if (result?.query !== query || result.language !== language || result.attempt !== attempt)
+  if (
+    result?.query !== query ||
+    result.language !== language ||
+    result.attempt !== attempt ||
+    result.usedBls !== db ||
+    result.usedCache !== packagedCache
+  )
     return <Notice text={t.loading} pending />;
-  if (result.foods === null) {
+  if (result.blsFailure && !result.foods.length) {
     return (
       <Notice
         text={t.searchError}
@@ -158,7 +207,7 @@ function Results({
   return (
     <FlatList
       data={result.foods}
-      keyExtractor={(food) => food.id.sourceId}
+      keyExtractor={(food) => `${food.id.provider}:${food.id.sourceId}`}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
       contentContainerStyle={local.results}
@@ -176,10 +225,13 @@ function Results({
         >
           <View style={styles.stretch}>
             <Text style={local.name}>{item.name}</Text>
+            {item.id.provider === "open-food-facts" && (
+              <Text style={styles.meta}>{t.openFoodFactsCredit}</Text>
+            )}
             <Text style={styles.meta}>
               {item.nutrition.nutrients.kcal === null
                 ? t.unavailable
-                : `${nutrientValue(roundNutritionForDisplay(item.nutrition.nutrients).kcal, locale, "kcal")} · ${t.per100g}`}
+                : `${nutrientValue(roundNutritionForDisplay(item.nutrition.nutrients).kcal, locale, "kcal")} · ${t[nutritionBasis[item.nutrition.basis]]}`}
             </Text>
           </View>
           <View importantForAccessibility="no" style={local.pick}>
