@@ -165,6 +165,9 @@ test("a concurrent restore wins over deltas based on the release it replaced", a
       fetcher: feed([[first, second, archive([product("10000000", "Newer", first + 60)])]]),
       now,
     });
+    const delta = createHash("sha256")
+      .update(await readFile(activePath))
+      .digest("hex");
     const next = feed([[second, third, archive([product("10000000", "Newest", second + 60)])]]);
     await expect(
       refreshOpenFoodFactsDeltas(root, {
@@ -177,6 +180,18 @@ test("a concurrent restore wins over deltas based on the release it replaced", a
         now,
       }),
     ).rejects.toThrow("Active catalog changed before publication");
+    expect(await readFile(activePath)).toEqual(baseline);
+    await restoreOpenFoodFactsRelease(root, delta);
+    const unchanged = feed([[first, second, archive([])]]);
+    await expect(
+      refreshOpenFoodFactsDeltas(root, {
+        async fetcher(input) {
+          await restoreOpenFoodFactsRelease(root, baselineSha256);
+          return unchanged(input);
+        },
+        now,
+      }),
+    ).rejects.toThrow("Active catalog changed during delta check");
     expect(await readFile(activePath)).toEqual(baseline);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -207,6 +222,21 @@ test("rejects old bootstrap windows, incomplete products, and invalid UTF-8 with
         now,
       }),
     ).rejects.toThrow("Incomplete Open Food Facts delta product");
+    const changed = product("10000000", "Invalid", first + 60);
+    await expect(
+      refreshOpenFoodFactsDeltas(root, {
+        bootstrapFrom: first,
+        fetcher: feed([[first, second, archive([{ ...changed, product_name_de: {} }])]]),
+        now,
+      }),
+    ).rejects.toThrow("Incomplete Open Food Facts delta product");
+    await expect(
+      refreshOpenFoodFactsDeltas(root, {
+        bootstrapFrom: first,
+        fetcher: feed([[first, second, archive([{ ...changed, _id: "\ud800" }])]]),
+        now,
+      }),
+    ).rejects.toThrow("product ID or timestamp");
     const encoded = Buffer.from(JSON.stringify(product("10000000", "_", first + 60)));
     encoded[encoded.indexOf('"_",') + 1] = 0xff;
     await expect(

@@ -149,6 +149,8 @@ function parseRecord(line: string, window: Window) {
   if (
     typeof id !== "string" ||
     !id.trim() ||
+    !id.isWellFormed() ||
+    id.includes("\0") ||
     typeof modified !== "number" ||
     !Number.isSafeInteger(modified) ||
     modified <= window.start ||
@@ -164,6 +166,10 @@ function parseRecord(line: string, window: Window) {
       typeof row.rev !== "number" ||
       !Number.isSafeInteger(row.rev) ||
       row.rev < 1 ||
+      [row.product_name_de, row.product_name_en, row.product_name].some(
+        (name) =>
+          name != null && (typeof name !== "string" || !name.isWellFormed() || name.includes("\0")),
+      ) ||
       (row.countries_tags !== undefined &&
         (!Array.isArray(row.countries_tags) ||
           row.countries_tags.some((country) => typeof country !== "string"))))
@@ -256,7 +262,11 @@ export async function refreshOpenFoodFactsDeltas(
       if (!matchesOpenFoodFactsDatabase(source, baseline)) {
         throw new Error("Open Food Facts baseline metadata does not match its manifest");
       }
-      if (windows.length === 0) return { status: "unchanged", cursor, manifest: baseline };
+      if (windows.length === 0) {
+        const latest = await readCatalogManifestFile(join(providerRoot, "active.json"));
+        if (!latest.equals(current)) throw new Error("Active catalog changed during delta check");
+        return { status: "unchanged", cursor, manifest: baseline };
+      }
 
       const downloads: Awaited<ReturnType<typeof download>>[] = [];
       for (const window of windows) downloads.push(await download(window, scratch, fetcher));

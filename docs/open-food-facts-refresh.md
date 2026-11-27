@@ -8,9 +8,10 @@ SQLite schema, nutrition mapping and attribution.
 
 ## Bootstrap or reconcile
 
-Before the full export you intend to import is generated, record the current end timestamp
-from the delta index. This timestamp is the bootstrap checkpoint. Then wait for a full export
-generated after that checkpoint and run the full refresh.
+In a separate catalog root, record the latest end timestamp from the delta index and the
+current full export's ETag before the next full export is generated. The delta timestamp is
+the bootstrap checkpoint. Wait for a new full export with a changed ETag as well as a later
+Last-Modified, so republishing the previous file does not count as a new baseline.
 
 ```sh
 pnpm --filter @edo/off-import run refresh "$CATALOG_ROOT"
@@ -48,4 +49,7 @@ record. A gap beyond the retained window also requires a fresh baseline. If a de
 needs to be rolled back, use `pnpm --filter @edo/off-import run restore "$CATALOG_ROOT"
 "$MANIFEST_SHA256"` with a previously activated release, then rerun the delta importer. If the
 restored release is a full snapshot, reuse its recorded bootstrap checkpoint or establish a
-fresh baseline.
+fresh baseline. Restore a full release before reverting server code to a version that predates
+delta support. A reconciled scratch root contains only its new Open Food Facts releases. Publish
+that provider's verified release into the existing catalog store, preserving BLS and the known
+Open Food Facts history.
