@@ -6,7 +6,13 @@ import {
   normalizeOpenFoodFactsBarcode,
   type PackagedFood,
 } from "../../packages/core/src/packaged-food.ts";
-import { checksum, maxManifestBytes, maxStateBytes, readCatalogState } from "./state.ts";
+import {
+  checksum,
+  maxBlsManifestBytes,
+  maxManifestBytes,
+  maxStateBytes,
+  readCatalogState,
+} from "./state.ts";
 
 interface StoredObject {
   body: ReadableStream;
@@ -56,7 +62,7 @@ async function readJsonObject(object: StoredObject, limit: number) {
   const bytes = await object.arrayBuffer();
   if (bytes.byteLength !== object.size)
     throw new Error("Catalog JSON object has an unexpected size");
-  return { value: JSON.parse(decoder.decode(bytes)) as unknown, sha: await sha256(bytes) };
+  return { bytes, value: JSON.parse(decoder.decode(bytes)) as unknown, sha: await sha256(bytes) };
 }
 
 function json(body: unknown, status: number) {
@@ -146,10 +152,16 @@ async function asset(
   const key = active ? `releases/${state.active}.json` : route;
   const object = await bucket.get(`${provider}/${key}`);
   if (!object) return new Response(null, { status: active ? 503 : 404 });
+  const manifest = match?.[2]
+    ? null
+    : await readJsonObject(object, provider === "bls" ? maxBlsManifestBytes : maxManifestBytes);
+  if (manifest && manifest.sha !== (hash ?? state.active)) {
+    throw new Error("Catalog manifest does not match its published digest");
+  }
   const { license, source } = providers[provider];
   const headers = new Headers({
     "Content-Type": match?.[2] ? "application/vnd.sqlite3" : "application/json",
-    "Cache-Control": hash ? immutable : "no-cache",
+    "Cache-Control": `${hash ? immutable : "no-cache"}${provider === "bls" ? ", no-transform" : ""}`,
     "X-Content-Type-Options": "nosniff",
     Link: `<${license}>; rel="license", <${source}>; rel="cite-as"`,
   });
@@ -161,13 +173,15 @@ async function asset(
       ?.split(",")
       .map((tag) => tag.trim());
     if (tags?.some((tag) => tag === "*" || tag === etag || tag === `W/${etag}`)) {
-      await object.body.cancel();
+      if (!manifest) await object.body.cancel();
       return new Response(null, { status: 304, headers });
     }
   }
   headers.set("Content-Length", String(object.size));
-  if (request.method === "HEAD") await object.body.cancel();
-  return new Response(request.method === "HEAD" ? null : object.body, { headers });
+  if (request.method === "HEAD" && !manifest) await object.body.cancel();
+  return new Response(request.method === "HEAD" ? null : (manifest?.bytes ?? object.body), {
+    headers,
+  });
 }
 
 export default {

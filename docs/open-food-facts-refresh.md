@@ -70,8 +70,9 @@ credentials in the shell environment:
 node apps/catalog-edge/publish.ts publish open-food-facts "$CATALOG_ROOT" empty
 ```
 
-A reviewed BLS release uses the same command with provider `bls`. Use `empty` only for the
-first publication of a provider. To roll back, disable `EDO_CATALOG_REFRESH_ENABLED` and wait
+A reviewed BLS release uses provider `bls` and an additional argument containing the exact
+artifact SHA-256 recorded during review. Use `empty` only for the first publication of a
+provider. To roll back, disable `EDO_CATALOG_REFRESH_ENABLED` and wait
 for any publication already running. Prepare the desired catalog locally and pass the active
 manifest's SHA-256 in place of `empty`. Obtain the SHA-256 from the provider's R2 `state.json`
 if the active manifest is unreadable. Keep refresh paused until the cause is fixed or a fresh

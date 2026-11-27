@@ -19,6 +19,8 @@ import { compatibleOpenFoodFactsManifest } from "../../packages/off-import/src/p
 import {
   type CatalogState,
   checksum,
+  maxBlsArtifactBytes,
+  maxBlsManifestBytes,
   maxManifestBytes,
   maxStateBytes,
   readCatalogState,
@@ -30,9 +32,10 @@ const bucket = "edo-catalogs";
 const off = "open-food-facts";
 const notFound = /\(404\)|\(NoSuchKey\)/;
 const alreadyExists = /\(412\)|\(PreconditionFailed\)/;
+const decoder = new TextDecoder("utf-8", { fatal: true });
 
 function manifestFrom(raw: Buffer, provider: CatalogProvider) {
-  const value: unknown = JSON.parse(raw.toString("utf8"));
+  const value: unknown = JSON.parse(decoder.decode(raw));
   const manifest =
     provider === off
       ? compatibleOpenFoodFactsManifest(value)
@@ -110,7 +113,7 @@ async function downloadState(r2: R2, provider: CatalogProvider, directory: strin
   if (!etag || !/^"[^"\r\n]+"$/.test(etag)) throw new Error("Missing catalog state ETag");
   const rawState = await readFile(path);
   if (rawState.length > maxStateBytes) throw new Error("Published catalog state is oversized");
-  return { etag, state: readCatalogState(JSON.parse(rawState.toString("utf8"))) };
+  return { etag, state: readCatalogState(JSON.parse(decoder.decode(rawState))) };
 }
 
 async function downloadActive(r2: R2, provider: CatalogProvider, directory: string) {
@@ -120,7 +123,10 @@ async function downloadActive(r2: R2, provider: CatalogProvider, directory: stri
   const active = join(directory, "remote-active.json");
   await r2("get-object", `${provider}/releases/${state.active}.json`, active);
   const raw = await readFile(active);
-  if (raw.length > maxManifestBytes || digest(raw) !== state.active) {
+  if (
+    raw.length > (provider === "bls" ? maxBlsManifestBytes : maxManifestBytes) ||
+    digest(raw) !== state.active
+  ) {
     throw new Error("Published manifest does not match the active digest");
   }
   const manifest = manifestFrom(raw, provider);
@@ -201,12 +207,21 @@ export async function publishCatalogToR2(
   provider: CatalogProvider,
   current: { etag: string; state: CatalogState } | undefined,
   scratch: string,
+  reviewedArtifact?: string,
 ) {
   const base = join(root, provider);
   const active = join(base, "active.json");
   const raw = await readFile(active);
-  if (raw.length > maxManifestBytes) throw new Error("Catalog manifest is oversized");
+  if (raw.length > (provider === "bls" ? maxBlsManifestBytes : maxManifestBytes)) {
+    throw new Error("Catalog manifest is oversized");
+  }
   const manifest = manifestFrom(raw, provider);
+  if (provider === "bls" && manifest.artifact.bytes > maxBlsArtifactBytes) {
+    throw new Error("BLS catalog artifact exceeds the mobile download limit");
+  }
+  if (provider === "bls" && manifest.artifact.sha256 !== reviewedArtifact) {
+    throw new Error("BLS catalog artifact does not match the reviewed checksum");
+  }
   const releaseHash = digest(raw);
   const artifact = join(base, "artifacts", `${manifest.artifact.sha256}.sqlite`);
   const release = join(base, "releases", `${releaseHash}.json`);
@@ -257,7 +272,7 @@ async function run() {
   const r2 = profile(process.env.EDO_R2_ACCOUNT_ID);
   const scratch = await mkdtemp(join(tmpdir(), "edo-r2-"));
   try {
-    const [mode, provider, root, expected, ...extra] = process.argv.slice(2);
+    const [mode, provider, root, expected, reviewedArtifact, ...extra] = process.argv.slice(2);
     if (mode === "nightly" && provider === undefined) {
       const current = await downloadActive(r2, off, scratch);
       if (!current) throw new Error("Seed Open Food Facts in R2 before enabling refresh");
@@ -294,15 +309,27 @@ async function run() {
       root &&
       expected &&
       (expected === "empty" || checksum.test(expected)) &&
+      (provider === off
+        ? reviewedArtifact === undefined
+        : reviewedArtifact && checksum.test(reviewedArtifact)) &&
       extra.length === 0
     ) {
       const current = await downloadState(r2, provider, scratch);
       if ((current?.state.active ?? "empty") !== expected)
         throw new Error("Active R2 catalog changed before publication");
-      console.log(await publishCatalogToR2(r2, root, provider, current ?? undefined, scratch));
+      console.log(
+        await publishCatalogToR2(
+          r2,
+          root,
+          provider,
+          current ?? undefined,
+          scratch,
+          reviewedArtifact,
+        ),
+      );
     } else {
       throw new Error(
-        "Usage: publish.ts nightly | publish <bls|open-food-facts> <catalog-root> <empty|active-sha256>",
+        "Usage: publish.ts nightly | publish <provider> <catalog-root> <empty|active-sha256> [reviewed-BLS-artifact-sha256]",
       );
     }
   } finally {

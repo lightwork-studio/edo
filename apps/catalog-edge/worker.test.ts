@@ -117,3 +117,18 @@ test("serves immutable files with their digest as ETag", async () => {
   );
   expect(unchanged.status).toBe(304);
 });
+
+test("refuses a changed manifest even when requested with the published digest", async () => {
+  const { env, files, release } = await prepare();
+  const active = await worker.fetch(new Request(`${origin}/${prefix}/active.json`), env);
+  expect(active.status).toBe(200);
+  const key = `${prefix}/releases/${release}.json`;
+  files.set(key, encoder.encode("{}").buffer);
+  const changed = await worker.fetch(
+    new Request(`${origin}/${key}`, {
+      headers: { "if-none-match": `"${release}"` },
+    }),
+    env,
+  );
+  expect(changed.status).toBe(503);
+});

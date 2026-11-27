@@ -1,4 +1,9 @@
-import { type CatalogManifest, publishCatalog } from "@edo/catalog-import";
+import { DatabaseSync } from "node:sqlite";
+import {
+  type CatalogManifest,
+  matchesCatalogDatabaseMetadata,
+  publishCatalog,
+} from "@edo/catalog-import";
 import { blsSeedSchemaVersion, createBlsCatalogBuilder } from "./seed.ts";
 import { blsAttribution } from "./workbook.ts";
 
@@ -21,6 +26,16 @@ export async function validateBlsCatalogRelease(path: string, manifest: CatalogM
     (manifest.counts.skipped ?? 0) !== 0
   ) {
     throw new Error("Unsupported BLS catalog release");
+  }
+  using database = new DatabaseSync(path, { readOnly: true });
+  if (
+    database.prepare("PRAGMA journal_mode").get()?.journal_mode !== "delete" ||
+    !matchesCatalogDatabaseMetadata(database, manifest, blsAttribution.licenseUrl) ||
+    !database
+      .prepare("SELECT rowid FROM food_search WHERE food_search MATCH ? LIMIT 1")
+      .get("Banane")
+  ) {
+    throw new Error("BLS catalog metadata does not match the manifest");
   }
   await createBlsCatalogBuilder(blsRelease, blsSourceSha256).validate(path, {
     accepted: manifest.counts.accepted,
