@@ -46,6 +46,11 @@ export const strings = {
     favoriteListError: "Couldn’t load your favorites.",
     favoriteReadError: (id: string) => `Couldn’t read this favorite (${id}).`,
     unavailableFavorite: (id: string) => `Unavailable on this device (${id})`,
+    recipes: "Recipes",
+    createRecipe: "Create recipe",
+    recipeReadError: "Couldn’t read your recipes.",
+    recipeServings: (count: string, servings: number) =>
+      `${count} ${servings === 1 ? "serving" : "servings"}`,
     noCustomFoods: "No custom foods yet.",
     myFoodsError: "Couldn’t read your foods.",
     createCustomFood: "Create food",
@@ -159,6 +164,11 @@ export const strings = {
     favoriteListError: "Deine Favoriten konnten nicht geladen werden.",
     favoriteReadError: (id: string) => `Dieser Favorit konnte nicht geladen werden (${id}).`,
     unavailableFavorite: (id: string) => `Auf diesem Gerät nicht verfügbar (${id})`,
+    recipes: "Rezepte",
+    createRecipe: "Rezept erstellen",
+    recipeReadError: "Deine Rezepte konnten nicht geladen werden.",
+    recipeServings: (count: string, servings: number) =>
+      `${count} ${servings === 1 ? "Portion" : "Portionen"}`,
     noCustomFoods: "Noch keine eigenen Lebensmittel.",
     myFoodsError: "Deine Lebensmittel konnten nicht geladen werden.",
     createCustomFood: "Lebensmittel erstellen",

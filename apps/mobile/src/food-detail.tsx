@@ -8,7 +8,7 @@ import {
 } from "@edo/core";
 import { useRef, useState } from "react";
 import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { readAmount } from "./diary-view";
+import { defaultFoodPortion, readAmount } from "./diary-view";
 import type { Strings } from "./strings";
 import {
   colors,
@@ -61,16 +61,9 @@ export function FoodDetail({
   onBack: () => void;
   onSave: (portion: Portion) => void;
 }) {
-  const initialUnit =
-    originalItem?.portion.unit ??
-    (food.nutrition.basis === "per-100-ml"
-      ? "ml"
-      : food.nutrition.basis === "per-portion"
-        ? "portion"
-        : "g");
+  const { unit: initialUnit, amount: initial } = originalItem?.portion ?? defaultFoodPortion(food);
   const [unit, setUnit] = useState<Portion["unit"]>(initialUnit);
   const unitLabel = unit === "portion" ? t.portion : unit;
-  const initial = originalItem?.portion.amount ?? (initialUnit === "portion" ? 1 : 100);
   const initialText = displayAmount(initial, locale);
   const [value, setValue] = useState(initialText);
   const [error, setError] = useState<"invalid" | "save" | null>(null);
