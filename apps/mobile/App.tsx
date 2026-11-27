@@ -375,7 +375,12 @@ function DiaryApp({
         date={date}
         foods={foods}
         favorites={
-          favorites?.length ? (
+          favorites === null ? (
+            <Notice
+              text={t.favoriteListError}
+              action={{ label: t.retry, onPress: () => setRefresh((revision) => revision + 1) }}
+            />
+          ) : favorites.length ? (
             <FavoriteFoodList
               t={t}
               ids={favorites}
@@ -473,8 +478,10 @@ function DiaryApp({
       date={date}
       food={food}
       favorite={
-        route.kind === "add" && favorites
-          ? { selected, toggle: () => setFavorite(food.id, !selected) }
+        route.kind === "add"
+          ? favorites
+            ? { selected, toggle: () => setFavorite(food.id, !selected) }
+            : { retry: () => setRefresh((revision) => revision + 1) }
           : undefined
       }
       originalItem={route.kind === "edit" ? route.item : undefined}

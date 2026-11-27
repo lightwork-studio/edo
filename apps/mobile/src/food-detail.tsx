@@ -16,6 +16,7 @@ import {
   displayAmount,
   displayNumber,
   macros,
+  Notice,
   nutrientValue,
   PrimaryButton,
   Ring,
@@ -56,7 +57,7 @@ export function FoodDetail({
   date: string;
   food: Food;
   originalItem?: DiaryItem;
-  favorite?: { selected: boolean; toggle: () => void };
+  favorite?: { selected: boolean; toggle: () => void } | { retry: () => void };
   onBack: () => void;
   onSave: (portion: Portion) => void;
 }) {
@@ -74,6 +75,7 @@ export function FoodDetail({
   const [value, setValue] = useState(initialText);
   const [error, setError] = useState<"invalid" | "save" | null>(null);
   const [favoriteError, setFavoriteError] = useState(false);
+  const star = favorite && "toggle" in favorite ? favorite : undefined;
   const submitted = useRef(false);
   const amount = unit === initialUnit && value === initialText ? initial : readAmount(value);
   const preview =
@@ -130,16 +132,16 @@ export function FoodDetail({
             <Text accessibilityRole="header" style={[styles.heading, styles.stretch]}>
               {food.name}
             </Text>
-            {favorite && (
+            {star && (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={
-                  favorite.selected ? t.removeFavorite(food.name) : t.addFavorite(food.name)
+                  star.selected ? t.removeFavorite(food.name) : t.addFavorite(food.name)
                 }
-                accessibilityState={{ selected: favorite.selected }}
+                accessibilityState={{ selected: star.selected }}
                 onPress={() => {
                   try {
-                    favorite.toggle();
+                    star.toggle();
                     setFavoriteError(false);
                   } catch {
                     setFavoriteError(true);
@@ -147,12 +149,18 @@ export function FoodDetail({
                 }}
                 style={styles.iconButton}
               >
-                <Text style={[styles.icon, favorite.selected && local.star]}>
-                  {favorite.selected ? "★" : "☆"}
+                <Text style={[styles.icon, star.selected && local.star]}>
+                  {star.selected ? "★" : "☆"}
                 </Text>
               </Pressable>
             )}
           </View>
+          {favorite && "retry" in favorite && (
+            <Notice
+              text={t.favoriteListError}
+              action={{ label: t.retry, onPress: favorite.retry }}
+            />
+          )}
           {favoriteError && (
             <Text accessibilityRole="alert" style={styles.error}>
               {t.favoriteError}
