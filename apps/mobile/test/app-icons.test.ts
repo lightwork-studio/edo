@@ -26,27 +26,40 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 const RGB = 2;
 const RGBA = 6;
 
-/** Width, height and colour type from a PNG's IHDR chunk. */
-function pngHeader(file: string) {
+/** Size, bit depth and colour type from a PNG's IHDR chunk, and the types of all its chunks. */
+function readPng(file: string) {
   const data = readFileSync(path.join(mobile, file));
   expect(data.subarray(0, 8).equals(PNG_SIGNATURE), `${file} is a PNG`).toBe(true);
-  expect(data.toString("latin1", 12, 16)).toBe("IHDR");
-  return { width: data.readUInt32BE(16), height: data.readUInt32BE(20), colourType: data[25] };
+  const chunks: string[] = [];
+  for (let at = 8; at < data.length; at += 12 + data.readUInt32BE(at)) {
+    chunks.push(data.toString("latin1", at + 4, at + 8));
+  }
+  expect(chunks[0]).toBe("IHDR");
+  return {
+    width: data.readUInt32BE(16),
+    height: data.readUInt32BE(20),
+    bitDepth: data[24],
+    colourType: data[25],
+    chunks,
+  };
+}
+
+/** An 8-bit RGB PNG with no transparent colour key, which the App Store requires of icons. */
+function expectOpaque1024(file: string) {
+  const png = readPng(file);
+  expect(png).toMatchObject({ width: 1024, height: 1024, bitDepth: 8, colourType: RGB });
+  expect(png.chunks, `${file} has no transparency chunk`).not.toContain("tRNS");
 }
 
 describe("app icons", () => {
-  it("gives iOS an opaque 1024 px icon, which the App Store requires", () => {
-    expect(pngHeader(app.icon)).toEqual({ width: 1024, height: 1024, colourType: RGB });
+  it("gives iOS an opaque 1024 px icon", () => {
+    expectOpaque1024(app.icon);
   });
 
-  it("gives Android an opaque background and transparent foreground layers", () => {
-    expect(pngHeader(adaptive.backgroundImage)).toEqual({
-      width: 1024,
-      height: 1024,
-      colourType: RGB,
-    });
+  it("gives Android an opaque background layer and RGBA foreground layers", () => {
+    expectOpaque1024(adaptive.backgroundImage);
     for (const layer of [adaptive.foregroundImage, adaptive.monochromeImage]) {
-      expect(pngHeader(layer)).toEqual({ width: 1024, height: 1024, colourType: RGBA });
+      expect(readPng(layer)).toMatchObject({ width: 1024, height: 1024, colourType: RGBA });
     }
   });
 

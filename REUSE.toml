@@ -13,7 +13,12 @@ SPDX-FileCopyrightText = "Edo contributors"
 SPDX-License-Identifier = "AGPL-3.0-only"
 
 [[annotations]]
-path = ["assets/brand/*.svg", "assets/brand/png/*.png", "apps/mobile/assets/*.png"]
+path = [
+  "assets/brand/*.svg",
+  "assets/brand/png/*.png",
+  "apps/mobile/assets/icon.png",
+  "apps/mobile/assets/android-icon-*.png",
+]
 precedence = "closest"
 SPDX-FileCopyrightText = "Edo contributors"
 SPDX-License-Identifier = "LicenseRef-Edo-Brand"
