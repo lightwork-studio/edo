@@ -53,6 +53,7 @@ final class FixtureExporter: UIViewController, UIDocumentPickerDelegate {
             }
             fixtureCount = copies.count
             let picker = UIDocumentPickerViewController(forExporting: copies, asCopy: true)
+            picker.modalPresentationStyle = .fullScreen
             picker.delegate = self
             present(picker, animated: true)
         } catch {

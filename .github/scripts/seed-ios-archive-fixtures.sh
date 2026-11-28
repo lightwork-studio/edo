@@ -28,6 +28,7 @@ with (app / "Info.plist").open("wb") as plist:
         "CFBundleShortVersionString": "1.0",
         "CFBundleVersion": "1",
         "LSRequiresIPhoneOS": True,
+        "UILaunchScreen": {},
         "MinimumOSVersion": "17.0",
         "UIDeviceFamily": [1],
     }, plist)

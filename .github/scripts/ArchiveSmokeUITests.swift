@@ -14,7 +14,7 @@ final class ArchiveSmokeUITests: XCTestCase {
         try launchDiaryFiles()
         try tap("Choose archive", in: [app])
         try tapPicker("Cancel")
-        if element(["Cancel"], in: [app], timeout: 2, hittable: false, picker: true) != nil {
+        if element(["Choose archive"], in: [app], timeout: 2, hittable: true) == nil {
             // The system sheet also supports an interactive dismissal from its top edge.
             let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.09))
             let below = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
@@ -36,7 +36,8 @@ final class ArchiveSmokeUITests: XCTestCase {
         }
         let local = try locate(["On My iPhone"], in: [exporter], hittable: false, picker: true)
         tapPickerElement(local)
-        let save = try locate(["Save", "Export", "Copy", "Move"], in: [exporter], hittable: false, picker: true)
+        let save = exporter.buttons["Save"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 20), exporter.debugDescription)
         tapPickerElement(save)
         try waitFor("Exported four fixtures", in: [exporter])
         print("Saved the synthetic archives through the iOS export picker")
