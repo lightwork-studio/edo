@@ -836,6 +836,14 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         if (queued.pending?.op !== "put") throw new Error("Expected a rebased put");
         requireSynchronousWrite(writeMerged(queued.pending.content));
         saveRecord(db, queued);
+        const persisted = db.get(
+          "SELECT content FROM main.edo_sync_outbox WHERE kind = ? AND id = ?",
+          key.kind,
+          key.id,
+        );
+        if (persisted?.content !== JSON.stringify(queued)) {
+          throw new Error("The rebased outbox edit changed while saving");
+        }
         return true;
       });
     },

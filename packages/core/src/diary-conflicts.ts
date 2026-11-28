@@ -269,11 +269,16 @@ export function reconcileDiaryWeighIn(
   if (local.id !== base.id || server.id !== base.id) {
     throw new TypeError("Diary reconciliation needs one weigh-in ID");
   }
-  const event = choose(base, local, server, sameEvent);
-  const weight = choose(base.kg, local.kg, server.kg, Object.is);
-  if ("conflict" in event || "conflict" in weight) return null;
-  const { localDay, occurredAt } = event.value;
-  return { id: base.id, localDay, occurredAt, kg: weight.value };
+  const localEventChanged = !sameEvent(base, local);
+  const localWeightChanged = base.kg !== local.kg;
+  if (
+    (localEventChanged && !sameEvent(base, server)) ||
+    (localWeightChanged && base.kg !== server.kg)
+  ) {
+    return null;
+  }
+  const { localDay, occurredAt } = localEventChanged ? local : server;
+  return { id: base.id, localDay, occurredAt, kg: localWeightChanged ? local.kg : server.kg };
 }
 
 function sameRecipeYield(a: Recipe, b: Recipe): boolean {

@@ -456,6 +456,15 @@ test("rebases an independent weight and event-time change together with its queu
   expect(diary.sync.journal.queued()).toEqual(blocked);
   source.db.exec("DROP TRIGGER stop_weight_rebase");
 
+  source.db.exec(`CREATE TRIGGER suppress_weight_rebase BEFORE INSERT ON edo_sync_outbox
+    WHEN NEW.kind = 'weigh-in' BEGIN SELECT RAISE(IGNORE); END`);
+  expect(() => diary.sync.tryRebaseWeighIn(session, weighIn.id, "merged-weight")).toThrow(
+    /rebased outbox edit changed/,
+  );
+  expect(diary.listWeighIns(weighIn.localDay, remoteWeighIn.localDay)).toEqual([localWeighIn]);
+  expect(diary.sync.journal.queued()).toEqual(blocked);
+  source.db.exec("DROP TRIGGER suppress_weight_rebase");
+
   expect(diary.sync.tryRebaseWeighIn(session, weighIn.id, "merged-weight")).toBe(true);
   source.db.close();
   const reopened = await createDatabase().start();
@@ -485,6 +494,7 @@ test("rebases an independent weight and event-time change together with its queu
 
 test.each([
   ["overlapping weights", { ...weighIn, kg: 81 }, null],
+  ["same-value overlapping weights", { ...remoteWeighIn, kg: localWeighIn.kg }, null],
   ["opaque account fields", { ...remoteWeighIn, futureMeasure: "fixture" }, null],
   ["account deletion", null, null],
   ["an unjournaled edit", remoteWeighIn, { ...localWeighIn, kg: 85 }],
