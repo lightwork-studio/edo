@@ -98,3 +98,15 @@ The Worker serves the current manifests, immutable artifacts, and barcode lookup
 manifest, SQLite digest, and a known barcode. After those checks, deploy the production
 configuration without `--env staging` to attach the custom domain. Keep previous releases in R2
 so they can be republished if an update fails.
+
+The staging configuration also binds a live barcode lookup. It contacts Open Food Facts only
+after the active snapshot reports a miss. One named Durable Object reserves up to ten product
+reads per rolling minute and honors the provider's `Retry-After` delay. The object persists
+reservation times and the retry deadline across restarts. The lookup identifies Edo and omits
+incoming cookies and authorization. An invalid barcode or unavailable snapshot stops before
+the live lookup.
+
+Use a known snapshot barcode and a valid barcode absent from the snapshot when checking the
+staging route. Confirm the response source is `catalog` for the first and `live` for the second
+when the provider knows it. Removing the `OFF_LIVE` binding disables the fallback while leaving
+the existing lookup route available.

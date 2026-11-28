@@ -47,7 +47,7 @@ it("identifies the client, coalesces barcode aliases and keeps the exact returne
   expect(request.searchParams.get("fields")?.split(",")).toContain("nutrition");
   expect(new Headers(options?.headers).get("user-agent")).toContain("lightwork-studio/edo");
   expect(options?.credentials).toBe("omit");
-  expect(options?.redirect).toBe("error");
+  expect(options?.redirect).toBe("manual");
   expect(results[0]).toMatchObject({
     status: "found",
     checkedAt: start,
@@ -127,6 +127,16 @@ it("treats a mismatched response, invalid payload or upstream failure as unavail
   await expect(lookup("034000470693")).resolves.toEqual({ status: "unavailable" });
   fetchProduct.mockRejectedValueOnce(new Error("Network unavailable"));
   await expect(lookup("034000470693")).resolves.toEqual({ status: "unavailable" });
+});
+
+it("refuses a redirect response without querying its location", async () => {
+  const fetchProduct = vi.fn<typeof fetch>(async () =>
+    Response.redirect("https://example.test/not-the-product-api"),
+  );
+  const lookup = createOpenFoodFactsLiveLookup(fetchProduct, () => start);
+  await expect(lookup(product.code)).resolves.toEqual({ status: "unavailable" });
+  expect(fetchProduct).toHaveBeenCalledOnce();
+  expect(fetchProduct.mock.calls[0]?.[1]?.redirect).toBe("manual");
 });
 
 it("rejects non-JSON and declared oversized successful responses", async () => {

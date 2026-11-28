@@ -1,5 +1,5 @@
-import { expect, test } from "vitest";
-import worker, { type CatalogEnvironment, sha256, shardFor } from "./worker.ts";
+import { expect, test, vi } from "vitest";
+import worker, { type CatalogEnvironment, OpenFoodFactsLive, sha256, shardFor } from "./worker.ts";
 
 const origin = "https://edo.timweb.app/catalog-preview";
 const encoder = new TextEncoder();
@@ -82,6 +82,67 @@ test("serves the catalog barcode contract and distinguishes an unavailable shard
   const unavailable = await worker.fetch(request(), env);
   expect(unavailable.status).toBe(503);
   expect(await unavailable.json()).toEqual({ status: "unavailable" });
+});
+
+test("calls the live lookup on a verified snapshot miss only", async () => {
+  const { env, files, shardKey } = await prepare();
+  const live = vi.fn(async () => Response.json({ status: "rate-limited" }, { status: 429 }));
+  const getByName = vi.fn(() => ({ fetch: live }));
+  const request = (code: string) => new Request(`${origin}/${prefix}/barcodes/${code}`);
+  const withLive = { ...env, OFF_LIVE: { getByName } };
+
+  expect((await worker.fetch(request("1234"), withLive)).status).toBe(200);
+  expect((await worker.fetch(request("invalid"), withLive)).status).toBe(400);
+  expect((await worker.fetch(request("5678"), env)).status).toBe(404);
+  expect(live).not.toHaveBeenCalled();
+  expect((await worker.fetch(request("5678"), withLive)).status).toBe(429);
+  expect(getByName).toHaveBeenCalledExactlyOnceWith("open-food-facts");
+  expect(live).toHaveBeenCalledExactlyOnceWith("https://off-live.internal/5678");
+
+  files.delete(shardKey);
+  expect((await worker.fetch(request("1234"), withLive)).status).toBe(503);
+  expect(live).toHaveBeenCalledTimes(1);
+});
+
+test("keeps the upstream quota and retry delay across object restarts", async () => {
+  const upstream = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }));
+  vi.stubGlobal("fetch", upstream);
+  let time = Date.parse("2026-11-28T12:00:00Z");
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => time);
+  const storage = {
+    kv: new Map<string, { requests: number[]; pausedUntil: number }>(),
+    sync: async () => {},
+  };
+  const state = {
+    storage: {
+      ...storage,
+      kv: { get: storage.kv.get.bind(storage.kv), put: storage.kv.set.bind(storage.kv) },
+    },
+  };
+  const request = new Request("https://off-live.internal/1234");
+  try {
+    const actor = new OpenFoodFactsLive(state);
+    const responses = await Promise.all(Array.from({ length: 12 }, () => actor.fetch(request)));
+    expect(responses.filter(({ status }) => status === 404)).toHaveLength(10);
+    expect(responses.filter(({ status }) => status === 429)).toHaveLength(2);
+    const reopened = new OpenFoodFactsLive(state);
+    expect((await reopened.fetch(request)).status).toBe(429);
+
+    time += 60_000;
+    upstream.mockResolvedValueOnce(
+      new Response(null, { status: 429, headers: { "Retry-After": "120" } }),
+    );
+    expect((await reopened.fetch(request)).status).toBe(429);
+    time += 119_999;
+    expect((await new OpenFoodFactsLive(state).fetch(request)).status).toBe(429);
+    expect(upstream).toHaveBeenCalledTimes(11);
+    time += 1;
+    expect((await reopened.fetch(request)).status).toBe(404);
+    expect(upstream).toHaveBeenCalledTimes(12);
+  } finally {
+    clock.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });
 
 test("does not expose internal index objects or respond to write methods", async () => {
