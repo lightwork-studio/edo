@@ -19,6 +19,7 @@ export const openFoodFactsLicenseUrl = "https://opendatacommons.org/licenses/odb
 
 const freshnessMs = 7 * 24 * 60 * 60 * 1000;
 const lookupTimeoutMs = 5000;
+const maxBarcodeLength = 64;
 const maxResponseBytes = 256 * 1024;
 const previewPath = "/catalog-preview/open-food-facts/barcodes/";
 const recentDays = 30;
@@ -238,7 +239,12 @@ export async function revalidatePackagedSelection(
   product: PackagedFood,
   options: Omit<LookupOptions, "code">,
 ): Promise<Food | null> {
-  const result = await lookupCode({ ...options, code: product.barcode }, true);
+  const code =
+    product.barcode.length <= maxBarcodeLength
+      ? product.barcode
+      : normalizeOpenFoodFactsBarcode(product.barcode);
+  if (!code) return null;
+  const result = await lookupCode({ ...options, code }, true);
   const updated =
     result.status === "found" && !result.cached
       ? result.products.find(({ id }) => id.sourceId === product.id.sourceId)
@@ -279,7 +285,7 @@ async function lookupCode(
 ): Promise<BarcodeResult> {
   if (signal.aborted) return { status: "unavailable" };
   const cleaned = code.trim();
-  const key = cleaned.length <= 64 ? normalizeOpenFoodFactsBarcode(cleaned) : null;
+  const key = cleaned.length <= maxBarcodeLength ? normalizeOpenFoodFactsBarcode(cleaned) : null;
   if (!key) return { status: "invalid" };
   const checkedAt = now();
   let cached = [] as ReturnType<PackagedFoodCache["lookupBarcode"]>;

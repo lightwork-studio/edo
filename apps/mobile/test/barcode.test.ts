@@ -354,6 +354,34 @@ it("keeps the selected local product when the refresh is unavailable, missing or
   expect(cache.findByIds([product.id.sourceId], now)).toEqual([{ product, checkedAt: 0 }]);
 });
 
+it("refreshes an overlong catalog barcode through its canonical alias", async () => {
+  using db = new DatabaseSync(":memory:");
+  const cache = openPackagedFoodCache(testConnection(db));
+  const padded = { ...product, barcode: `${"0".repeat(65)}${product.barcode}` };
+  cache.save([padded], 0, []);
+  const updated = { ...padded, name: "Updated juice" };
+  const request = vi.fn(async () => jsonResponse({ status: "found", products: [updated] }, 200));
+  const options = {
+    origin: "https://example.test",
+    cache,
+    keep: () => [],
+    now: () => 8 * 86400000,
+    signal: new AbortController().signal,
+    request,
+  };
+  await expect(lookupPackagedFood({ ...options, code: padded.barcode })).resolves.toEqual({
+    status: "invalid",
+  });
+  expect(request).not.toHaveBeenCalled();
+  await expect(revalidatePackagedSelection(padded, options)).resolves.toEqual(
+    foodForPackagedProduct(updated),
+  );
+  expect(request).toHaveBeenCalledWith(
+    "https://example.test/catalog-preview/open-food-facts/barcodes/0034000470693",
+    expect.anything(),
+  );
+});
+
 it("replaces offline scan candidates only for a complete catalog response", async () => {
   using db = new DatabaseSync(":memory:");
   const adapter = testConnection(db);
