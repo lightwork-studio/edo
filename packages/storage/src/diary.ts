@@ -290,7 +290,7 @@ export async function openDiary({
       saveMeal: (meal, submissionId) => {
         const prepared = prepareMeal(meal);
         journal.commitLocalProjection({ kind: "meal", id: prepared.id }, submissionId, () => {
-          writeMeal(db, prepared, true);
+          writeMeal(db, prepared);
           const persisted = readMeal(db, prepared.id);
           if (!persisted) throw new Error("Could not read the saved meal for sync");
           return { op: "put", content: persisted };
