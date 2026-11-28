@@ -146,7 +146,7 @@ export function inCurrentDiary<T>(
   }
 }
 
-function requireUnshadowedDiary(db: DiarySqliteConnection): void {
+export function requireUnshadowedDiary(db: DiarySqliteConnection): void {
   const shadow = db.get(`
     SELECT 1
     FROM temp.sqlite_schema AS temporary
@@ -239,10 +239,7 @@ export async function migrateDiary(
   }
   const observed = storageVersion(db);
   requireDiaryIdentity(db, observed);
-  if (observed === migrations.length) {
-    requireUnshadowedDiary(db);
-    return;
-  }
+  if (observed === migrations.length) return;
 
   db.exec("BEGIN IMMEDIATE");
   try {
