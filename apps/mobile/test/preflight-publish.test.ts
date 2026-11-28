@@ -239,11 +239,11 @@ test("checks the revision again before publishing and fails if it cannot verify 
 });
 
 test("fails closed when the Expo preview environment disagrees with the committed build profile", () => {
-  for (const [name, value] of [
-    ["EDO_APP_VARIANT", "development"],
-    ["EXPO_PUBLIC_EDO_CATALOG_ORIGIN", "https://unrelated.test"],
-    ["EXPO_PUBLIC_EDO_BLS_PREVIEW_ORIGIN", "https://unrelated.test"],
-  ]) {
+  for (const [name, value] of Object.entries({
+    EDO_APP_VARIANT: "development",
+    EXPO_PUBLIC_EDO_CATALOG_ORIGIN: "https://unrelated.test",
+    EXPO_PUBLIC_EDO_BLS_PREVIEW_ORIGIN: "https://unrelated.test",
+  })) {
     const result = exercise({ previewEnv: { [name]: value } });
     expect(result.status).not.toBe(0);
     expect(result.diagnostic).toContain(name);
