@@ -15,6 +15,7 @@ import {
   ArchiveSizeError,
   archivePickerAvailable,
   chooseArchive,
+  fddbPickerAvailable,
 } from "./archive-import";
 import type { Strings } from "./strings";
 import { DetailHeader, Notice, PrimaryButton, styles } from "./ui";
@@ -140,7 +141,7 @@ export function ArchiveScreen({
           ) : (
             <Text style={styles.meta}>{t.archivePickerUnavailable}</Text>
           )}
-          {archivePickerAvailable && (
+          {fddbPickerAvailable && (
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: busy }}

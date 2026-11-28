@@ -48,27 +48,36 @@ class EdoArchivePickerModule : Module() {
     OnDestroy { readWorkers.shutdownNow() }
 
     AsyncFunction("pickArchiveAsync") Coroutine { ->
-      try {
-        val uri = chooseFile(launcher)
-        if (uri == null) {
-          mapOf("status" to "cancelled")
-        } else {
-          val resolver = requireNotNull(appContext.reactContext).contentResolver
-          readFromProvider(resolver, uri)
-        }
-      } catch (_: TimeoutCancellationException) {
-        throw CodedException("ERR_EDO_ARCHIVE_TIMEOUT", "Timed out reading the selected diary archive", null)
-      } catch (_: RejectedExecutionException) {
-        throw CodedException("ERR_EDO_ARCHIVE_PROVIDER_BUSY", "The file provider is still busy", null)
-      } catch (error: CodedException) {
-        throw error
-      } catch (error: CancellationException) {
-        throw error
-      } catch (_: Exception) {
-        throw CodedException("ERR_EDO_ARCHIVE_READ", "Could not read the selected diary archive", null)
-      }
+      pickFile(launcher, requireArchiveObject = true)
+    }
+    AsyncFunction("pickFddbCsvAsync") Coroutine { ->
+      pickFile(launcher, requireArchiveObject = false)
     }
   }
+
+  private suspend fun pickFile(
+    launcher: AppContextActivityResultLauncher<String, Uri?>,
+    requireArchiveObject: Boolean,
+  ): Map<String, String> =
+    try {
+      val uri = chooseFile(launcher)
+      if (uri == null) {
+        mapOf("status" to "cancelled")
+      } else {
+        val resolver = requireNotNull(appContext.reactContext).contentResolver
+        readFromProvider(resolver, uri, requireArchiveObject)
+      }
+    } catch (_: TimeoutCancellationException) {
+      throw CodedException("ERR_EDO_ARCHIVE_TIMEOUT", "Timed out reading the selected diary file", null)
+    } catch (_: RejectedExecutionException) {
+      throw CodedException("ERR_EDO_ARCHIVE_PROVIDER_BUSY", "The file provider is still busy", null)
+    } catch (error: CodedException) {
+      throw error
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: Exception) {
+      throw CodedException("ERR_EDO_ARCHIVE_READ", "Could not read the selected diary file", null)
+    }
 
   private suspend fun chooseFile(launcher: AppContextActivityResultLauncher<String, Uri?>): Uri? =
     withContext(Dispatchers.Main.immediate) {
@@ -83,14 +92,18 @@ class EdoArchivePickerModule : Module() {
       }
     }
 
-  private suspend fun readFromProvider(resolver: ContentResolver, uri: Uri): Map<String, String> =
+  private suspend fun readFromProvider(
+    resolver: ContentResolver,
+    uri: Uri,
+    requireArchiveObject: Boolean,
+  ): Map<String, String> =
     withTimeout(READ_TIMEOUT_MS) {
       suspendCancellableCoroutine { continuation ->
         val signal = CancellationSignal()
         continuation.invokeOnCancellation { signal.cancel() }
         readWorkers.execute {
           val result = try {
-            Result.success(readSelection(resolver, uri, signal))
+            Result.success(readSelection(resolver, uri, signal, requireArchiveObject))
           } catch (error: Exception) {
             Result.failure(error)
           }
@@ -127,7 +140,12 @@ private class ArchivePickerContract : AppContextActivityResultContract<String, U
     if (resultCode == Activity.RESULT_OK) intent?.data else null
 }
 
-private fun readSelection(resolver: ContentResolver, uri: Uri, signal: CancellationSignal): Map<String, String> {
+private fun readSelection(
+  resolver: ContentResolver,
+  uri: Uri,
+  signal: CancellationSignal,
+  requireArchiveObject: Boolean,
+): Map<String, String> {
   require(uri.scheme == ContentResolver.SCHEME_CONTENT)
   // Some providers omit or misreport size. The stream limit is always enforced.
   val declaredSize = runCatching {
@@ -140,7 +158,7 @@ private fun readSelection(resolver: ContentResolver, uri: Uri, signal: Cancellat
   }
   signal.throwIfCanceled()
   val descriptor = requireNotNull(resolver.openAssetFileDescriptor(uri, "r", signal))
-  val source = readCancellableArchive(descriptor, signal)
+  val source = readCancellableArchive(descriptor, signal, requireArchiveObject)
   return if (source == null) mapOf("status" to "too-large")
   else mapOf("status" to "selected", "source" to source)
 }
@@ -148,6 +166,7 @@ private fun readSelection(resolver: ContentResolver, uri: Uri, signal: Cancellat
 internal fun readCancellableArchive(
   descriptor: AssetFileDescriptor,
   signal: CancellationSignal,
+  requireArchiveObject: Boolean = true,
 ): String? {
   val closed = AtomicBoolean()
   fun closeDescriptor() {
@@ -158,7 +177,11 @@ internal fun readCancellableArchive(
   signal.setOnCancelListener { runCatching { closeDescriptor() } }
   try {
     signal.throwIfCanceled()
-    return readArchive(descriptor.createInputStream(), checkCancellation = signal::throwIfCanceled)
+    return readArchive(
+      descriptor.createInputStream(),
+      requireArchiveObject = requireArchiveObject,
+      checkCancellation = signal::throwIfCanceled,
+    )
   } finally {
     signal.setOnCancelListener(null)
     closeDescriptor()
