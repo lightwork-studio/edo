@@ -74,6 +74,11 @@ def capture(name):
         subprocess.run(["adb", "exec-out", "screencap", "-p"], stdout=file, timeout=18, check=True)
 
 
+def metric_top(label):
+    node = find(label, fragments=True)
+    return int(re.findall(r"\d+", node.attrib["bounds"])[1])
+
+
 def open_banana():
     tap("Log")
     tap("Search by food name", widget="android.widget.EditText")
@@ -110,11 +115,12 @@ tap("Mock yogurt", fragments=True)
 find("Add 100 g · 100 kcal")
 tap("portion", fragments=True)
 find("Add 1 portion · 150 kcal")
+assert metric_top("Energy,") == metric_top("Carbs,")
 capture("food-detail-controls-390dp")
 tap("Add 1 portion · 150 kcal")
 find("936")
 adb("shell", "am", "force-stop", APP)
-adb("shell", "wm", "size", "640x1280")
+adb("shell", "wm", "size", "640x1450")
 app_locale("de-DE")
 start()
 assert_offline()
@@ -123,7 +129,9 @@ tap("Lebensmittel")
 tap("Mock yogurt", fragments=True)
 tap("Portion", fragments=True)
 find("1 Portion · 150 kcal eintragen")
+assert metric_top("Kohlenhydrate,") > metric_top("Energie,")
 capture("food-detail-controls-320dp-de")
-adb("shell", "input", "swipe", "300", "975", "300", "270", "360")
+for _ in range(2):
+    adb("shell", "input", "swipe", "300", "975", "300", "270", "360")
 find("Nicht verfügbar", fragments=True)
 print("Verified measured portions, live CTA energy, edit cancellation, persistence and EN/DE reflow offline.")
