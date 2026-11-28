@@ -50,6 +50,11 @@ export function readWeighIn(row: SqlRow): WeighIn {
   };
 }
 
+export function readSavedWeighIn(db: DiarySqliteConnection, id: string): WeighIn | null {
+  const row = db.get("SELECT * FROM main.diary_weigh_ins WHERE id = ?", id);
+  return row ? readWeighIn(row) : null;
+}
+
 export function prepareWeighIn(entry: WeighIn): WeighIn {
   return readWeighIn({
     id: entry.id,
@@ -81,7 +86,7 @@ export function validateTargetBudget(target: DailyNutritionTarget): void {
   }
 }
 
-const insertWeighIn = "INSERT INTO diary_weigh_ins VALUES (?, ?, ?, ?)";
+const insertWeighIn = "INSERT INTO main.diary_weigh_ins VALUES (?, ?, ?, ?)";
 
 export function writeWeighIn(db: DiarySqliteConnection, entry: WeighIn): void {
   db.run(
@@ -114,7 +119,7 @@ function insertNutritionTarget(db: DiarySqliteConnection, record: NutritionTarge
 export function readDiaryProgressRecords(db: DiarySqliteConnection) {
   return {
     weighIns: db
-      .all("SELECT * FROM diary_weigh_ins ORDER BY local_day, occurred_at, id")
+      .all("SELECT * FROM main.diary_weigh_ins ORDER BY local_day, occurred_at, id")
       .map(readWeighIn),
     nutritionTargets: db
       .all("SELECT * FROM diary_targets ORDER BY effective_day, save_order")
@@ -133,7 +138,7 @@ export function insertDiaryProgressRecords(
 }
 
 export function verifyDiaryProgress(db: DiarySqliteConnection): void {
-  for (const row of db.all("SELECT * FROM diary_weigh_ins")) readWeighIn(row);
+  for (const row of db.all("SELECT * FROM main.diary_weigh_ins")) readWeighIn(row);
   for (const row of db.all("SELECT * FROM diary_targets")) readNutritionTarget(row);
 }
 
@@ -150,7 +155,7 @@ export function diaryProgress(db: DiarySqliteConnection): DiaryProgressStore {
       return inCurrentDiary(db, "BEGIN", () =>
         db
           .all(
-            `SELECT * FROM diary_weigh_ins WHERE local_day BETWEEN ? AND ?
+            `SELECT * FROM main.diary_weigh_ins WHERE local_day BETWEEN ? AND ?
            ORDER BY local_day, occurred_at, id`,
             first,
             last,

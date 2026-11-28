@@ -3,6 +3,7 @@ import { installSyncJournalV6 } from "@edo/sync/journal-schema-v6";
 import { installSyncJournalV7 } from "@edo/sync/journal-schema-v7";
 import { installSyncJournalV8 } from "@edo/sync/journal-schema-v8";
 import { installSyncJournalV9 } from "@edo/sync/journal-schema-v9";
+import { installSyncJournalV10 } from "@edo/sync/journal-schema-v10";
 import { type DiarySqliteConnection, rollback } from "./sqlite.ts";
 
 type Migration = (db: DiarySqliteConnection) => void;
@@ -89,6 +90,7 @@ export const diaryMigrations: readonly Migration[] = [
   installSyncJournalV7,
   installSyncJournalV8,
   installSyncJournalV9,
+  installSyncJournalV10,
 ];
 
 function storageVersion(db: DiarySqliteConnection): number {
@@ -103,7 +105,7 @@ function matchesLegacyDiary(db: DiarySqliteConnection): boolean {
   const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
   const stored = new Map(
     db
-      .all("SELECT name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'")
+      .all("SELECT name, sql FROM main.sqlite_schema WHERE name NOT GLOB 'sqlite_*'")
       .map(({ name, sql }) => [name, typeof sql === "string" ? normalize(sql) : null]),
   );
   const expected = Object.entries(legacyDiarySchema);
@@ -169,38 +171,39 @@ async function verifyBackup(
     requireDiaryIdentity(snapshot, installed);
     verifyIntegrity(snapshot, "Diary backup");
     for (const query of [
-      "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name",
-      "SELECT * FROM diary_meals ORDER BY id",
-      "SELECT * FROM diary_items ORDER BY id",
+      "SELECT type, name, tbl_name, sql FROM main.sqlite_schema ORDER BY type, name",
+      "SELECT * FROM main.diary_meals ORDER BY id",
+      "SELECT * FROM main.diary_items ORDER BY id",
       ...(installed >= 3
         ? [
-            "SELECT * FROM diary_weigh_ins ORDER BY id",
-            "SELECT * FROM diary_targets ORDER BY save_order",
+            "SELECT * FROM main.diary_weigh_ins ORDER BY id",
+            "SELECT * FROM main.diary_targets ORDER BY save_order",
           ]
         : []),
       ...(installed >= 4
         ? [
-            "SELECT * FROM diary_custom_foods ORDER BY id",
-            "SELECT * FROM diary_recipes ORDER BY id",
-            "SELECT * FROM diary_meal_templates ORDER BY id",
-            "SELECT * FROM diary_favorites ORDER BY provider, source_id",
+            "SELECT * FROM main.diary_custom_foods ORDER BY id",
+            "SELECT * FROM main.diary_recipes ORDER BY id",
+            "SELECT * FROM main.diary_meal_templates ORDER BY id",
+            "SELECT * FROM main.diary_favorites ORDER BY provider, source_id",
           ]
         : []),
       ...(installed >= 5
         ? [
-            "SELECT * FROM edo_sync_binding ORDER BY singleton",
-            "SELECT * FROM edo_sync_outbox ORDER BY kind, id",
-            "SELECT * FROM edo_sync_receipts ORDER BY submission_id",
-            "SELECT * FROM edo_sync_remote ORDER BY kind, id",
-            "SELECT * FROM edo_sync_submission_ids ORDER BY submission_id",
+            "SELECT * FROM main.edo_sync_binding ORDER BY singleton",
+            "SELECT * FROM main.edo_sync_outbox ORDER BY kind, id",
+            "SELECT * FROM main.edo_sync_receipts ORDER BY submission_id",
+            "SELECT * FROM main.edo_sync_remote ORDER BY kind, id",
+            "SELECT * FROM main.edo_sync_submission_ids ORDER BY submission_id",
           ]
         : []),
-      ...(installed >= 6 ? ["SELECT * FROM edo_sync_meal_projections ORDER BY id"] : []),
-      ...(installed >= 7 ? ["SELECT * FROM edo_sync_staged_meal_claims ORDER BY id"] : []),
-      ...(installed >= 8 ? ["SELECT * FROM edo_sync_weigh_in_projections ORDER BY id"] : []),
+      ...(installed >= 6 ? ["SELECT * FROM main.edo_sync_meal_projections ORDER BY id"] : []),
+      ...(installed >= 7 ? ["SELECT * FROM main.edo_sync_staged_meal_claims ORDER BY id"] : []),
+      ...(installed >= 8 ? ["SELECT * FROM main.edo_sync_weigh_in_projections ORDER BY id"] : []),
       ...(installed >= 9
-        ? ["SELECT * FROM edo_sync_attempt_observations ORDER BY submission_id, revision"]
+        ? ["SELECT * FROM main.edo_sync_attempt_observations ORDER BY submission_id, revision"]
         : []),
+      ...(installed >= 10 ? ["SELECT * FROM main.edo_sync_applied_weigh_ins ORDER BY id"] : []),
     ]) {
       if (JSON.stringify(source.all(query)) !== JSON.stringify(snapshot.all(query))) {
         throw new Error("Diary backup does not match the current diary");
@@ -238,7 +241,9 @@ export async function migrateDiary(
     requireDiaryIdentity(db, installed);
     if (installed < migrations.length) {
       if (installed === 0) {
-        const existing = db.get("SELECT name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'");
+        const existing = db.get(
+          "SELECT name FROM main.sqlite_schema WHERE name NOT GLOB 'sqlite_*'",
+        );
         if (existing) throw new Error("Cannot initialize a nonempty unversioned diary");
       } else {
         await verifyBackup(db, installed, backup);

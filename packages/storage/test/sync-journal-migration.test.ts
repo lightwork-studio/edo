@@ -88,6 +88,7 @@ test("upgrades a historical v4 diary and restores the full verified backup", asy
   const diary = await source.open();
   expect(JSON.parse(diary.exportPrivateArchive())).toEqual(v4Archive);
   expect(journalTables(source.sqlite)).toEqual([
+    "edo_sync_applied_weigh_ins",
     "edo_sync_attempt_observations",
     "edo_sync_binding",
     "edo_sync_meal_projections",
@@ -480,7 +481,7 @@ test("recovers an in-flight v8 diary when the attempt observation migration is i
   source.db.close();
   const retry = openFile(source.path, source.dir);
   const diary = await retry.open();
-  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 9 });
+  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: diaryMigrations.length });
   expect(retry.sqlite.all("SELECT * FROM edo_sync_attempt_observations")).toEqual([]);
   expect(diary.sync.journal.history()).toMatchObject({ cursor: 2, revision: 2 });
   expect(diary.sync.journal.queued()).toMatchObject([{ attempt }]);
@@ -497,7 +498,80 @@ test("recovers an in-flight v8 diary when the attempt observation migration is i
   ).rejects.toThrow("saved by a newer version of Edo");
 });
 
+test("recovers a v9 diary and its accepted weigh-in when the applied projection migration stops", async () => {
+  const source = fixture();
+  const v9 = diaryMigrations.slice(0, 9);
+  await migrateDiary(source.sqlite, v9, source.backupBeforeMigration, () => {});
+  source.sqlite.exec("PRAGMA journal_mode = WAL");
+  const key = { kind: "weigh-in", id: "accepted-v9" };
+  const reading = { id: key.id, localDay: "2026-11-12", occurredAt: 1794528000000, kg: 80 };
+  const pending = { op: "put", submissionId: "pending-v9", content: { ...reading, kg: 81 } };
+  const row = { key, baseRevision: 3, base: null, pending, attempt: null, blocked: null };
+  source.sqlite.run(
+    "INSERT INTO edo_sync_outbox VALUES (?, ?, NULL, NULL, ?)",
+    key.kind,
+    key.id,
+    JSON.stringify(row),
+  );
+  source.sqlite.run(
+    "INSERT INTO edo_sync_weigh_in_projections VALUES (?, 3, ?)",
+    key.id,
+    JSON.stringify(reading),
+  );
+  const before = journalTables(source.sqlite);
+  source.db.exec(`CREATE TEMP TABLE edo_sync_weigh_in_projections
+    AS SELECT * FROM main.edo_sync_weigh_in_projections WHERE 0`);
+  await expect(
+    openDiary({
+      connection: source.sqlite,
+      backupBeforeMigration: async (_version, verify) => {
+        const path = join(source.dir, "incomplete-v9.sqlite");
+        await copyDatabase(source.path, path);
+        using incomplete = new DatabaseSync(path);
+        incomplete.exec("DELETE FROM main.edo_sync_weigh_in_projections");
+        verify(connection(incomplete));
+      },
+    }),
+  ).rejects.toThrow("Diary backup does not match the current diary");
+  expect(source.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 9 });
+  expect(journalTables(source.sqlite)).toEqual(before);
+  source.db.exec("DROP TABLE temp.edo_sync_weigh_in_projections");
+  const interrupted: DiarySqliteConnection = {
+    ...source.sqlite,
+    exec(sql) {
+      source.sqlite.exec(sql);
+      if (sql.includes("CREATE TABLE edo_sync_applied_weigh_ins")) {
+        throw new Error("Simulated applied weigh-in schema interruption");
+      }
+    },
+  };
+  await expect(
+    openDiary({ connection: interrupted, backupBeforeMigration: source.backupBeforeMigration }),
+  ).rejects.toThrow("Simulated applied weigh-in schema interruption");
+  expect(source.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 9 });
+  expect(journalTables(source.sqlite)).toEqual(before);
+  source.db.close();
+
+  const retry = openFile(source.path, source.dir);
+  const diary = await retry.open();
+  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 10 });
+  expect(retry.sqlite.all("SELECT * FROM edo_sync_applied_weigh_ins")).toEqual([]);
+  expect(diary.sync.journal.acceptedWeighIn(key.id)).toEqual({ revision: 3, content: reading });
+  expect(diary.sync.journal.queued()).toEqual([row]);
+  expect(JSON.parse(diary.exportPrivateArchive())).toEqual(v4Archive);
+  using prior = new DatabaseSync(join(source.dir, "prior-v9-diary.sqlite"), { readOnly: true });
+  expect(prior.prepare("PRAGMA user_version").get()).toEqual({ user_version: 9 });
+  expect(journalTables(connection(prior))).toEqual(before);
+  expect(prior.prepare("SELECT content FROM edo_sync_outbox WHERE id = ?").get(key.id)).toEqual({
+    content: JSON.stringify(row),
+  });
+  await expect(
+    migrateDiary(retry.sqlite, v9, retry.backupBeforeMigration, () => {}),
+  ).rejects.toThrow("saved by a newer version of Edo");
+});
+
 test.each([
+  "edo_sync_applied_weigh_ins",
   "edo_sync_attempt_observations",
   "edo_sync_submission_ids",
   "edo_sync_meal_projections",
@@ -524,6 +598,7 @@ test.each([
       "weight",
       '{"id":"weight","kg":81}',
     );
+    source.sqlite.run("INSERT INTO edo_sync_applied_weigh_ins VALUES ('applied-weight', 4, NULL)");
     source.sqlite.run(
       "INSERT INTO edo_sync_outbox VALUES ('weigh-in', 'weight', 'reserved', '0.1', ?)",
       JSON.stringify({

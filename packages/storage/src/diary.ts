@@ -1,4 +1,4 @@
-import type { NegotiatedSync } from "@edo/contract";
+import type { NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import {
   type DiaryItem,
   type DiaryMeal,
@@ -12,7 +12,7 @@ import {
   type DiaryProgressStore,
   diaryProgress,
   prepareWeighIn,
-  readWeighIn,
+  readSavedWeighIn,
   verifyDiaryProgress,
   writeWeighIn,
 } from "./diary-progress.ts";
@@ -43,6 +43,7 @@ import {
   readUtcOffset,
 } from "./snapshot.ts";
 import type { DiarySqliteConnection, SqlRow } from "./sqlite.ts";
+import { projectSyncedWeighIn } from "./sync-weigh-in-projection.ts";
 
 export type { DiaryMeal } from "@edo/core";
 
@@ -74,6 +75,8 @@ export interface SyncDiaryStore extends SyncMealStore {
     saveWeighIn(entry: WeighIn, submissionId: string): void;
     deleteWeighIn(id: string, submissionId: string): void;
     tryRebaseWeighIn(session: NegotiatedSync, id: string, submissionId: string): boolean;
+    applyWeighInPull(session: NegotiatedSync, cursor: number, page: PullResponse): void;
+    applyWeighInReceipts(session: NegotiatedSync, response: PushResponse): void;
   };
 }
 
@@ -89,6 +92,10 @@ const selectMeals = `
   FROM diary_meals AS meals
   LEFT JOIN diary_items AS items ON meals.id = items.meal_id
 `;
+
+function unsupportedSyncProjection(): never {
+  throw new Error("This diary projection supports incoming weigh-ins");
+}
 
 function readMeals(rows: SqlRow[]): DiaryMeal[] {
   type AssemblingMeal = Omit<DiaryMeal, "items"> & { items: DiaryItem[] };
@@ -172,11 +179,6 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
   return meal?.id === id ? meal : null;
 }
 
-function getWeighIn(db: DiarySqliteConnection, id: string): WeighIn | null {
-  const row = db.get("SELECT * FROM diary_weigh_ins WHERE id = ?", id);
-  return row ? readWeighIn(row) : null;
-}
-
 function readRebaseWeighIn(content: unknown, id: string): WeighIn | null {
   try {
     // The archive decoder requires the exact supported fields.
@@ -248,6 +250,7 @@ export async function openDiary({
     verifyMyFoods(connection);
   });
   const journal = openSyncJournal(db, () => requireCurrentDiaryVersion(db));
+  const projectWeighIn = projectSyncedWeighIn(db);
   return {
     ...diaryProgress(db),
     ...myFoods(db),
@@ -261,6 +264,10 @@ export async function openDiary({
       }),
     sync: {
       journal,
+      applyWeighInPull: (session, cursor, page) =>
+        journal.applyPage(session, cursor, page, unsupportedSyncProjection, projectWeighIn),
+      applyWeighInReceipts: (session, response) =>
+        journal.applyResults(session, response, unsupportedSyncProjection, projectWeighIn),
       saveMeal: (meal, submissionId) => {
         const prepared = prepareMeal(meal);
         journal.commitLocalProjection({ kind: "meal", id: prepared.id }, submissionId, () => {
@@ -315,7 +322,7 @@ export async function openDiary({
         const reading = prepareWeighIn(entry);
         journal.commitLocalProjection({ kind: "weigh-in", id: reading.id }, submissionId, () => {
           writeWeighIn(db, reading);
-          const persisted = getWeighIn(db, reading.id);
+          const persisted = readSavedWeighIn(db, reading.id);
           if (!persisted) throw new Error("Could not read the saved weigh-in for sync");
           return { op: "put", content: persisted };
         });
@@ -323,7 +330,7 @@ export async function openDiary({
       deleteWeighIn: (id, submissionId) => {
         const readingId = diaryId(id, "weigh-in ID");
         journal.commitLocalProjection({ kind: "weigh-in", id: readingId }, submissionId, () => {
-          db.run("DELETE FROM diary_weigh_ins WHERE id = ?", readingId);
+          db.run("DELETE FROM main.diary_weigh_ins WHERE id = ?", readingId);
           return { op: "delete" };
         });
       },
@@ -341,7 +348,7 @@ export async function openDiary({
               !original ||
               !local ||
               !remote ||
-              JSON.stringify(getWeighIn(db, readingId)) !== JSON.stringify(local)
+              JSON.stringify(readSavedWeighIn(db, readingId)) !== JSON.stringify(local)
             ) {
               return null;
             }
@@ -351,7 +358,7 @@ export async function openDiary({
             const merged = readRebaseWeighIn(content, readingId);
             if (!merged) throw new Error("Invalid rebased weigh-in");
             writeWeighIn(db, merged);
-            if (JSON.stringify(getWeighIn(db, readingId)) !== JSON.stringify(merged)) {
+            if (JSON.stringify(readSavedWeighIn(db, readingId)) !== JSON.stringify(merged)) {
               throw new Error("The rebased weigh-in changed while saving");
             }
           },
