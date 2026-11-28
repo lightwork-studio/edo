@@ -1,5 +1,6 @@
 import { roundNutritionForDisplay } from "@edo/core";
 import type { DiaryMeal } from "@edo/storage";
+import type { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { calendarDate, showTime, totalNutrition } from "./diary-view";
 import type { Strings } from "./strings";
@@ -29,6 +30,7 @@ export function TodayScreen({
   meals,
   kcalTarget,
   feedback,
+  syncNotice,
   onDay,
   onWeek,
   onAdd,
@@ -46,6 +48,7 @@ export function TodayScreen({
   meals: DiaryMeal[] | null;
   kcalTarget: number | null;
   feedback: string | null;
+  syncNotice: ReactNode;
   onDay: (day: string) => void;
   onWeek: (offset: number) => void;
   onAdd?: () => void;
@@ -111,6 +114,7 @@ export function TodayScreen({
         })}
       </View>
       <ScrollView contentContainerStyle={styles.content}>
+        {syncNotice}
         {total && (
           <View style={[styles.card, local.hero]}>
             <Ring size={134} color={colors.accent}>
