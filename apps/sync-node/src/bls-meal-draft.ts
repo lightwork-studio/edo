@@ -5,7 +5,7 @@ import {
 } from "@edo/catalog-import/bls-search";
 import type { Food, Portion } from "@edo/core";
 
-const maxDraftItems = 16;
+export const maxDraftItems = 16;
 const maxNameLength = 160;
 const maxChoices = 5;
 
@@ -26,7 +26,10 @@ export interface BlsMealDraftItem extends DraftItem {
   readonly catalog: CatalogMatch;
 }
 
-function readFields(value: unknown, fields: readonly string[]): Record<string, unknown> {
+export function readDraftFields(
+  value: unknown,
+  fields: readonly string[],
+): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("Invalid extracted meal draft");
   }
@@ -41,7 +44,7 @@ function readFields(value: unknown, fields: readonly string[]): Record<string, u
 
 function readPortion(value: unknown): DraftPortion | null {
   if (value === null) return null;
-  const { amount, unit, quality } = readFields(value, ["amount", "unit", "quality"]);
+  const { amount, unit, quality } = readDraftFields(value, ["amount", "unit", "quality"]);
   if (
     typeof amount !== "number" ||
     !Number.isFinite(amount) ||
@@ -55,7 +58,7 @@ function readPortion(value: unknown): DraftPortion | null {
 }
 
 function readItem(value: unknown): DraftItem {
-  const { name, portion, confidence } = readFields(value, ["name", "portion", "confidence"]);
+  const { name, portion, confidence } = readDraftFields(value, ["name", "portion", "confidence"]);
   if (
     typeof name !== "string" ||
     name.length > maxNameLength ||
