@@ -1,3 +1,4 @@
+import { createDiaryItem, type Food } from "@edo/core";
 import { type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { File } from "expo-file-system";
 import { moveAsync } from "expo-file-system/legacy";
@@ -64,6 +65,28 @@ async function openLocalDiaryConnection() {
   const db = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
     const diary = await openDiary({ connection: connectionFor(db), backupBeforeMigration });
+    if (!diary.listCustomFoods().length) {
+      const food = (sourceId: string, name: string, kcal: number): Food => ({
+        id: { provider: "local", sourceId },
+        name,
+        release: null,
+        preparation: "prepared",
+        nutrition: {
+          basis: "per-100-g",
+          nutrients: { kcal, proteinG: 2, availableCarbohydratesG: 6, fatG: 1, fiberG: null },
+        },
+      });
+      const applesauce = food("native-applesauce", "Äpfelmus", 60);
+      const yogurt = food("native-yogurt", "Mock yogurt", 100);
+      diary.saveCustomFood(applesauce);
+      diary.saveCustomFood(yogurt);
+      diary.setFavorite(yogurt.id, true);
+      const ingredients = [
+        createDiaryItem("applesauce-item", applesauce, { amount: 100, unit: "g" }),
+      ];
+      diary.saveRecipe({ id: "native-muesli", name: "Müsli mit Apfel", servings: 1, ingredients });
+      diary.saveMealTemplate({ id: "native-meal", name: "Porridge breakfast", items: ingredients });
+    }
     return {
       diary,
       newId() {
