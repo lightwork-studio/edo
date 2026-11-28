@@ -261,22 +261,23 @@ export function createSyncClient({
     /** Read a recovery decision for the saved binding without enabling push or pull. */
     async reviewHistory(previous: SavedHistory, signal?: AbortSignal): Promise<HistoryReview> {
       const isCurrent = beginConnection();
-      if (previous.server !== base) return { status: "server-moved", server: base };
-      if (!Number.isSafeInteger(previous.revision) || previous.revision < 0) {
+      const { server, accountBinding, lineage: savedLineage, revision: savedRevision } = previous;
+      if (server !== base) return { status: "server-moved", server: base };
+      if (!Number.isSafeInteger(savedRevision) || savedRevision < 0) {
         throw new SyncWireError("invalid-request", "Invalid saved account revision");
       }
       const request: HelloRequest = { releases: hello.releases, features: [] };
       const { reply } = await requestHello(isCurrent, signal, request);
       assertCurrent(isCurrent);
       const observed = acceptHello(request, reply, undefined, releases);
-      if (observed.accountBinding !== previous.accountBinding) {
+      if (observed.accountBinding !== accountBinding) {
         return { status: "account-changed", server: base };
       }
       const { lineage, revision, restoredFrom } = observed;
       const status =
-        lineage !== previous.lineage
+        lineage !== savedLineage
           ? "lineage-changed"
-          : revision < previous.revision
+          : revision < savedRevision
             ? "cursor-reset"
             : "same-history";
       return { status, server: base, observed: { lineage, revision, restoredFrom } };

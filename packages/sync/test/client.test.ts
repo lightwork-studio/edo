@@ -98,6 +98,24 @@ it("reviews a server move without forwarding source credentials or unrelated acc
   expect([requests, credentials]).toEqual([1, 1]);
 });
 
+it("reads recovery against the binding present before the request", async () => {
+  const server = "https://example.test";
+  const saved = { ...hello, revision: 5, server };
+  const client = createSyncClient({
+    origin: server,
+    authorization: () => "Bearer synthetic",
+    fetch: async () => {
+      saved.accountBinding = "other-account";
+      saved.revision = 30;
+      return Response.json({ ...hello, features: [], revision: 6 });
+    },
+  });
+  expect(await client.reviewHistory(saved)).toMatchObject({
+    status: "same-history",
+    observed: { revision: 6 },
+  });
+});
+
 it("discards a recovery reply superseded by a new connection", async () => {
   const server = "https://example.test";
   let release: (reply: Response) => void = () => {};
