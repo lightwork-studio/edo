@@ -25,7 +25,26 @@ final class ArchiveSmokeUITests: XCTestCase {
         print("Cancelled the iOS picker and returned to Diary files")
     }
 
+    private func exportFixturesToFiles() throws {
+        let exporter = XCUIApplication(bundleIdentifier: "studio.lightwork.edo.smoke-fixtures")
+        exporter.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        exporter.launch()
+        try tap("Export fixtures", in: [exporter])
+        if element(["On My iPhone"], in: [exporter], timeout: 4, hittable: false, picker: true) == nil {
+            let browse = try locate(["Browse", "Locations"], in: [exporter], hittable: false, picker: true)
+            tapPickerElement(browse)
+        }
+        let local = try locate(["On My iPhone"], in: [exporter], hittable: false, picker: true)
+        tapPickerElement(local)
+        let save = try locate(["Save", "Export", "Copy", "Move"], in: [exporter], hittable: false, picker: true)
+        tapPickerElement(save)
+        try waitFor("Exported four fixtures", in: [exporter])
+        print("Saved the synthetic archives through the iOS export picker")
+    }
+
     func testArchiveRestoreThroughFiles() throws {
+        continueAfterFailure = false
+        try exportFixturesToFiles()
         try launchDiaryFiles()
         try chooseArchive("Edo-valid-smoke")
         try waitFor("1 new · 0 already saved", in: [app])

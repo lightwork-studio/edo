@@ -1,37 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-files_app=com.apple.DocumentsApp
-local_storage_group=group.com.apple.FileProvider.LocalStorage
-
-find_local_storage() {
-  xcrun simctl get_app_container "$EDO_SIMULATOR" "$files_app" groups 2>/dev/null |
-    awk -F '\t' -v group="$local_storage_group" '$1 == group { print $2 }'
-}
-
-container=$(find_local_storage || true)
-if [[ ! -d "$container" ]]; then
-  xcrun simctl launch "$EDO_SIMULATOR" "$files_app"
-  for _ in {1..20}; do
-    container=$(find_local_storage || true)
-    [[ -d "$container" ]] && break
-    sleep 0.25
-  done
-fi
-if [[ ! -d "$container" ]]; then
-  echo "The local Files provider container was not found for this simulator" >&2
-  exit 1
-fi
-
-fixtures="$container/File Provider Storage"
-mkdir -p "$fixtures"
-python3 - "$fixtures" <<'PYTHON'
+fixture_app="$RUNNER_TEMP/ArchiveFixtures.app"
+fixture_id=studio.lightwork.edo.smoke-fixtures
+mkdir -p "$fixture_app/FixtureFiles"
+xcrun --sdk iphonesimulator swiftc .github/scripts/ArchiveFixtureExporter.swift \
+  -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+  -target "$(uname -m)-apple-ios17.0-simulator" \
+  -parse-as-library -o "$fixture_app/ArchiveFixtures"
+python3 - "$fixture_app" "$fixture_id" <<'PYTHON'
 from pathlib import Path
+import plistlib
 import sys
 
 sys.path.insert(0, ".github/scripts")
 from archive_smoke_fixtures import write_fixtures
 
-write_fixtures(Path(sys.argv[1]))
+app = Path(sys.argv[1])
+write_fixtures(app / "FixtureFiles")
+with (app / "Info.plist").open("wb") as plist:
+    plistlib.dump({
+        "CFBundleDisplayName": "Archive Fixtures",
+        "CFBundleExecutable": "ArchiveFixtures",
+        "CFBundleIdentifier": sys.argv[2],
+        "CFBundleName": "Archive Fixtures",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": "1.0",
+        "CFBundleVersion": "1",
+        "LSRequiresIPhoneOS": True,
+        "MinimumOSVersion": "17.0",
+        "UIDeviceFamily": [1],
+    }, plist)
 PYTHON
-echo "Seeded synthetic archives in Files → On My iPhone"
+
+codesign --force --sign - --timestamp=none "$fixture_app"
+xcrun simctl install "$EDO_SIMULATOR" "$fixture_app"
