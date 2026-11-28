@@ -1,6 +1,7 @@
 import type { Nutrients } from "@edo/core";
 import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { firstGregorianDisplayDay } from "./diary-calendar";
 
 export const colors = {
   background: "#141517",
@@ -333,6 +334,7 @@ export function nutrientValue(value: number | null, locale: string, unit: "g" | 
 }
 
 export function showDay(day: string, locale: string, today: string): string {
+  if (day < firstGregorianDisplayDay) return day;
   return new Intl.DateTimeFormat(locale, {
     weekday: "short",
     month: "short",
