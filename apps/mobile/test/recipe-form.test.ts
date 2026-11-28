@@ -1,5 +1,8 @@
-import { createDiaryItem, type Food, roundNutritionForDisplay } from "@edo/core";
+import { DatabaseSync } from "node:sqlite";
+import { createDiaryItem, type Food, type PackagedFood, roundNutritionForDisplay } from "@edo/core";
+import { openDiary, openPackagedFoodCache, type SqliteConnection } from "@edo/storage";
 import { expect, it } from "vitest";
+import { searchCachedPackagedFoods } from "../src/packaged-food-search.ts";
 import {
   ingredientUnitChange,
   ingredientUnits,
@@ -124,4 +127,75 @@ it("rounds the ingredient, batch and serving alike at an energy midpoint", () =>
       (value) => roundNutritionForDisplay(value).kcal,
     ),
   ).toEqual([15, 15, 15]);
+});
+
+function sqliteConnection(db: DatabaseSync): SqliteConnection {
+  return {
+    exec: (sql) => db.exec(sql),
+    run: (sql, ...parameters) => void db.prepare(sql).run(...parameters),
+    get: (sql, ...parameters) => db.prepare(sql).get(...parameters),
+    all: (sql, ...parameters) => db.prepare(sql).all(...parameters),
+  };
+}
+
+it("captures an offline packaged ingredient independently of later cache refresh and eviction", async () => {
+  using publicDb = new DatabaseSync(":memory:");
+  using privateDb = new DatabaseSync(":memory:");
+  const cacheConnection = sqliteConnection(publicDb);
+  const cache = openPackagedFoodCache(cacheConnection);
+  const diaryOptions = {
+    connection: sqliteConnection(privateDb),
+    async backupBeforeMigration() {
+      throw new Error("The test diary is blank or current");
+    },
+  };
+  const diary = await openDiary(diaryOptions);
+  const product: PackagedFood = {
+    id: { provider: "open-food-facts", sourceId: "offline-tomato-juice" },
+    name: "Tomato juice",
+    alternateName: "Tomatensaft",
+    barcode: "034000470693",
+    release: "catalog-initial",
+    preparation: "as-sold",
+    nutrition: {
+      basis: "per-100-ml",
+      nutrients: { kcal: 20, proteinG: 0, availableCarbohydratesG: 3, fatG: 0, fiberG: null },
+    },
+  };
+  cache.save([product], 100, []);
+  const results = searchCachedPackagedFoods(cache, "tomatens", 101);
+  expect(results).toHaveLength(1);
+  const selected = results[0];
+  if (!selected) throw new Error("Expected the cached packaged ingredient");
+  const draft = newRecipeIngredient("ingredient", selected);
+  expect(draft.original.portion).toEqual({ amount: 100, unit: "ml" });
+  const changed = recipeIngredient({ ...draft, amount: "250" });
+  if (!changed) throw new Error("Expected a valid millilitre portion");
+  const recipe = previewRecipe("Tomato drink", [changed], 2, undefined);
+  if (!recipe) throw new Error("Expected a valid recipe");
+  diary.saveRecipe({ ...recipe.draft, id: "tomato-drink" });
+  expect(recipe.portion.nutrients.kcal).toBe(25);
+
+  cache.save([{ ...product, name: "Tomato nectar", release: "catalog-revised" }], 102, []);
+  expect(searchCachedPackagedFoods(cache, "nectar", 103)[0]?.release).toBe("catalog-revised");
+  const evictedCache = openPackagedFoodCache(cacheConnection, 0);
+  evictedCache.prune([]);
+  expect(searchCachedPackagedFoods(evictedCache, "tomatens", 104)).toEqual([]);
+  const reopened = await openDiary(diaryOptions);
+  expect(reopened.listRecipes()[0]?.ingredients).toEqual([changed]);
+  expect(changed).toMatchObject({
+    food: { id: product.id, name: product.name, release: product.release },
+    portion: { amount: 250, unit: "ml" },
+    nutrients: { kcal: 50, proteinG: 0, fiberG: null },
+  });
+});
+
+it("allows other ingredient sources to remain usable if the packaged cache cannot be queried", () => {
+  const brokenCache = {
+    search() {
+      throw new Error("Cache unavailable");
+    },
+  };
+  expect(searchCachedPackagedFoods(brokenCache, "tomato", 100)).toEqual([]);
+  expect(searchCachedPackagedFoods(null, "tomato", 100)).toEqual([]);
 });
