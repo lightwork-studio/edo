@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { closeSync, openSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants, openSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
   type AuthenticatedHistory,
@@ -26,6 +27,7 @@ import {
 
 const applicationId = 0x45444f53;
 const schemaVersion = 2;
+const writeBusyTimeoutMs = 1000;
 const defaultPageSize = 100;
 // Two escaped 1,024-unit IDs plus release, cursor, and JSON framing fit in this reserve.
 const pullEnvelopeReserve = 14 * 1024;
@@ -142,6 +144,27 @@ function databaseFormat(db: DatabaseSync) {
     id: db.prepare("PRAGMA main.application_id").get()?.application_id,
   };
 }
+
+function syncSchema(db: DatabaseSync) {
+  const objects = db
+    .prepare(`
+    SELECT name, type, sql FROM main.sqlite_schema WHERE name GLOB 'sync_*'
+  `)
+    .all();
+  return new Map(
+    objects.map(({ name, type, sql }) => [
+      name,
+      JSON.stringify([type, typeof sql === "string" ? sql.replace(/\s+/g, " ").trim() : sql]),
+    ]),
+  );
+}
+
+const expectedSyncSchema = (() => {
+  using reference = new DatabaseSync(":memory:");
+  reference.exec(schema);
+  reference.exec(mealItemOwnershipSchema);
+  return syncSchema(reference);
+})();
 
 function initialize(db: DatabaseSync) {
   transaction(db, "BEGIN IMMEDIATE", () => {
@@ -427,11 +450,21 @@ function preparePrivateFile(filename: string) {
 export function openSyncStore(filename: string, { applyContent }: SyncStoreOptions): SyncStore {
   if (typeof applyContent !== "function")
     throw new TypeError("Sync storage needs record validation");
-  preparePrivateFile(filename);
-  const db = new DatabaseSync(filename);
+  const path = filename === ":memory:" ? null : resolve(filename);
+  preparePrivateFile(path ?? filename);
+  const originalFile = path ? statSync(path, { bigint: true }) : null;
+  const db = new DatabaseSync(path ?? filename);
+
+  function checkDatabasePath() {
+    if (!path || !originalFile) return true;
+    const current = statSync(path, { bigint: true });
+    return current.isFile() && current.dev === originalFile.dev && current.ino === originalFile.ino;
+  }
+
   try {
-    db.exec("PRAGMA busy_timeout = 1000; PRAGMA foreign_keys = ON");
+    db.exec(`PRAGMA busy_timeout = ${writeBusyTimeoutMs}; PRAGMA foreign_keys = ON`);
     initialize(db);
+    if (!checkDatabasePath()) throw new Error("The sync database moved during startup");
 
     const insertAccount = db.prepare(
       "INSERT INTO sync_accounts (account_binding, lineage) VALUES (?, ?)",
@@ -500,18 +533,26 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       isReady() {
         if (!db.isOpen) return false;
         try {
-          const { id, version } = databaseFormat(db);
-          if (id !== applicationId || version !== schemaVersion) return false;
-          return (
-            db
-              .prepare(`
-            SELECT count(*) AS count FROM main.sqlite_schema
-            WHERE type = 'table' AND name IN (
-              'sync_accounts', 'sync_records', 'sync_receipts', 'sync_meal_item_owners'
-            )
-          `)
-              .get()?.count === 4
-          );
+          if (!checkDatabasePath()) return false;
+          if (path) {
+            accessSync(path, constants.W_OK);
+            accessSync(dirname(path), constants.W_OK);
+          }
+          // A readiness check never waits for another connection's lock on the HTTP thread.
+          db.exec("PRAGMA busy_timeout = 0");
+          try {
+            return transaction(db, "BEGIN", () => {
+              const { id, version } = databaseFormat(db);
+              if (id !== applicationId || version !== schemaVersion) return false;
+              const actual = syncSchema(db);
+              for (const [name, definition] of expectedSyncSchema) {
+                if (actual.get(name) !== definition) return false;
+              }
+              return true;
+            });
+          } finally {
+            db.exec(`PRAGMA busy_timeout = ${writeBusyTimeoutMs}`);
+          }
         } catch {
           return false;
         }
