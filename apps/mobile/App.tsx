@@ -3,6 +3,7 @@ import {
   type Food,
   type FoodId,
   foodForRecipe,
+  type PackagedFood,
   type Portion,
   type Recipe,
   sevenDayWeightAverage,
@@ -14,6 +15,7 @@ import {
   mealFromTemplate,
   type SavedMealTemplate,
 } from "@edo/storage";
+import { fetch } from "expo/fetch";
 import { randomUUID } from "expo-crypto";
 import { getLocales } from "expo-localization";
 import { useEffect, useMemo, useState } from "react";
@@ -28,8 +30,14 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { pruneArchiveExports } from "./src/archive-files";
 import { ArchiveScreen } from "./src/archive-screen";
-import { foodForPackagedProduct, retainedProducts } from "./src/barcode";
+import {
+  foodForPackagedProduct,
+  retainedProducts,
+  revalidatePackagedSelection,
+  stalePackagedSelection,
+} from "./src/barcode";
 import { BarcodeEntry, type BarcodeState } from "./src/barcode-entry";
+import { packagedCatalogOrigin } from "./src/catalog-origin";
 import { CustomFoodList } from "./src/custom-food-list";
 import { CustomFoodScreen } from "./src/custom-food-screen";
 import {
@@ -59,12 +67,13 @@ import { SearchScreen } from "./src/search";
 import { appLocale, type Language, strings } from "./src/strings";
 import { TargetsScreen } from "./src/targets-screen";
 import { TodayScreen } from "./src/today";
-import { Notice, showDay, styles } from "./src/ui";
+import { DetailHeader, Notice, showDay, styles } from "./src/ui";
 import { useDatabase } from "./src/use-database";
 import { WeighInScreen } from "./src/weigh-in";
 
 type LocalDiary = Awaited<ReturnType<typeof openLocalDiary>>;
 type SearchContext = EntryTime & { query: string };
+type FoodSelection = SearchContext & { food: Food; fromCustomFoods?: boolean };
 type DeviceContext = { today: string; language: Language; locale: string };
 type Route =
   | { kind: "diary" }
@@ -78,7 +87,8 @@ type Route =
   | ({ kind: "my-foods" } & SearchContext)
   | ({ kind: "custom-food"; current: Food | null; sourceId: string } & SearchContext)
   | ({ kind: "recipe"; current: Recipe | null; recipeId: string } & SearchContext)
-  | ({ kind: "add"; food: Food; barcode?: BarcodeState; fromCustomFoods?: boolean } & SearchContext)
+  | ({ kind: "add"; barcode?: BarcodeState } & FoodSelection)
+  | ({ kind: "revalidate-packaged"; product: PackagedFood } & FoodSelection)
   | { kind: "edit"; day: string; mealId: string; itemId: string; item: DiaryItem };
 
 function useDeviceContext(): DeviceContext {
@@ -180,6 +190,7 @@ function DiaryApp({
   const packagedCache = useDatabase(openLocalPackagedCache, false);
   const t = strings[language];
   const { diary } = connection;
+  const cachedProducts = packagedCache.value === "error" ? null : packagedCache.value?.cache;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Favorite writes invalidate the SQLite read.
   const favorites = useMemo(() => {
     if (route.kind !== "my-foods" && route.kind !== "add") return null;
@@ -203,11 +214,45 @@ function DiaryApp({
   }, [diary, monday, lastDay, refresh]);
   const meals = week.find((entry) => entry.day === day)?.meals ?? null;
 
+  useEffect(() => {
+    if (route.kind !== "revalidate-packaged") return;
+    const controller = new AbortController();
+    const { product, ...selection } = route;
+    void revalidatePackagedSelection(product, {
+      origin: packagedCatalogOrigin,
+      cache: cachedProducts ?? null,
+      keep: () => retainedProducts(diary, today),
+      request: fetch,
+      signal: controller.signal,
+    })
+      .catch(() => null)
+      .then((food) => {
+        if (controller.signal.aborted) return;
+        setRoute((current) =>
+          current === route ? { ...selection, kind: "add", food: food ?? route.food } : current,
+        );
+      });
+    return () => controller.abort();
+  }, [route, cachedProducts, diary, today]);
+
+  function pickFood(context: SearchContext, food: Food, fromCustomFoods?: boolean) {
+    Keyboard.dismiss();
+    const selection = { ...context, food, fromCustomFoods };
+    const product =
+      packagedCatalogOrigin && stalePackagedSelection(food, cachedProducts, Date.now());
+    setRoute(
+      product
+        ? { ...selection, kind: "revalidate-packaged", product }
+        : { ...selection, kind: "add" },
+    );
+  }
+
   function goBack() {
     if (route.kind === "diary") return false;
     Keyboard.dismiss();
-    if (route.kind === "add") {
-      const { day, occurredAt, utcOffsetMinutes, query, barcode, fromCustomFoods } = route;
+    if (route.kind === "add" || route.kind === "revalidate-packaged") {
+      const { day, occurredAt, utcOffsetMinutes, query, fromCustomFoods } = route;
+      const barcode = route.kind === "add" ? route.barcode : undefined;
       const context = { day, occurredAt, utcOffsetMinutes, query };
       setRoute(
         barcode
@@ -382,7 +427,22 @@ function DiaryApp({
       />
     );
   }
-  const cachedProducts = packagedCache.value === "error" ? null : packagedCache.value?.cache;
+  if (route.kind === "revalidate-packaged") {
+    const { product: _product, ...selection } = route;
+    return (
+      <>
+        <DetailHeader title={t.addFood} subtitle={date} back={t.back} onBack={goBack} />
+        <Notice
+          text={t.checkingPackagedFood}
+          pending
+          action={{
+            label: t.useCachedFood,
+            onPress: () => setRoute({ ...selection, kind: "add" }),
+          }}
+        />
+      </>
+    );
+  }
   function setFavorite(id: FoodId, enabled: boolean) {
     diary.setFavorite(id, enabled);
     setRefresh((revision) => revision + 1);
@@ -451,7 +511,7 @@ function DiaryApp({
               catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
               cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
               language={language}
-              onPick={(food) => setRoute({ ...route, kind: "add", food, fromCustomFoods: true })}
+              onPick={(food) => pickFood(route, food, true)}
               onRemove={(id) => setFavorite(id, false)}
               onRetry={(provider) => {
                 if (provider === "bls") catalog.retry();
@@ -595,10 +655,7 @@ function DiaryApp({
         }}
         onCatalogRetry={catalog.retry}
         onBack={goBack}
-        onPick={(food) => {
-          Keyboard.dismiss();
-          setRoute({ ...route, kind: "add", food });
-        }}
+        onPick={(food) => pickFood(route, food)}
       />
     );
   }

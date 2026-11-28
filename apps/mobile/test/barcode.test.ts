@@ -8,6 +8,8 @@ import {
   foodForPackagedProduct,
   lookupPackagedFood,
   retainedProducts,
+  revalidatePackagedSelection,
+  stalePackagedSelection,
 } from "../src/barcode";
 import { httpsOrigin } from "../src/catalog-origin";
 import { saveFood } from "../src/diary-view";
@@ -231,6 +233,153 @@ it("keeps a known barcode available when a response is too large or has duplicat
   }
   const limited = async () => jsonResponse({ status: "rate-limited" }, 429);
   await expect(lookupPackagedFood({ ...input, request: limited })).resolves.toEqual(expected);
+});
+
+it("refreshes only the selected source and keeps both diary snapshots after cache eviction", async () => {
+  using privateDb = new DatabaseSync(":memory:");
+  using publicDb = new DatabaseSync(":memory:");
+  const options = {
+    connection: testConnection(privateDb),
+    async backupBeforeMigration() {
+      throw new Error("A blank or current diary needs no backup");
+    },
+  };
+  const diary = await openDiary(options);
+  const cache = openPackagedFoodCache(testConnection(publicDb), 0);
+  const day = "2026-11-27";
+  const prior = foodForPackagedProduct(product);
+  const { id, barcode } = product;
+  const latestNutrition = {
+    basis: "per-100-g",
+    nutrients: { kcal: 142, proteinG: 6, availableCarbohydratesG: 15, fatG: 1, fiberG: null },
+  } as const;
+  const current = { ...product, release: "fixture-2026-12-04", nutrition: latestNutrition };
+  const sibling = { ...current, id: { ...id, sourceId: "same-code" }, name: "Different food" };
+  const first = {
+    kind: "add",
+    food: prior,
+    day,
+    occurredAt: Date.parse(`${day}T09:00:00Z`),
+  } as const;
+  const ids = ["item-a", "meal-a", "item-b", "meal-b"].values();
+  const nextId = () => ids.next().value ?? "";
+  saveFood(diary, first, { amount: 100, unit: "ml" }, nextId);
+  cache.save([product], 0, retainedProducts(diary, day));
+  expect(stalePackagedSelection(prior, cache, 1)).toBeNull();
+
+  const now = 8 * 86400000;
+  // A complete lookup sees only a fresh sibling while the diary has retained the selected row.
+  cache.saveBarcodeCandidates(barcode, [sibling], now, [id.sourceId, sibling.id.sourceId]);
+  expect(cache.lookupBarcode(barcode, now)).toEqual([{ product: sibling, checkedAt: now }]);
+  const selected = stalePackagedSelection(prior, cache, now);
+  expect(selected).toEqual(product);
+  if (!selected) throw new Error("Expected an older selected product");
+  const request = vi.fn(async () =>
+    jsonResponse({ status: "found", products: [sibling, current] }, 200),
+  );
+  const resolved = await revalidatePackagedSelection(selected, {
+    origin: "https://example.test",
+    cache,
+    keep: () => retainedProducts(diary, day),
+    now: () => now,
+    request,
+    signal: new AbortController().signal,
+  });
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(resolved).toEqual(foodForPackagedProduct(current));
+  expect(stalePackagedSelection(prior, cache, now)).toBeNull();
+  if (!resolved) throw new Error("Expected fresh nutrition for the selected source");
+  saveFood(
+    diary,
+    { ...first, food: resolved, occurredAt: first.occurredAt + 3600000 },
+    { amount: 50, unit: "g" },
+    nextId,
+  );
+
+  cache.prune([]);
+  expect(cache.findByIds([id.sourceId], now)).toEqual([]);
+  const reopened = await openDiary(options);
+  const items = reopened.listMeals(day).flatMap((meal) => meal.items);
+  expect(items).toMatchObject([
+    {
+      food: { id, release: product.release, nutrition: { basis: "per-100-ml" } },
+      portion: { amount: 100, unit: "ml" },
+      nutrients: { kcal: 41 },
+    },
+    {
+      food: { id, release: current.release, nutrition: { basis: "per-100-g" } },
+      portion: { amount: 50, unit: "g" },
+      nutrients: { kcal: 71 },
+    },
+  ]);
+});
+
+it("keeps the selected local product when the refresh is unavailable, missing or canceled", async () => {
+  using db = new DatabaseSync(":memory:");
+  const cache = openPackagedFoodCache(testConnection(db));
+  cache.save([product], 0, []);
+  const now = 8 * 86400000;
+  const controller = new AbortController();
+  const options = {
+    origin: "https://example.test",
+    cache,
+    keep: () => [],
+    now: () => now,
+    signal: controller.signal,
+  };
+  const sibling = { ...product, id: { ...product.id, sourceId: "sibling" } };
+  expect(
+    await revalidatePackagedSelection(product, {
+      ...options,
+      request: async () => {
+        throw new Error("Offline");
+      },
+    }),
+  ).toBeNull();
+  expect(
+    await revalidatePackagedSelection(product, {
+      ...options,
+      request: async () => jsonResponse({ status: "found", products: [sibling] }, 200),
+    }),
+  ).toBeNull();
+  expect(
+    await revalidatePackagedSelection(product, {
+      ...options,
+      request: async () => {
+        controller.abort();
+        return jsonResponse({ status: "found", products: [{ ...product, name: "Updated" }] }, 200);
+      },
+    }),
+  ).toBeNull();
+  expect(cache.findByIds([product.id.sourceId], now)).toEqual([{ product, checkedAt: 0 }]);
+});
+
+it("refreshes an overlong catalog barcode through its canonical alias", async () => {
+  using db = new DatabaseSync(":memory:");
+  const cache = openPackagedFoodCache(testConnection(db));
+  const padded = { ...product, barcode: `${"0".repeat(65)}${product.barcode}` };
+  cache.save([padded], 0, []);
+  const updated = { ...padded, name: "Updated juice" };
+  const request = vi.fn(async () => jsonResponse({ status: "found", products: [updated] }, 200));
+  const options = {
+    origin: "https://example.test",
+    cache,
+    keep: () => [],
+    now: () => 8 * 86400000,
+    signal: new AbortController().signal,
+    request,
+  };
+  await expect(lookupPackagedFood({ ...options, code: padded.barcode })).resolves.toEqual({
+    status: "invalid",
+  });
+  expect(request).not.toHaveBeenCalled();
+  await expect(revalidatePackagedSelection(padded, options)).resolves.toEqual(
+    foodForPackagedProduct(updated),
+  );
+  expect(request).toHaveBeenCalledWith(
+    "https://example.test/catalog-preview/open-food-facts/barcodes/0034000470693",
+    expect.anything(),
+  );
 });
 
 it("replaces offline scan candidates only for a complete catalog response", async () => {
