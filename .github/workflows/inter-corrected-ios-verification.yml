@@ -1,0 +1,82 @@
+name: iOS Inter typography verification
+
+on:
+  push:
+    branches: [verify/native-inter-corrected-ios]
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: Build and read Inter on iPhone 17
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate iOS and install pods
+        working-directory: apps/mobile
+        run: |
+          xcodebuild -version
+          pnpm exec expo prebuild --platform ios --no-install
+          pod install --project-directory=ios
+          if ! ruby -e 'require "xcodeproj"'; then
+            gem install xcodeproj --version 1.27.0 --user-install --no-document
+          fi
+          cp ../../.github/scripts/OfflineSmokeUITests.swift ios/
+          ruby ../../.github/scripts/add-offline-smoke-target.rb ios/Edo.xcodeproj
+      - name: Choose and boot an iPhone simulator
+        run: |
+          device=$(xcrun simctl list devices available -j | node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const { devices } = JSON.parse(readFileSync(0, "utf8"));
+            const runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-5";
+            const iphone = (devices[runtime] ?? []).find(({ name }) => name === "iPhone 17");
+            if (!iphone) throw new Error("The runner has no iPhone 17 with iOS 26.5");
+            console.error("Testing iOS 26.5 on " + iphone.name);
+            console.log(iphone.udid);
+          ')
+          xcrun simctl bootstatus "$device" -b
+          echo "EDO_SIMULATOR=$device" >> "$GITHUB_ENV"
+      - name: Compile the simulator app and UI tests without remote catalogs
+        env:
+          EXPO_PUBLIC_EDO_CATALOG_ORIGIN: ''
+          EXPO_PUBLIC_EDO_BLS_PREVIEW_ORIGIN: ''
+          EXPO_PUBLIC_EDO_BLS_PREVIEW_SHA256: ''
+        working-directory: apps/mobile/ios
+        run: |
+          xcodebuild -quiet -workspace Edo.xcworkspace -scheme OfflineSmoke \
+            -configuration Release -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$EDO_SIMULATOR" \
+            -derivedDataPath "$RUNNER_TEMP/edo-ios" build-for-testing
+      - name: Install Edo and verify the bundled catalog
+        run: |
+          products="$RUNNER_TEMP/edo-ios/Build/Products"
+          app="$products/Release-iphonesimulator/Edo.app"
+          /usr/libexec/PlistBuddy -c "Print :UIAppFonts" "$app/Info.plist" | grep -F InterVariable.ttf
+          cmp apps/mobile/assets/fonts/InterVariable.ttf "$app/InterVariable.ttf"
+          cmp apps/mobile/assets/fonts/inter_license.json "$app/inter_license.json"
+          xcrun simctl install "$EDO_SIMULATOR" "$app"
+          test_files=("$products"/*.xctestrun)
+          test "${#test_files[@]}" = 1
+          test -f "${test_files[0]}"
+          xcodebuild -xctestrun "${test_files[0]}" \
+            -destination "platform=iOS Simulator,id=$EDO_SIMULATOR" \
+            -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/edo-offline.xcresult" \
+            test-without-building
+      - name: Keep the UI test report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ios-inter-corrected-smoke
+          path: ${{ runner.temp }}/edo-offline.xcresult
+          if-no-files-found: ignore
+          retention-days: 3
