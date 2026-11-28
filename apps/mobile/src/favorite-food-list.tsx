@@ -17,6 +17,7 @@ export function FavoriteFoodList({
   diary,
   today,
   language,
+  match,
   onPick,
   onRemove,
   onRetry,
@@ -30,6 +31,7 @@ export function FavoriteFoodList({
   diary: Pick<DiaryStore, "listMeals">;
   today: string;
   language: Language;
+  match?: (name: string) => boolean;
   onPick: (food: Food) => void;
   onRemove: (id: FoodId) => void;
   onRetry: (provider: FoodId["provider"]) => void;
@@ -91,12 +93,20 @@ export function FavoriteFoodList({
     (cache === "error" || result.resolved.packagedCacheFailed) &&
     result.resolved.fromDiary.size > 0 &&
     ids.every((id) => id.provider !== "open-food-facts" || result.resolved.byId.has(foodKey(id)));
+  const listed =
+    ready && match
+      ? ids.filter((id) => {
+          const food = result.resolved.byId.get(foodKey(id));
+          return !food || match(food.name);
+        })
+      : ids;
   return (
     <>
       <Text accessibilityRole="header" style={styles.title}>
         {t.favorites}
       </Text>
       {!ready && <Notice text={t.loading} pending />}
+      {ready && listed.length === 0 && <Notice text={t.libraryNoMatches} />}
       {showCacheRetry && (
         <Notice
           text={t.favoriteCacheUnavailable}
@@ -104,7 +114,7 @@ export function FavoriteFoodList({
         />
       )}
       {ready &&
-        ids.map((id) => {
+        listed.map((id) => {
           const key = foodKey(id);
           const food = result.resolved.byId.get(key);
           const source =

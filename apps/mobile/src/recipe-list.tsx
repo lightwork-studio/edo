@@ -7,6 +7,7 @@ export function RecipeList({
   t,
   locale,
   recipes,
+  emptyText,
   onCreate,
   onEdit,
   onPick,
@@ -15,6 +16,7 @@ export function RecipeList({
   t: Strings;
   locale: string;
   recipes: readonly Recipe[] | null;
+  emptyText?: string;
   onCreate: () => void;
   onEdit: (recipe: Recipe) => void;
   onPick: (recipe: Recipe) => void;
@@ -41,6 +43,7 @@ export function RecipeList({
       {ordered === null && (
         <Notice text={t.recipeReadError} action={{ label: t.retry, onPress: onRetry }} />
       )}
+      {emptyText && ordered?.length === 0 && <Notice text={emptyText} />}
       {ordered?.map((recipe) => (
         <View key={recipe.id} style={[styles.card, styles.row]}>
           <Pressable

@@ -39,7 +39,7 @@ import {
 } from "./src/barcode";
 import { BarcodeEntry, type BarcodeState } from "./src/barcode-entry";
 import { packagedCatalogOrigin } from "./src/catalog-origin";
-import { CustomFoodList } from "./src/custom-food-list";
+import { CustomFoodList, type FoodLibrarySection } from "./src/custom-food-list";
 import { CustomFoodScreen } from "./src/custom-food-screen";
 import {
   addDays,
@@ -57,6 +57,7 @@ import { FavoriteFoodList } from "./src/favorite-food-list";
 import { foodKey } from "./src/favorite-foods";
 import { FddbImportScreen } from "./src/fddb-import-screen";
 import { FoodDetail } from "./src/food-detail";
+import { matchLibraryName } from "./src/food-library";
 import { type HomeTab, HomeTabs } from "./src/home-tabs";
 import { openLocalCatalog } from "./src/local-catalog";
 import { openLocalDiary } from "./src/local-diary";
@@ -195,6 +196,8 @@ function DiaryApp({
   const [route, setRoute] = useState<Route>({ kind: "diary" });
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [progressRange, setProgressRange] = useState<ProgressRange>(30);
+  const [librarySection, setLibrarySection] = useState<FoodLibrarySection>("custom");
+  const [libraryQuery, setLibraryQuery] = useState("");
   const [savedWeightDay, setSavedWeightDay] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [feedback, setFeedback] = useState<{
@@ -227,6 +230,32 @@ function DiaryApp({
     } catch {
       return null;
     }
+  }, [diary, route.kind, refresh]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Library writes and retry actions invalidate these SQLite reads.
+  const library = useMemo(() => {
+    let foods: Food[] | null = null;
+    let recipes: Recipe[] | null = null;
+    let recipeFoods: Food[] | null = null;
+    let templates: SavedMealTemplate[] | null = null;
+    if (route.kind === "my-foods") {
+      try {
+        foods = diary.listCustomFoods();
+      } catch {
+        // The custom food collection can fail independently of the rest of the library.
+      }
+      try {
+        recipes = diary.listRecipes();
+        recipeFoods = recipes.map(foodForRecipe);
+      } catch {
+        // An unavailable recipe collection should leave custom foods usable.
+      }
+      try {
+        templates = diary.listMealTemplates();
+      } catch {
+        // An unavailable template collection should leave other library items usable.
+      }
+    }
+    return { foods, recipes, recipeFoods, templates };
   }, [diary, route.kind, refresh]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: A committed write or retry invalidates the SQLite read.
   const lastDay = useMemo(() => diaryDayLimit(diary, today), [diary, today, refresh]);
@@ -602,30 +631,28 @@ function DiaryApp({
     );
   }
   if (route.kind === "my-foods") {
-    let foods: Food[] | null = null;
-    try {
-      foods = diary.listCustomFoods();
-    } catch {
-      // The library can fail independently of the current diary and bundled catalog.
-    }
-    let recipes: Recipe[] | null = null;
-    try {
-      recipes = diary.listRecipes();
-    } catch {
-      // An unavailable recipe collection should leave custom foods usable.
-    }
-    let templates: SavedMealTemplate[] | null = null;
-    try {
-      templates = diary.listMealTemplates();
-    } catch {
-      // An unavailable template collection should leave other library items usable.
-    }
+    const { foods, recipes, recipeFoods, templates } = library;
+    const browse = route.fromFoodsTab
+      ? {
+          section: librarySection,
+          query: libraryQuery,
+          onSection: setLibrarySection,
+          onQuery: setLibraryQuery,
+        }
+      : undefined;
+    const match = browse && matchLibraryName(libraryQuery, locale);
+    const listedRecipes = recipes && match ? recipes.filter(({ name }) => match(name)) : recipes;
+    const listedTemplates =
+      templates && match ? templates.filter(({ name }) => match(name)) : templates;
+    const noMatches = match ? t.libraryNoMatches : undefined;
     const screen = (
       <CustomFoodList
         t={t}
         locale={locale}
         date={date}
         foods={foods}
+        browse={browse}
+        match={match}
         favorites={
           favorites === null ? (
             <Notice
@@ -637,12 +664,13 @@ function DiaryApp({
               t={t}
               ids={favorites}
               localFoods={foods}
-              recipeFoods={recipes?.map(foodForRecipe) ?? null}
+              recipeFoods={recipeFoods}
               catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
               cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
               diary={diary}
               today={today}
               language={language}
+              match={match}
               onPick={(food) => pickFood(route, food, true)}
               onRemove={(id) => setFavorite(id, false)}
               onRetry={(provider) => {
@@ -651,43 +679,50 @@ function DiaryApp({
                 setRefresh((revision) => revision + 1);
               }}
             />
+          ) : browse ? (
+            <Notice text={noMatches ?? t.libraryNoFavorites} />
           ) : undefined
         }
         savedMeals={
-          <SavedMealList
-            t={t}
-            locale={locale}
-            templates={templates}
-            onRetry={() => setRefresh((revision) => revision + 1)}
-            onLog={(template) => {
-              const { day, occurredAt, utcOffsetMinutes } = foodLibraryEntryTime(
-                route,
-                route.fromFoodsTab === true,
-                new Date(),
-              );
-              const meal = mealFromTemplate(
-                template,
-                {
-                  id: randomUUID(),
-                  localDay: day,
-                  occurredAt,
-                  utcOffsetMinutes,
-                },
-                randomUUID,
-              );
-              diary.saveMeal(meal);
-              setSelectedDay(meal.localDay === localDay(new Date()) ? null : meal.localDay);
-              setFeedback({ day: meal.localDay, kind: "saved" });
-              setRefresh((revision) => revision + 1);
-              setRoute({ kind: "diary" });
-            }}
-          />
+          browse && listedTemplates?.length === 0 ? (
+            <Notice text={noMatches ?? t.libraryNoSavedMeals} />
+          ) : (
+            <SavedMealList
+              t={t}
+              locale={locale}
+              templates={listedTemplates}
+              onRetry={() => setRefresh((revision) => revision + 1)}
+              onLog={(template) => {
+                const { day, occurredAt, utcOffsetMinutes } = foodLibraryEntryTime(
+                  route,
+                  route.fromFoodsTab === true,
+                  new Date(),
+                );
+                const meal = mealFromTemplate(
+                  template,
+                  {
+                    id: randomUUID(),
+                    localDay: day,
+                    occurredAt,
+                    utcOffsetMinutes,
+                  },
+                  randomUUID,
+                );
+                diary.saveMeal(meal);
+                setSelectedDay(meal.localDay === localDay(new Date()) ? null : meal.localDay);
+                setFeedback({ day: meal.localDay, kind: "saved" });
+                setRefresh((revision) => revision + 1);
+                setRoute({ kind: "diary" });
+              }}
+            />
+          )
         }
         recipes={
           <RecipeList
             t={t}
             locale={locale}
-            recipes={recipes}
+            recipes={listedRecipes}
+            emptyText={browse ? (noMatches ?? t.libraryNoRecipes) : undefined}
             onCreate={() =>
               setRoute({ ...route, kind: "recipe", current: null, recipeId: randomUUID() })
             }
