@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  decodeHelloRequest,
   maxSyncEnvelopeBytes,
   type NegotiatedSync,
   negotiateHello,
@@ -22,7 +23,7 @@ export interface SyncHttpOptions {
   readonly releases?: readonly SyncRelease[];
 }
 
-const routes = new Set(["/sync/hello", "/sync/push", "/sync/pull"]);
+const routes = new Set(["/sync/hello", "/sync/history", "/sync/push", "/sync/pull"]);
 const maxSessions = 1024;
 // Leave room for one compact outcome per submission even when IDs need JSON escaping.
 const maxRequestBytes = (maxSyncEnvelopeBytes * 3) / 4;
@@ -119,13 +120,15 @@ export function syncHttp({ store, authorize, releases = [syncCandidate] }: SyncH
       }
       const history = store.history(accountBinding);
       if (!history) throw new SyncWireError("unauthorized", "Account sync authorization changed");
-      if (path === "/sync/hello") {
-        const hello = negotiateHello(body, history, releases);
+      if (path === "/sync/hello" || path === "/sync/history") {
+        const connect = path === "/sync/hello";
+        const request = connect ? body : { ...decodeHelloRequest(body), features: [] };
+        const hello = negotiateHello(request, history, releases);
         if (hello.status === "update-required") {
-          sessions.delete(sessionKey);
+          if (connect) sessions.delete(sessionKey);
           send(response, 426, hello);
         } else {
-          remember(sessionKey, hello.session);
+          if (connect) remember(sessionKey, hello.session);
           send(response, 200, hello.response);
         }
         return true;

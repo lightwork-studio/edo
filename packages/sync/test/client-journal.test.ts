@@ -40,15 +40,16 @@ function diary(file: string, fresh = true) {
     sqlite.exec("CREATE TABLE diary_fixture (id TEXT PRIMARY KEY, kg REAL NOT NULL) STRICT");
     installSyncJournal(connection);
   }
-  const set = (weight: number): undefined => {
-    connection.run("INSERT OR REPLACE INTO diary_fixture VALUES (?, ?)", key.id, weight);
+  const set = (weight: number, id = key.id): undefined => {
+    connection.run("INSERT OR REPLACE INTO diary_fixture VALUES (?, ?)", id, weight);
   };
   return {
     sqlite,
     connection,
     journal: openSyncJournal(connection),
     set,
-    get: () => connection.get("SELECT kg FROM diary_fixture WHERE id = ?", key.id)?.kg ?? null,
+    get: (id = key.id) =>
+      connection.get("SELECT kg FROM diary_fixture WHERE id = ?", id)?.kg ?? null,
     receive(change: Change): undefined {
       if (
         change.state !== "live" ||
@@ -56,7 +57,7 @@ function diary(file: string, fresh = true) {
         typeof change.content.kg !== "number"
       )
         throw new Error("Wrong fixture type");
-      set(change.content.kg);
+      set(change.content.kg, change.id);
     },
     [Symbol.dispose]: () => sqlite[Symbol.dispose](),
   };
@@ -266,6 +267,74 @@ test.each([
     if (ordering === "only newer pull") expect(review?.original).toBeNull();
     else expect(review?.original).toMatchObject({ revision: 1, content: { kg: 80 } });
     expect(local.get()).toBe(81);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a partial pull preserves evidence that the account is ahead of the cursor", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "edo-paged-pull-"));
+  try {
+    using store = openSyncStore(":memory:", { applyContent: applyRecordContent });
+    store.createAccount("account", "fixture");
+    await using server = createHealthServer({
+      sync: {
+        store,
+        authorize(request) {
+          const token = request.headers.authorization;
+          return token ? { accountBinding: "account", sessionKey: token } : null;
+        },
+      },
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing sync test port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const connect = (name: string) =>
+      createSyncClient({ origin, allowLoopbackHttp: true, authorization: () => `Bearer ${name}` });
+    const phone = connect("phone");
+    const tablet = connect("tablet");
+    const phoneSession = await phone.connect();
+    const tabletSession = await tablet.connect();
+    using peer = diary(":memory:");
+    peer.journal.bind(tabletSession);
+    const otherKey = { ...key, id: "weight-2" };
+    const file = join(directory, "phone.sqlite");
+    let cursor: number;
+    {
+      using local = diary(file);
+      local.journal.bind(phoneSession);
+      peer.journal.commitLocal(key, edit("first", 80), () => undefined);
+      const second = edit("second", 81);
+      peer.journal.commitLocal(
+        otherKey,
+        { ...second, content: { ...second.content, id: otherKey.id } },
+        () => undefined,
+      );
+      const accepted = await tablet.push(tabletSession, peer.journal.prepare(tabletSession));
+      expect(accepted.results).toMatchObject([
+        { status: "accepted", revision: 1 },
+        { status: "accepted", revision: 2 },
+      ]);
+      const first = await phone.pull(phoneSession, 0, 1);
+      expect(first).toMatchObject({ cursor: 1, hasMore: true });
+      local.journal.applyPage(phoneSession, 0, first, local.receive);
+      expect(local.journal.history()).toMatchObject({ cursor: 1, revision: 2 });
+      cursor = first.cursor;
+    }
+
+    using restored = diary(file, false);
+    const history = restored.journal.history();
+    expect(history).toMatchObject({ cursor: 1, revision: 2 });
+    const session = await phone.connect(history ?? undefined);
+    restored.journal.bind(session);
+    const last = await phone.pull(session, cursor, 1);
+    expect(last).toMatchObject({ cursor: 2, hasMore: false });
+    restored.journal.applyPage(session, cursor, last, restored.receive);
+    expect(restored.journal.history()).toMatchObject({ cursor: 2, revision: 2 });
+    expect(restored.get()).toBe(80);
+    expect(restored.get(otherKey.id)).toBe(81);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

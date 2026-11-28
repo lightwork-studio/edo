@@ -620,6 +620,10 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     ) {
       requireActiveSession(session);
       const page = authenticatedResponseSnapshot(input, session, requestCursor);
+      const observed = page.cursor + Number(page.hasMore);
+      if (!Number.isSafeInteger(observed)) {
+        throw new SyncWireError("invalid-request", "Invalid observed pull revision");
+      }
       return transact(() => {
         const binding = checkSession(session);
         if (binding.cursor !== requestCursor)
@@ -653,7 +657,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         db.run(
           "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
           page.cursor,
-          page.cursor,
+          observed,
         );
         requireActiveSession(session);
       });
