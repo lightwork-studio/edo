@@ -263,6 +263,12 @@ function backfillMealItemOwners(db: DatabaseSync) {
   }
 }
 
+function databaseTextDecoder(db: DatabaseSync): TextDecoder {
+  const encoding = db.prepare("PRAGMA main.encoding").get()?.encoding;
+  if (typeof encoding !== "string") throw new Error("Invalid sync database encoding");
+  return new TextDecoder(encoding, { fatal: true, ignoreBOM: true });
+}
+
 function requireStoredText(decoder: TextDecoder, value: unknown, bytes: unknown) {
   if (value === null && bytes === null) return;
   try {
@@ -312,9 +318,7 @@ export function assertSyncSnapshotConsistency(db: DatabaseSync): void {
         throw new InvalidSyncSnapshot("SQLite integrity verification failed");
       }
 
-      const encoding = db.prepare("PRAGMA main.encoding").get()?.encoding;
-      if (typeof encoding !== "string") throw new InvalidSyncSnapshot("Invalid snapshot encoding");
-      const decoder = new TextDecoder(encoding, { fatal: true, ignoreBOM: true });
+      const decoder = databaseTextDecoder(db);
       const accounts = db.prepare(`
         SELECT account.*,
           CAST(account_binding AS BLOB) AS account_bytes,
@@ -578,6 +582,12 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       SELECT revision, kind, record_id, content FROM sync_records
       WHERE account_binding = ? AND kind = ? AND record_id = ?
     `);
+    const currentWeighIn = db.prepare(`
+      SELECT revision, kind, record_id, CAST(content AS BLOB) AS content FROM main.sync_records
+      WHERE account_binding = ? AND kind = 'weigh-in' AND record_id = ?
+    `);
+    currentWeighIn.setReadBigInts(true);
+    const textDecoder = databaseTextDecoder(db);
     const recordRevision = db.prepare(`
       SELECT revision FROM sync_records WHERE account_binding = ? AND kind = ? AND record_id = ?
     `);
@@ -628,10 +638,23 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
         if (!isRecordId(accountBinding) || !isRecordId(id) || id.length > maxSyncEnvelopeBytes) {
           return null;
         }
-        const row = currentRecord.get(accountBinding, "weigh-in", id);
-        if (!row) return null;
-        const change = storedChange(row);
-        if (change.state !== "live") return null;
+        const row = currentWeighIn.get(accountBinding, id);
+        if (!row || row.content === null) return null;
+        let change: Change;
+        try {
+          const { content, revision } = row;
+          if (!(content instanceof Uint8Array) || typeof revision !== "bigint") {
+            throw new TypeError("Invalid stored representation");
+          }
+          change = storedChange({
+            ...row,
+            revision: Number(revision),
+            content: textDecoder.decode(content),
+          });
+        } catch {
+          throw new Error("Invalid stored weigh-in");
+        }
+        if (change.state !== "live") throw new Error("Invalid stored weigh-in");
         const { id: contentId, localDay, occurredAt, kg } = change.content;
         if (
           contentId !== id ||

@@ -320,6 +320,9 @@ test("looks up a live weigh-in by account and ID without exposing opaque fields 
         content: { ...content, kg: 81.003 },
       }).results,
     ).toMatchObject([{ status: "accepted", revision: 2 }]);
+    expect(
+      push(store, alpha, put(id, "different-kind", null, mealContent("dish"))).results,
+    ).toMatchObject([{ status: "accepted", revision: 3 }]);
   }
   {
     using store = openSyncStore(filename, { applyContent: applyRecordContent });
@@ -344,7 +347,11 @@ test("looks up a live weigh-in by account and ID without exposing opaque fields 
     expect(store.readWeighIn("alpha-\uFFFD", "reading-\uD800")).toBeNull();
     expect(readFileSync(filename)).toEqual(before);
     const alpha = sessionFor(store.history("alpha-\uFFFD"));
-    expect(pull(store, alpha).changes).toMatchObject([{ content: { future: content.future } }]);
+    expect(alpha.revision).toBe(3);
+    expect(pull(store, alpha).changes).toMatchObject([
+      { kind: "weigh-in", id, revision: 2, content: { future: content.future } },
+      { kind: "meal", id, revision: 3 },
+    ]);
     expect(
       push(store, alpha, {
         kind: "weigh-in",
@@ -353,13 +360,49 @@ test("looks up a live weigh-in by account and ID without exposing opaque fields 
         submissionId: "delete-reading",
         baseRevision: 2,
       }).results,
-    ).toMatchObject([{ status: "accepted", revision: 3 }]);
+    ).toMatchObject([{ status: "accepted", revision: 4 }]);
   }
   {
     using store = openSyncStore(filename);
     expect(store.readWeighIn("alpha-\uFFFD", id)).toBeNull();
     expect(store.readWeighIn("beta", id)?.kg).toBe(73.125);
   }
+});
+
+test("refuses malformed SQLite text that the JavaScript bridge aliases to a valid ID", () => {
+  const id = "reading-\uFFFD";
+  const content = { id, localDay: "2026-02-01", occurredAt: 1, kg: 80 };
+  using store = openSyncStore(filename, { applyContent: applyRecordContent });
+  const account = sessionFor(store.createAccount("alpha", "alpha-history"));
+  expect(
+    push(store, account, {
+      kind: "weigh-in",
+      op: "put",
+      id,
+      submissionId: "reading",
+      baseRevision: null,
+      content,
+    }).results,
+  ).toMatchObject([{ status: "accepted", revision: 1 }]);
+  expect(store.readWeighIn("alpha", id)).toEqual({ ...content, revision: 1 });
+
+  using raw = new DatabaseSync(filename);
+  const [prefix, suffix] = JSON.stringify(content).split("\uFFFD");
+  if (prefix === undefined || suffix === undefined) throw new Error("Expected a Unicode fixture");
+  const invalidText = Buffer.concat([
+    Buffer.from(prefix),
+    Buffer.from([0xff]),
+    Buffer.from(suffix),
+  ]);
+  raw
+    .prepare("UPDATE sync_records SET content = CAST(? AS TEXT) WHERE record_id = ?")
+    .run(invalidText, id);
+  expect(raw.prepare("SELECT content FROM sync_records").get()?.content).toBe(
+    JSON.stringify(content),
+  );
+  const before = readFileSync(filename);
+  expect(() => store.readWeighIn("alpha", id)).toThrow("Invalid stored weigh-in");
+  expect(readFileSync(filename)).toEqual(before);
 });
 
 test.each([{ id: "different" }, { localDay: "2026-02-30" }, { occurredAt: 1.25 }, { kg: 0 }])(
