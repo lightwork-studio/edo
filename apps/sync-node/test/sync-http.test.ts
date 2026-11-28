@@ -2,7 +2,13 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acceptHello, decodePullResponse, decodePushResponse } from "@edo/contract";
+import {
+  acceptHello,
+  decodePullResponse,
+  decodePushResponse,
+  type SyncRelease,
+  syncCandidate,
+} from "@edo/contract";
 import { expect, it, vi } from "vitest";
 import { applyRecordContent } from "../src/record-projection.ts";
 import { createHealthServer } from "../src/server.ts";
@@ -24,11 +30,13 @@ async function withEndpoint(
   store: SyncStore,
   sessions: Map<string, SyncAccess>,
   run: (send: (path: string, key: string, body: unknown) => Promise<Response>) => Promise<void>,
+  releases?: readonly SyncRelease[],
 ) {
   let switchingCalls = 0;
   const server = createHealthServer({
     sync: {
       store,
+      releases,
       authorize(request) {
         const id = request.headers["x-fixture-session"];
         const access = typeof id === "string" ? (sessions.get(id) ?? null) : null;
@@ -155,6 +163,117 @@ it("scopes HTTP sync to authenticated negotiated accounts and replays receipts a
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+it("preserves newer record fields through a previous client and falls back on an older server", async () => {
+  // An unpublished release fixture adds one opaque field and capability for this matrix.
+  const next: SyncRelease = {
+    ...syncCandidate,
+    release: "0.2",
+    features: [...syncCandidate.features, "fixture-metadata"],
+  };
+  const nextHello = { releases: [next.release, syncCandidate.release], features: next.features };
+  const nextScope = { ...scope, release: next.release };
+  const access = new Map([
+    ["old", { accountBinding: scope.accountBinding, sessionKey: "old-device" }],
+    ["new", { accountBinding: scope.accountBinding, sessionKey: "new-device" }],
+  ]);
+  const opaque = { status: null, repeated: [0, false], note: "retained metadata" };
+  using store = openSyncStore(":memory:", {
+    applyContent(input) {
+      if (input.release !== next.release) return applyRecordContent(input);
+      const { fixtureMetadata, ...submitted } = input.submitted;
+      const saved = applyRecordContent({ ...input, release: syncCandidate.release, submitted });
+      return fixtureMetadata === undefined ? saved : { ...saved, fixtureMetadata };
+    },
+  });
+  store.createAccount(scope.accountBinding, scope.lineage);
+  await withEndpoint(
+    store,
+    access,
+    async (send) => {
+      const nextReply = await send("hello", "new", nextHello);
+      const currentPeer = acceptHello(nextHello, await nextReply.json(), undefined, [
+        next,
+        syncCandidate,
+      ]);
+      expect(currentPeer).toMatchObject({ release: next.release, features: next.features });
+      const newerPut = {
+        ...nextScope,
+        submissions: [{ ...record, content: { ...record.content, fixtureMetadata: opaque } }],
+      };
+      const created = await send("push", "new", newerPut);
+      expect(decodePushResponse(await created.json(), newerPut, currentPeer).results).toEqual([
+        { status: "accepted", submissionId: record.submissionId, revision: 1 },
+      ]);
+
+      const previousHello = { ...hello, features: next.features };
+      const previousReply = await send("hello", "old", previousHello);
+      const previousPeer = acceptHello(previousHello, await previousReply.json());
+      expect(previousPeer).toMatchObject({
+        release: syncCandidate.release,
+        features: syncCandidate.features,
+        revision: 1,
+      });
+      const previousPull = { ...scope, cursor: 0 };
+      const pulled = await send("pull", "old", previousPull);
+      expect(decodePullResponse(await pulled.json(), previousPull, previousPeer).changes).toEqual([
+        {
+          kind: record.kind,
+          id: record.id,
+          state: "live",
+          revision: 1,
+          content: { ...record.content, fixtureMetadata: opaque },
+        },
+      ]);
+      // The older client changes only the field it understands and omits the new field.
+      const previousPut = {
+        ...scope,
+        submissions: [
+          {
+            ...record,
+            submissionId: "old-edit",
+            baseRevision: 1,
+            content: { ...record.content, kg: 74.5 },
+          },
+        ],
+      };
+      const updated = await send("push", "old", previousPut);
+      expect(decodePushResponse(await updated.json(), previousPut, previousPeer).results).toEqual([
+        { status: "accepted", submissionId: "old-edit", revision: 2 },
+      ]);
+      const recentPull = { ...nextScope, cursor: 1 };
+      const recent = await send("pull", "new", recentPull);
+      expect(decodePullResponse(await recent.json(), recentPull, currentPeer)).toMatchObject({
+        cursor: 2,
+        changes: [{ revision: 2, content: { kg: 74.5, fixtureMetadata: opaque } }],
+      });
+    },
+    [next, syncCandidate],
+  );
+
+  await withEndpoint(store, access, async (send) => {
+    const fallbackReply = await send("hello", "new", nextHello);
+    const fallback = acceptHello(
+      nextHello,
+      await fallbackReply.json(),
+      { accountBinding: scope.accountBinding, lineage: scope.lineage, revision: 2 },
+      [next, syncCandidate],
+    );
+    expect(fallback).toMatchObject({
+      release: syncCandidate.release,
+      features: syncCandidate.features,
+      revision: 2,
+    });
+    const incompatible = await send("hello", "new", { ...nextHello, releases: [next.release] });
+    expect(incompatible.status).toBe(426);
+    expect(await incompatible.json()).toEqual({
+      status: "update-required",
+      supportedReleases: [syncCandidate.release],
+    });
+    expect((await send("pull", "new", { ...scope, cursor: 0 })).status).toBe(426);
+    expect(store.history(scope.accountBinding)?.revision).toBe(2);
+  });
 });
 
 it("leaves sync routes disabled with default health server settings", async () => {
