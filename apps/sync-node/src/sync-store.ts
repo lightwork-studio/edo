@@ -128,6 +128,7 @@ export interface SyncStore extends Disposable {
 }
 
 type SqlRow = Record<string, SQLOutputValue>;
+type CurrentReadKind = "meal" | "weigh-in";
 type Decision = SubmissionResult | { readonly content: JsonObject | null };
 
 function transaction<T>(db: DatabaseSync, begin: "BEGIN" | "BEGIN IMMEDIATE", fn: () => T): T {
@@ -582,17 +583,21 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       SELECT revision, kind, record_id, content FROM sync_records
       WHERE account_binding = ? AND kind = ? AND record_id = ?
     `);
-    const currentWeighIn = db.prepare(`
+    const textDecoder = databaseTextDecoder(db);
+    const maxStoredReadBytes = maxSyncEnvelopeBytes * (textDecoder.encoding === "utf-8" ? 1 : 2);
+    const currentPrivateRecord = db.prepare(`
       SELECT record.revision, record.kind, record.record_id,
         typeof(record.content) AS content_type,
-        CAST(record.content AS BLOB) AS content,
+        CASE WHEN octet_length(record.content) <= ? THEN CAST(record.content AS BLOB) END AS content,
         account.revision AS account_revision
       FROM main.sync_records AS record
-      LEFT JOIN main.sync_accounts AS account ON account.account_binding = record.account_binding
-      WHERE record.account_binding = ? AND record.kind = 'weigh-in' AND record.record_id = ?
+      LEFT JOIN main.sync_accounts AS account
+        ON account.account_binding COLLATE BINARY = record.account_binding
+      WHERE record.account_binding COLLATE BINARY = ?
+        AND record.kind COLLATE BINARY = ? AND record.record_id COLLATE BINARY = ?
+      LIMIT 2
     `);
-    currentWeighIn.setReadBigInts(true);
-    const textDecoder = databaseTextDecoder(db);
+    currentPrivateRecord.setReadBigInts(true);
     const recordRevision = db.prepare(`
       SELECT revision FROM sync_records WHERE account_binding = ? AND kind = ? AND record_id = ?
     `);
@@ -625,6 +630,45 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       return row ? storedHistory(row) : null;
     }
 
+    function readCurrentRecord(kind: CurrentReadKind, accountBinding: string, id: string) {
+      if (!isRecordId(accountBinding) || !isRecordId(id) || id.length > maxSyncEnvelopeBytes) {
+        return null;
+      }
+      const [row, duplicate] = currentPrivateRecord.all(
+        maxStoredReadBytes,
+        accountBinding,
+        kind,
+        id,
+      );
+      if (!row) return null;
+      try {
+        if (duplicate) throw new TypeError("Ambiguous stored record");
+        if (row.content_type === "null" && row.content === null) return null;
+        const { content, content_type, revision, account_revision } = row;
+        if (
+          content_type !== "text" ||
+          !(content instanceof Uint8Array) ||
+          typeof revision !== "bigint" ||
+          typeof account_revision !== "bigint" ||
+          account_revision < revision ||
+          !Number.isSafeInteger(Number(account_revision))
+        ) {
+          throw new TypeError("Invalid stored representation");
+        }
+        const change = storedChange({
+          ...row,
+          revision: Number(revision),
+          content: textDecoder.decode(content),
+        });
+        if (change.state !== "live" || change.kind !== kind || change.id !== id) {
+          throw new TypeError("Invalid stored identity");
+        }
+        return change;
+      } catch {
+        throw new Error(`Invalid stored ${kind}`);
+      }
+    }
+
     return {
       createAccount(accountBinding, lineage) {
         const account = historyFrom({
@@ -640,38 +684,8 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       },
       history,
       readWeighIn(accountBinding, id) {
-        if (!isRecordId(accountBinding) || !isRecordId(id) || id.length > maxSyncEnvelopeBytes) {
-          return null;
-        }
-        const row = currentWeighIn.get(accountBinding, id);
-        if (!row || row.content === null) return null;
-        let change: Change;
-        try {
-          const {
-            content,
-            content_type: contentType,
-            revision,
-            account_revision: accountRevision,
-          } = row;
-          if (
-            contentType !== "text" ||
-            !(content instanceof Uint8Array) ||
-            typeof revision !== "bigint" ||
-            typeof accountRevision !== "bigint" ||
-            accountRevision < revision ||
-            !Number.isSafeInteger(Number(accountRevision))
-          ) {
-            throw new TypeError("Invalid stored representation");
-          }
-          change = storedChange({
-            ...row,
-            revision: Number(revision),
-            content: textDecoder.decode(content),
-          });
-        } catch {
-          throw new Error("Invalid stored weigh-in");
-        }
-        if (change.state !== "live") throw new Error("Invalid stored weigh-in");
+        const change = readCurrentRecord("weigh-in", accountBinding, id);
+        if (!change) return null;
         const { id: contentId, localDay, occurredAt, kg } = change.content;
         if (
           contentId !== id ||
