@@ -9,6 +9,9 @@ import {
 } from "./sync-blockers";
 import { DetailHeader, Notice, styles } from "./ui";
 
+const gregorianCutoverDay = "1582-10-15";
+const gregorianCutoverTime = Date.parse(`${gregorianCutoverDay}T00:00:00.000Z`);
+
 const copy = {
   en: {
     title: "Sync issues",
@@ -30,7 +33,7 @@ const copy = {
       instant: "Recorded time",
       deleted: "Deleted",
       unavailable: "Weigh-in values unavailable",
-      unknown: "No saved value",
+      unknown: "Current account value unknown",
     },
     kinds: {
       meal: "Meal",
@@ -71,7 +74,7 @@ const copy = {
       instant: "Erfasster Zeitpunkt",
       deleted: "Gelöscht",
       unavailable: "Gewichtsdaten nicht verfügbar",
-      unknown: "Kein gespeicherter Wert",
+      unknown: "Aktueller Kontowert unbekannt",
     },
     kinds: {
       meal: "Mahlzeit",
@@ -203,6 +206,7 @@ function WeighInSide({
   words: (typeof copy)[Language]["weighIn"];
 }) {
   const recorded = side.state === "live" ? new Date(side.occurredAt) : null;
+  const decimalSeparator = new Intl.NumberFormat(locale).format(1.1)[1] ?? ".";
   return (
     <View>
       <Text accessibilityRole="header" style={styles.title}>
@@ -211,15 +215,11 @@ function WeighInSide({
       {side.state === "live" ? (
         <>
           <Text style={[styles.body, styles.numbers]}>
-            {new Intl.NumberFormat(locale, {
-              maximumSignificantDigits: 17,
-              notation: side.kg < 0.01 || side.kg >= 10_000 ? "scientific" : "standard",
-            }).format(side.kg)}{" "}
-            kg
+            {side.kg.toString().replace(".", decimalSeparator)} kg
           </Text>
           <Text style={styles.meta}>{words.localDay}</Text>
           <Text style={styles.body}>
-            {side.localDay.startsWith("0000-")
+            {side.localDay < gregorianCutoverDay
               ? side.localDay
               : new Intl.DateTimeFormat(locale, {
                   dateStyle: "medium",
@@ -228,7 +228,7 @@ function WeighInSide({
           </Text>
           <Text style={styles.meta}>{words.instant}</Text>
           <Text style={styles.body}>
-            {recorded && recorded.getUTCFullYear() <= 0
+            {recorded && (side.occurredAt < gregorianCutoverTime || side.occurredAt % 1000 !== 0)
               ? recorded.toISOString()
               : new Intl.DateTimeFormat(locale, {
                   year: "numeric",
@@ -237,7 +237,6 @@ function WeighInSide({
                   hour: "numeric",
                   minute: "2-digit",
                   second: "2-digit",
-                  ...(side.occurredAt % 1000 !== 0 && { fractionalSecondDigits: 3 }),
                   timeZone: "UTC",
                   timeZoneName: "short",
                 }).format(side.occurredAt)}
