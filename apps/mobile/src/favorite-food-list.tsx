@@ -1,6 +1,6 @@
 import type { CatalogDatabase } from "@edo/catalog-import/bls-search";
 import type { Food, FoodId } from "@edo/core";
-import type { PackagedFoodCache } from "@edo/storage";
+import type { DiaryStore, PackagedFoodCache } from "@edo/storage";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { foodKey, resolveFavoriteFoods } from "./favorite-foods";
@@ -14,6 +14,8 @@ export function FavoriteFoodList({
   recipeFoods,
   catalog,
   cache,
+  diary,
+  today,
   language,
   onPick,
   onRemove,
@@ -25,6 +27,8 @@ export function FavoriteFoodList({
   recipeFoods: readonly Food[] | null;
   catalog: CatalogDatabase | "error" | null;
   cache: PackagedFoodCache | "error" | null;
+  diary: Pick<DiaryStore, "listMeals">;
+  today: string;
   language: Language;
   onPick: (food: Food) => void;
   onRemove: (id: FoodId) => void;
@@ -37,6 +41,8 @@ export function FavoriteFoodList({
     recipeFoods: readonly Food[] | null;
     catalog: CatalogDatabase | "error" | null;
     cache: PackagedFoodCache | "error" | null;
+    diary: Pick<DiaryStore, "listMeals">;
+    today: string;
     language: Language;
     resolved: Awaited<ReturnType<typeof resolveFavoriteFoods>>;
   } | null>(null);
@@ -50,13 +56,25 @@ export function FavoriteFoodList({
       cache: cache === "error" ? null : cache,
       language,
       accessedAt: Date.now(),
+      recentDiary: { diary, today },
     }).then((resolved) => {
-      if (active) setResult({ ids, localFoods, recipeFoods, catalog, cache, language, resolved });
+      if (active)
+        setResult({
+          ids,
+          localFoods,
+          recipeFoods,
+          catalog,
+          cache,
+          diary,
+          today,
+          language,
+          resolved,
+        });
     });
     return () => {
       active = false;
     };
-  }, [ids, localFoods, recipeFoods, catalog, cache, language]);
+  }, [ids, localFoods, recipeFoods, catalog, cache, diary, today, language]);
 
   if (!ids.length) return null;
   const ready =
@@ -65,13 +83,26 @@ export function FavoriteFoodList({
     result.recipeFoods === recipeFoods &&
     result.catalog === catalog &&
     result.cache === cache &&
+    result.diary === diary &&
+    result.today === today &&
     result.language === language;
+  const showCacheRetry =
+    ready &&
+    (cache === "error" || result.resolved.packagedCacheFailed) &&
+    result.resolved.fromDiary.size > 0 &&
+    ids.every((id) => id.provider !== "open-food-facts" || result.resolved.byId.has(foodKey(id)));
   return (
     <>
       <Text accessibilityRole="header" style={styles.title}>
         {t.favorites}
       </Text>
       {!ready && <Notice text={t.loading} pending />}
+      {showCacheRetry && (
+        <Notice
+          text={t.favoriteCacheUnavailable}
+          action={{ label: t.retry, onPress: () => onRetry("open-food-facts") }}
+        />
+      )}
       {ready &&
         ids.map((id) => {
           const key = foodKey(id);
@@ -111,6 +142,9 @@ export function FavoriteFoodList({
                   onPress={() => onPick(food)}
                 >
                   <Text style={styles.title}>{name}</Text>
+                  {result.resolved.fromDiary.has(key) && (
+                    <Text style={styles.meta}>{t.favoriteFromDiary}</Text>
+                  )}
                 </Pressable>
               ) : (
                 <Text style={[styles.meta, styles.stretch]}>{name}</Text>

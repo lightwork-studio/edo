@@ -1,11 +1,47 @@
 import { type CatalogDatabase, findBlsFoods } from "@edo/catalog-import/bls-search";
 import type { Food, FoodId } from "@edo/core";
-import type { PackagedFoodCache } from "@edo/storage";
-import { foodForPackagedProduct } from "./barcode";
+import type { DiaryStore, PackagedFoodCache } from "@edo/storage";
+import { foodForPackagedProduct, recentPackagedDays } from "./barcode";
 import type { Language } from "./strings";
 
 export function foodKey(id: FoodId): string {
   return `${id.provider}:${id.sourceId}`;
+}
+
+type RecentDiary = { diary: Pick<DiaryStore, "listMeals">; today: string };
+
+function addRecentPackagedFavorites(
+  { diary, today }: RecentDiary,
+  sourceIds: readonly string[],
+  byId: Map<string, Food>,
+  fromDiary: Set<string>,
+): void {
+  const missing = new Set(
+    sourceIds.filter((id) => !byId.has(foodKey({ provider: "open-food-facts", sourceId: id }))),
+  );
+  if (!missing.size) return;
+  const latest = new Map<string, { food: Food; occurredAt: number }>();
+  // A later local date can precede an older one in real time after travel.
+  for (const day of recentPackagedDays(today)) {
+    try {
+      for (const { items, occurredAt } of diary.listMeals(day)) {
+        for (const { food } of items) {
+          const { provider, sourceId } = food.id;
+          if (provider !== "open-food-facts" || !missing.has(sourceId)) continue;
+          const previous = latest.get(sourceId);
+          if (!previous || occurredAt > previous.occurredAt)
+            latest.set(sourceId, { food, occurredAt });
+        }
+      }
+    } catch {
+      // An unreadable day leaves the other saved days and the catalog cache available.
+    }
+  }
+  for (const { food } of latest.values()) {
+    const key = foodKey(food.id);
+    byId.set(key, food);
+    fromDiary.add(key);
+  }
 }
 
 export async function resolveFavoriteFoods({
@@ -15,6 +51,7 @@ export async function resolveFavoriteFoods({
   cache,
   language,
   accessedAt,
+  recentDiary,
 }: {
   ids: readonly FoodId[];
   localFoods: readonly Food[];
@@ -22,9 +59,17 @@ export async function resolveFavoriteFoods({
   cache: Pick<PackagedFoodCache, "findByIds"> | null;
   language: Language;
   accessedAt: number;
-}): Promise<{ byId: ReadonlyMap<string, Food>; failedProviders: ReadonlySet<FoodId["provider"]> }> {
+  recentDiary?: RecentDiary;
+}): Promise<{
+  byId: ReadonlyMap<string, Food>;
+  fromDiary: ReadonlySet<string>;
+  packagedCacheFailed: boolean;
+  failedProviders: ReadonlySet<FoodId["provider"]>;
+}> {
   const byId = new Map(localFoods.map((food) => [foodKey(food.id), food]));
+  const fromDiary = new Set<string>();
   const failedProviders = new Set<FoodId["provider"]>();
+  let packagedCacheFailed = false;
   const offIds = ids
     .filter(({ provider }) => provider === "open-food-facts")
     .map(({ sourceId }) => sourceId);
@@ -35,8 +80,10 @@ export async function resolveFavoriteFoods({
       byId.set(foodKey(food.id), food);
     }
   } catch {
+    packagedCacheFailed = true;
     failedProviders.add("open-food-facts");
   }
+  if (recentDiary) addRecentPackagedFavorites(recentDiary, offIds, byId, fromDiary);
   if (catalog) {
     const blsIds = ids.filter(({ provider }) => provider === "bls").map(({ sourceId }) => sourceId);
     try {
@@ -47,5 +94,5 @@ export async function resolveFavoriteFoods({
       failedProviders.add("bls");
     }
   }
-  return { byId, failedProviders };
+  return { byId, fromDiary, packagedCacheFailed, failedProviders };
 }
