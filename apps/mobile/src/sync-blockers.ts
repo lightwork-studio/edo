@@ -67,14 +67,14 @@ function latestAccountWeighIn(review: Review, id: string): WeighInReviewSide {
   const { pulled } = review;
   const latest = !reported || (pulled && pulled.revision >= reported.revision) ? pulled : reported;
   if (!latest || latest.revision < (review.baseRevision ?? 0)) return { state: "unknown" };
+  const other = latest === pulled ? reported : pulled;
   const side = accountWeighIn(latest, id);
-  // A receipt can omit a live copy that the account subsequently sends on pull.
-  if (
-    reported &&
-    pulled?.revision === reported.revision &&
-    !(reported.state === "unavailable" && side.state === "live") &&
-    JSON.stringify(side) !== JSON.stringify(accountWeighIn(reported, id))
-  ) {
+  if (side.state === "live" && other?.state === "deleted") return { state: "unavailable" };
+  if (other?.revision !== latest.revision) return side;
+  // A complete authenticated copy can fill an omitted body at the same revision.
+  if (latest.state === "unavailable" && other.state === "live") return accountWeighIn(other, id);
+  if (other.state === "unavailable" && side.state === "live") return side;
+  if (JSON.stringify(side) !== JSON.stringify(accountWeighIn(other, id))) {
     return { state: "unavailable" };
   }
   return side;

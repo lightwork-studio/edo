@@ -204,9 +204,10 @@ it("shows the latest phone change and account weigh-in without opaque or identit
   expect(readSyncBlocker(journal, null)).toMatchObject({
     weighIn: { account: { state: "unavailable" } },
   });
-  db.prepare(
+  const setReceipt = db.prepare(
     "UPDATE edo_sync_outbox SET content = json_set(content, '$.blocked.result.current', json(?))",
-  ).run(JSON.stringify({ ...key, revision: 2, state: "unavailable" }));
+  );
+  setReceipt.run(JSON.stringify({ ...key, revision: 2, state: "unavailable" }));
   expect(readSyncBlocker(journal, null)).toMatchObject({
     weighIn: { account: { state: "live", ...visible, kg: 83 } },
   });
@@ -214,7 +215,17 @@ it("shows the latest phone change and account weigh-in without opaque or identit
   expect(readSyncBlocker(journal, null)).toMatchObject({
     weighIn: { account: { state: "unavailable" } },
   });
-  setAccount.run(3, JSON.stringify({ ...key, revision: 3, state: "deleted" }));
+  setReceipt.run(JSON.stringify({ ...received, content: { ...captured, kg: 82 } }));
+  setAccount.run(2, JSON.stringify({ ...key, revision: 2, state: "unavailable" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "live", ...visible, kg: 82 } },
+  });
+  setReceipt.run(JSON.stringify({ ...key, revision: 2, state: "deleted" }));
+  setAccount.run(3, JSON.stringify({ ...received, revision: 3 }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "unavailable" } },
+  });
+  setAccount.run(4, JSON.stringify({ ...key, revision: 4, state: "deleted" }));
   expect(readSyncBlocker(journal, null)).toMatchObject({
     weighIn: { account: { state: "deleted" } },
   });
