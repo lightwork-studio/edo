@@ -1,6 +1,6 @@
 import type { Nutrients } from "@edo/core";
 import type { ReactNode } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 export const colors = {
   background: "#141517",
@@ -17,7 +17,12 @@ export const colors = {
   fat: "#FF7D8A",
 };
 
-const textFamily = "Inter Variable";
+/** Android's oldest supported releases only distinguish normal and bold inside one family. */
+export function fontFace(weight: "400" | "500" | "600" | "700" = "400") {
+  return Platform.OS === "android"
+    ? { fontFamily: `Inter ${weight}`, fontWeight: "normal" as const }
+    : { fontFamily: "Inter Variable", fontWeight: weight };
+}
 
 export const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
@@ -29,23 +34,22 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  title: { fontFamily: textFamily, color: colors.text, fontSize: 17, fontWeight: "700" },
+  title: { ...fontFace("700"), color: colors.text, fontSize: 17 },
   heading: {
-    fontFamily: textFamily,
+    ...fontFace("700"),
     color: colors.text,
     fontSize: 26,
-    fontWeight: "700",
     letterSpacing: -0.5,
   },
-  body: { fontFamily: textFamily, color: colors.text, fontSize: 15 },
-  meta: { fontFamily: textFamily, color: colors.muted, fontSize: 13 },
-  error: { fontFamily: textFamily, color: colors.fat, fontSize: 13 },
+  body: { ...fontFace(), color: colors.text, fontSize: 15 },
+  meta: { ...fontFace(), color: colors.muted, fontSize: 13 },
+  error: { ...fontFace(), color: colors.fat, fontSize: 13 },
   card: { backgroundColor: colors.surface, borderRadius: 20, padding: 16, gap: 12 },
   content: { padding: 16, gap: 12 },
   footer: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 },
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
   stretch: { flex: 1 },
-  numbers: { fontFamily: textFamily, fontVariant: ["tabular-nums"], fontWeight: "700" },
+  numbers: { ...fontFace("700"), fontVariant: ["tabular-nums"] },
   primary: {
     minHeight: 56,
     borderRadius: 18,
@@ -56,10 +60,9 @@ export const styles = StyleSheet.create({
     alignItems: "center",
   },
   primaryText: {
-    fontFamily: textFamily,
+    ...fontFace("700"),
     color: colors.accentText,
     fontSize: 16,
-    fontWeight: "700",
     textAlign: "center",
   },
   iconButton: {
@@ -75,7 +78,7 @@ export const styles = StyleSheet.create({
   pressed: { opacity: 0.7 },
   notice: { padding: 24, alignItems: "center", gap: 12 },
   noticeText: { textAlign: "center" },
-  actionText: { fontFamily: textFamily, color: colors.accent, fontSize: 14, fontWeight: "700" },
+  actionText: { ...fontFace("700"), color: colors.accent, fontSize: 14 },
   action: { minHeight: 44, paddingHorizontal: 8, justifyContent: "center", alignItems: "center" },
 });
 

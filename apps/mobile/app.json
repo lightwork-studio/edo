@@ -24,14 +24,20 @@
           "android": {
             "fonts": [
               {
-                "fontFamily": "Inter Variable",
-                "path": "./assets/fonts/InterVariable.ttf",
-                "fontDefinitions": [
-                  { "weight": 400, "axes": { "wght": 400 } },
-                  { "weight": 500, "axes": { "wght": 500 } },
-                  { "weight": 600, "axes": { "wght": 600 } },
-                  { "weight": 700, "axes": { "wght": 700 } }
-                ]
+                "fontFamily": "Inter 400",
+                "fontDefinitions": [{ "path": "./assets/fonts/Inter-Regular.otf", "weight": 400 }]
+              },
+              {
+                "fontFamily": "Inter 500",
+                "fontDefinitions": [{ "path": "./assets/fonts/Inter-Medium.otf", "weight": 400 }]
+              },
+              {
+                "fontFamily": "Inter 600",
+                "fontDefinitions": [{ "path": "./assets/fonts/Inter-SemiBold.otf", "weight": 400 }]
+              },
+              {
+                "fontFamily": "Inter 700",
+                "fontDefinitions": [{ "path": "./assets/fonts/Inter-Bold.otf", "weight": 400 }]
               }
             ]
           }

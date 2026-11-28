@@ -8,7 +8,7 @@ import { openFoodFactsLicenseUrl } from "./barcode";
 import { SourceLink } from "./catalog-source-link";
 import { searchCachedPackagedFoods } from "./packaged-food-search";
 import type { Language, Strings } from "./strings";
-import { colors, displayNumber, IconButton, Notice, styles } from "./ui";
+import { colors, displayNumber, fontFace, IconButton, Notice, styles } from "./ui";
 
 export function SearchScreen({
   t,
@@ -323,6 +323,7 @@ const local = StyleSheet.create({
   },
   searchFocused: { borderColor: colors.accent },
   search: {
+    ...fontFace(),
     flex: 1,
     minWidth: 0,
     minHeight: 46,
@@ -367,7 +368,7 @@ const local = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  actionLabel: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  actionLabel: { ...fontFace("600"), color: colors.text, fontSize: 14 },
   results: { padding: 16 },
   groupTitle: {
     paddingHorizontal: 16,
@@ -377,7 +378,7 @@ const local = StyleSheet.create({
     borderTopRightRadius: 20,
     backgroundColor: colors.surface,
   },
-  groupText: { color: colors.muted, fontSize: 13, fontWeight: "700", flexShrink: 1 },
+  groupText: { ...fontFace("700"), color: colors.muted, fontSize: 13, flexShrink: 1 },
   result: {
     minHeight: 66,
     backgroundColor: colors.surface,
@@ -388,7 +389,7 @@ const local = StyleSheet.create({
     borderTopColor: colors.field,
   },
   finalResult: { borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
-  name: { color: colors.text, fontSize: 16, fontWeight: "600", marginBottom: 3 },
+  name: { ...fontFace("600"), color: colors.text, fontSize: 16, marginBottom: 3 },
   energy: { flexShrink: 1, maxWidth: "32%", textAlign: "right" },
   pick: {
     width: 34,
