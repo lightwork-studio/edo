@@ -96,6 +96,32 @@ test("does not expose internal index objects or respond to write methods", async
   expect(read).toEqual([]);
 });
 
+test("distinguishes a missing barcode from malformed candidates in a registered shard", async () => {
+  const { env, files, put, release } = await prepare();
+  const responseFor = async (value: Record<string, unknown>) => {
+    const shard = encoder.encode(JSON.stringify(value)).buffer;
+    const digest = await sha256(shard);
+    files.set(`${prefix}/shards/${digest}.json`, shard);
+    const index = await put(`${prefix}/lookup/${release}.json`, {
+      [shardFor(sample.barcode)]: digest,
+    });
+    await put(`${prefix}/state.json`, {
+      active: release,
+      releases: { [release]: sha },
+      barcodeIndexes: { [release]: index },
+    });
+    return worker.fetch(new Request(`${origin}/${prefix}/barcodes/1234`), env);
+  };
+  for (const candidates of [null, {}, false, 0, "", []]) {
+    const response = await responseFor({ [sample.barcode]: candidates });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ status: "unavailable" });
+  }
+  const response = await responseFor({});
+  expect(response.status).toBe(404);
+  expect(await response.json()).toEqual({ status: "not-found" });
+});
+
 test("serves immutable files with their digest as ETag", async () => {
   const { env, files, put } = await prepare();
   const path = `bls/artifacts/${sha}.sqlite`;
