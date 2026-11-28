@@ -5,15 +5,17 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, URL } from "node:url";
 import { type CatalogDatabase, findBlsFoods, searchBls } from "@edo/catalog-import/bls-search";
-import { createDiaryItem, type Food } from "@edo/core";
+import { createDiaryItem, type Food, roundEnergyKcal } from "@edo/core";
 import { openDiary } from "@edo/storage";
 import { expect, test } from "vitest";
 import {
   diaryDayLimit,
   entryTime,
+  foodPreviewItems,
   localDay,
   mondayOf,
   nextMidnight,
+  nutritionSum,
   nutritionTargetProgress,
   readAmount,
   saveFood,
@@ -392,14 +394,66 @@ test("uses the other captured items when previewing an edited portion for the da
     },
   ];
   expect(totalNutrition(meals)).toMatchObject({ kcal: 200, proteinG: null });
-  expect(totalNutrition(meals, { mealId: "first", itemId: "edit" })).toMatchObject({
+  const edit = foodPreviewItems(meals, { kind: "edit", mealId: "first", itemId: "edit" });
+  expect(edit?.index).toBe(0);
+  expect(nutritionSum(edit?.items ?? [])).toMatchObject({
     kcal: 120,
     proteinG: 7,
   });
-  expect(totalNutrition(meals, { mealId: "second", itemId: "edit" })).toMatchObject({
-    kcal: 200,
-    proteinG: null,
+  expect(foodPreviewItems(meals, { kind: "edit", mealId: "second", itemId: "edit" })).toBeNull();
+});
+
+test("matches saved energy when a new meal shares the same instant as other diary meals", async () => {
+  const nutrients = {
+    kcal: 112.3,
+    proteinG: 1,
+    availableCarbohydratesG: 3,
+    fatG: 2,
+    fiberG: 0,
+  };
+  const food: Food = {
+    id: { provider: "local", sourceId: "raw-preview" },
+    name: "Raw preview",
+    preparation: "unknown",
+    release: null,
+    nutrition: { basis: "per-100-g", nutrients },
+  };
+  const portion = { amount: 100, unit: "g" } as const;
+  using db = new DatabaseSync(":memory:");
+  const diary = await diaryConnection(db);
+  const capture = entryTime(null, new Date(2026, 10, 27, 12));
+  const withEnergy = (kcal: number): Food => ({
+    ...food,
+    nutrition: { ...food.nutrition, nutrients: { ...nutrients, kcal } },
   });
+  for (const [index, kcal] of [112.3, 723.8, 341.7].entries()) {
+    saveFood(
+      diary,
+      { kind: "add", ...capture, mealId: `meal-${index}`, food: withEnergy(kcal) },
+      portion,
+      () => `item-${index}`,
+    );
+  }
+  const proposed = withEnergy(199.69999999999882);
+  const entry = { kind: "add", ...capture, mealId: "a", food: proposed } as const;
+  const meals = diary.listMeals(capture.day);
+  const after = foodPreviewItems(meals, { ...entry, occurredAt: capture.occurredAt + 1 });
+  expect(after?.index).toBe(3);
+  const preview = foodPreviewItems(meals, entry);
+  if (!preview) throw new Error("Missing proposed day totals");
+  expect(preview.index).toBe(0);
+  const total = nutritionSum([
+    ...preview.items.slice(0, preview.index),
+    createDiaryItem("preview-item", proposed, portion).nutrients,
+    ...preview.items.slice(preview.index),
+  ]);
+  if (total?.kcal == null) throw new Error("Missing preview energy");
+  expect(roundEnergyKcal(total.kcal)).toBe(1378);
+
+  saveFood(diary, entry, portion, () => "saved-item");
+  const saved = diary.listMeals(capture.day);
+  expect(saved[0]?.id).toBe("a");
+  expect(totalNutrition(saved)).toEqual(total);
 });
 
 test("uses the first supported device language and keeps its regional locale", () => {

@@ -6,11 +6,15 @@ import {
   nutritionForPortion,
   type Portion,
   roundNutritionForDisplay,
-  sumNutrition,
 } from "@edo/core";
 import { useRef, useState } from "react";
 import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { defaultFoodPortion, nutritionTargetProgress, readAmount } from "./diary-view";
+import {
+  defaultFoodPortion,
+  nutritionSum,
+  nutritionTargetProgress,
+  readAmount,
+} from "./diary-view";
 import type { Strings } from "./strings";
 import {
   colors,
@@ -45,15 +49,6 @@ function previewNutrition(
   }
 }
 
-function dayAfterPortion(before: Nutrients, proposed: Nutrients): Nutrients | null {
-  try {
-    return sumNutrition([before, proposed]);
-  } catch (error) {
-    if (error instanceof RangeError) return null;
-    throw error;
-  }
-}
-
 export function FoodDetail({
   t,
   locale,
@@ -69,7 +64,7 @@ export function FoodDetail({
   locale: string;
   date: string;
   food: Food;
-  day?: { before: Nutrients; target: DailyNutritionTarget };
+  day?: { items: readonly Nutrients[]; index: number; target: DailyNutritionTarget };
   originalItem?: DiaryItem;
   favorite?: { selected: boolean; toggle: () => void } | { retry: () => void };
   onBack: () => void;
@@ -90,7 +85,12 @@ export function FoodDetail({
       ? originalItem.nutrients
       : previewNutrition(food, amount, unit);
   const preview = proposed && roundNutritionForDisplay(proposed);
-  const daily = proposed && day ? dayAfterPortion(day.before, proposed) : null;
+  const before = day && nutritionSum(day.items);
+  const beforeDisplay = before && roundNutritionForDisplay(before);
+  const daily =
+    proposed && day && before
+      ? nutritionSum([...day.items.slice(0, day.index), proposed, ...day.items.slice(day.index)])
+      : null;
   const dailyDisplay = daily && roundNutritionForDisplay(daily);
   const goals = day && roundNutritionForDisplay({ ...day.target, fiberG: null });
   const energyBalance =
@@ -267,14 +267,16 @@ export function FoodDetail({
                 const isKcal = nutrient === "kcal";
                 const unit = isKcal ? "kcal" : "g";
                 const target = day?.target[nutrient] ?? null;
-                const before = nutritionTargetProgress(day?.before[nutrient] ?? null, target);
+                const prior = nutritionTargetProgress(before?.[nutrient] ?? null, target);
                 const after = nutritionTargetProgress(daily?.[nutrient] ?? null, target);
                 const afterValue = dailyDisplay?.[nutrient] ?? null;
                 const goal = goals?.[nutrient] ?? null;
                 const comparison =
                   daily && goal !== null
-                    ? `${afterValue === null ? "—" : displayNumber(afterValue, locale, isKcal ? 0 : 1)} / ${displayNumber(goal, locale, isKcal ? 0 : 1)}${isKcal ? "" : " g"}`
+                    ? `${afterValue === null ? t.unavailable : displayNumber(afterValue, locale, isKcal ? 0 : 1)} / ${displayNumber(goal, locale, isKcal ? 0 : 1)}${isKcal ? "" : " g"}`
                     : null;
+                const describe = (amount: number | null | undefined) =>
+                  amount == null ? t.unavailable : nutrientValue(amount, locale, unit);
                 const numeric = (
                   <Text
                     style={[styles.body, styles.numbers, { color, maxWidth: 42 }]}
@@ -290,15 +292,26 @@ export function FoodDetail({
                   <View
                     key={nutrient}
                     accessible
-                    accessibilityLabel={`${t[label]}, ${value === null ? t.unavailable : nutrientValue(value, locale, unit)}${comparison ? `, ${comparison}` : ""}`}
+                    accessibilityLabel={
+                      comparison
+                        ? t.dayImpactValue(
+                            t[label],
+                            describe(beforeDisplay?.[nutrient]),
+                            describe(value),
+                            describe(afterValue),
+                            describe(goal),
+                            originalItem !== undefined,
+                          )
+                        : `${t[label]}, ${describe(value)}`
+                    }
                     style={local.metric}
                   >
                     {daily ? (
                       <TargetRing
-                        size={54}
+                        size={60}
                         color={color}
-                        fraction={after?.fraction ?? before?.fraction}
-                        baseline={before?.fraction}
+                        fraction={after?.fraction ?? prior?.fraction}
+                        baseline={prior?.fraction ?? 0}
                       >
                         {numeric}
                       </TargetRing>
