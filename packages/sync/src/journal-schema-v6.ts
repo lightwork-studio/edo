@@ -1,3 +1,5 @@
+import { installSyncJournalV5 } from "./journal-schema-v5.ts";
+
 /** Install client projection evidence separately from the version 5 server snapshots. */
 export function installSyncJournalV6(db: { exec(sql: string): void }): void {
   db.exec(`
@@ -10,4 +12,9 @@ export function installSyncJournalV6(db: { exec(sql: string): void }): void {
       ))
     ) WITHOUT ROWID, STRICT;
   `);
+}
+
+export function installSyncJournal(db: { exec(sql: string): void }): void {
+  installSyncJournalV5(db);
+  installSyncJournalV6(db);
 }

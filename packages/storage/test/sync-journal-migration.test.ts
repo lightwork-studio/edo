@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -5,6 +6,9 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { type DiarySqliteConnection, type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { createSyncClient, openSyncJournal } from "@edo/sync";
 import { afterEach, expect, test } from "vitest";
+import { applyRecordContent } from "../../../apps/sync-node/src/record-projection.ts";
+import { createHealthServer } from "../../../apps/sync-node/src/server.ts";
+import { openSyncStore } from "../../../apps/sync-node/src/sync-store.ts";
 import { diaryMigrations, migrateDiary } from "../src/migrations.ts";
 
 const v4Sql = readFileSync(new URL("./fixtures/diary-v4.sql", import.meta.url), "utf8");
@@ -212,6 +216,72 @@ test("upgrades and can recover a bound v5 diary without inventing accepted meal 
     submission_id: "accepted-old",
   });
   expect(backup.prepare("SELECT content FROM edo_sync_outbox").get()).toEqual({ content: record });
+});
+
+test("recovers accepted meal evidence when a v5 attempt retries after a lost response", async () => {
+  const source = fixture();
+  await migrateDiary(
+    source.sqlite,
+    diaryMigrations.slice(0, 5),
+    source.backupBeforeMigration,
+    () => {},
+  );
+  using store = openSyncStore(join(source.dir, "account.sqlite"), {
+    applyContent: applyRecordContent,
+  });
+  store.createAccount("account", "fixture");
+  await using server = createHealthServer({
+    sync: {
+      store,
+      authorize: () => ({ accountBinding: "account", sessionKey: "phone" }),
+    },
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing sync test port");
+  const client = createSyncClient({
+    origin: `http://127.0.0.1:${address.port}`,
+    allowLoopbackHttp: true,
+    authorization: () => "Bearer synthetic",
+  });
+  const session = await client.connect();
+  const journal = openSyncJournal(source.sqlite);
+  journal.bind(session);
+  const meal = v4Archive.meals[0];
+  const key = { kind: "meal", id: meal.id };
+  journal.commitLocal(
+    key,
+    { op: "put", submissionId: "v5-attempt", content: meal },
+    () => undefined,
+  );
+  const attempt = journal.prepare(session);
+  const lost = await client.push(session, attempt);
+  expect(lost.results).toEqual([{ status: "accepted", submissionId: "v5-attempt", revision: 1 }]);
+  source.db.close();
+
+  const upgrade = openFile(source.path, source.dir);
+  const synced = await upgrade.open();
+  const history = synced.sync.journal.history();
+  if (!history) throw new Error("Expected the restored binding");
+  const reconnected = await client.connect(history);
+  synced.sync.journal.bind(reconnected);
+  expect(synced.sync.journal.mealProjection(meal.id)).toBeNull();
+  const retry = synced.sync.journal.prepare(reconnected);
+  expect(retry).toEqual(attempt);
+  const accepted = await client.push(reconnected, retry);
+  expect(accepted).toEqual(lost);
+  synced.sync.journal.applyResults(reconnected, accepted, () => undefined);
+  upgrade.db.close();
+
+  const reopened = await openFile(source.path, source.dir).open();
+  expect(reopened.sync.journal.mealProjection(meal.id)).toEqual({
+    revision: 1,
+    origin: "accepted",
+    content: reopened.getMeal(meal.id),
+  });
+  expect(reopened.sync.journal.serverCopy(key)).toBeNull();
+  expect(reopened.sync.journal.history()).toMatchObject({ revision: 1, cursor: 0 });
 });
 
 test.each(["edo_sync_submission_ids", "edo_sync_meal_projections"] as const)(
