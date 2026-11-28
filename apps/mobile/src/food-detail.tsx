@@ -425,7 +425,7 @@ const local = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     backgroundColor: colors.field,
-    fontWeight: "600",
+    ...fontFace("600"),
   },
   star: { color: colors.accent },
   amountControls: { flexDirection: "row", gap: 10 },
@@ -452,7 +452,7 @@ const local = StyleSheet.create({
     paddingVertical: 8,
   },
   amountColumn: { flexGrow: 1, flexBasis: "38%" },
-  measure: { fontWeight: "700" },
+  measure: { ...fontFace("700") },
   units: {
     minWidth: 0,
     flexDirection: "row",
@@ -474,7 +474,7 @@ const local = StyleSheet.create({
     borderRadius: 10,
   },
   selectedUnit: { backgroundColor: colors.border },
-  unitLabel: { fontWeight: "600", textAlign: "center" },
+  unitLabel: { ...fontFace("600"), textAlign: "center" },
   presets: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   preset: {
     minHeight: 44,

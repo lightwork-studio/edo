@@ -8,6 +8,7 @@ import type { Strings } from "./strings";
 import {
   colors,
   displayNumber,
+  fontFace,
   IconButton,
   macros,
   Notice,
@@ -441,8 +442,8 @@ const local = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  rangeLabel: { ...styles.body, fontWeight: "600" },
-  weightUnit: { ...styles.body, color: colors.muted, fontWeight: "500" },
+  rangeLabel: { ...styles.body, ...fontFace("600") },
+  weightUnit: { ...styles.body, ...fontFace("500"), color: colors.muted },
   dateAxis: {
     marginLeft: 42,
     paddingTop: 6,
@@ -454,8 +455,8 @@ const local = StyleSheet.create({
   weekScroller: { flexGrow: 0 },
   weekDay: { flex: 1 },
   dayCaption: { ...styles.meta, fontSize: 11, maxWidth: "100%", textAlign: "center" },
-  activeDay: { color: colors.accent, fontWeight: "700" },
-  excess: { color: colors.text, fontWeight: "700" },
+  activeDay: { ...fontFace("700"), color: colors.accent },
+  excess: { ...fontFace("700"), color: colors.text },
   calorieAverage: { ...styles.meta, maxWidth: "60%", flexShrink: 1, textAlign: "right" },
   days: { flexDirection: "row", justifyContent: "space-between", gap: 3 },
   dot: {
@@ -471,7 +472,7 @@ const local = StyleSheet.create({
   macroLabel: { ...styles.body, textAlign: "center" },
   rangeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   selected: { backgroundColor: colors.text },
-  selectedText: { color: colors.background },
+  selectedText: { ...fontFace("700"), color: colors.background },
   spread: { ...styles.row, justifyContent: "space-between" },
   syncNotice: { marginHorizontal: 16 },
 });

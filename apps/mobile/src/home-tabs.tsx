@@ -1,6 +1,6 @@
 import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import type { Strings } from "./strings";
-import { colors, styles } from "./ui";
+import { colors, fontFace, styles } from "./ui";
 
 export type HomeTab = "diary" | "my-foods" | "progress" | "profile";
 
@@ -102,8 +102,8 @@ const local = StyleSheet.create({
   },
   tab: { flex: 1, minHeight: 56, alignItems: "center", justifyContent: "center", gap: 3 },
   icon: { width: 24, height: 24 },
-  label: { color: colors.muted, fontSize: 11, fontWeight: "600", textAlign: "center" },
-  selected: { color: colors.accent, fontWeight: "700" },
+  label: { ...fontFace("600"), color: colors.muted, fontSize: 11, textAlign: "center" },
+  selected: { ...fontFace("700"), color: colors.accent },
   log: { flex: 1, alignItems: "center", gap: 3, paddingBottom: 3 },
   logCircle: {
     alignItems: "center",
@@ -112,6 +112,6 @@ const local = StyleSheet.create({
     borderWidth: 4,
     borderColor: "#1A1B1D",
   },
-  plus: { color: colors.accentText, fontSize: 31, fontWeight: "600", lineHeight: 35 },
+  plus: { ...fontFace("600"), color: colors.accentText, fontSize: 31, lineHeight: 35 },
   logLabel: { color: colors.text },
 });
