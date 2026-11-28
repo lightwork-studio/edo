@@ -18,6 +18,8 @@ changed lineage or lower revision stops uploads until the app downloads the new 
 and reconciles it against the local diary and outbox. A download cursor belongs to one
 account history. A terminal download page must reach at least the revision the peer
 reported during negotiation. The server rejects requests beyond the current account revision.
+The candidate gives a restored account history a fresh lineage and starts its revision
+at the backup revision or higher.
 
 Local edits remain usable during a connection failure. The local diary write and its outbox
 entry belong to one SQLite transaction. Every retry uses the original submission ID for the
@@ -36,9 +38,10 @@ An older decoder retains unknown JSON fields and opaque record kinds when readin
 The server compares the expected revision and stores record changes and receipts in the
 same transaction. Only a change to the stored record or tombstone allocates a new revision.
 For a normal stale write, the device may automatically rebase independent fields. An edit
-against a deletion or two edits of the same field need grouped review. The next submission
-uses the latest revision observed during review, so another device's intervening write
-triggers a new check.
+against a deletion or two edits of the same field need grouped review. A returned record
+revision below the edit's base signals a history mismatch. The device keeps the pending
+edit for recovery. After ordinary conflict review, the next submission uses the latest
+reviewed revision so another device's intervening write triggers a new check.
 
 ## Before publishing a release
 

@@ -257,6 +257,31 @@ test("push decodes all outcomes with one result per stable submission ID", () =>
   ).toThrow(expect.objectContaining({ code: "invalid-request" }));
 });
 
+test("distinguishes a moved-back revision from a conflict with a deleted record", () => {
+  const { client, session } = pair();
+  const request = decodePushRequest({ ...scope, submissions: [meal] }, session);
+  const conflict = {
+    status: "conflict",
+    reason: "stale",
+    submissionId: meal.submissionId,
+    current: { state: "deleted", kind: meal.kind, id: meal.id, revision: 3 },
+  };
+  expect(() => decodePushResponse({ ...scope, results: [conflict] }, request, client)).toThrow(
+    expect.objectContaining({ code: "cursor-reset" }),
+  );
+  const current = { ...conflict.current, revision: 5 };
+  expect(() =>
+    decodePushResponse({ ...scope, results: [{ ...conflict, current }] }, request, client),
+  ).toThrow(expect.objectContaining({ code: "invalid-request" }));
+  expect(
+    decodePushResponse(
+      { ...scope, results: [{ ...conflict, reason: "deleted", current }] },
+      request,
+      client,
+    ).results,
+  ).toMatchObject([{ status: "conflict", reason: "deleted" }]);
+});
+
 test("push and pull cannot cross accounts that use the same history lineage", () => {
   const { client, session } = pair();
   const other = {
@@ -372,6 +397,7 @@ test("pull pages validate cursors, revisions, progression and limits", () => {
     { cursor: 7, hasMore: false, changes: [{ ...current, revision: 4 }] },
     { cursor: 7, hasMore: false, changes: [{ ...current, revision: 7 }, current] },
     { cursor: 7, hasMore: false, changes: [current, current] },
+    { cursor: 7, hasMore: true, changes: [current, { ...current, revision: 7 }] },
     {
       cursor: 7,
       hasMore: false,

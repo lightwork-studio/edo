@@ -282,12 +282,23 @@ export function decodePushResponse(
     ) {
       return invalid("accepted revision before the submission base");
     }
-    if (
-      result.status === "conflict" &&
-      result.current &&
-      (result.current.kind !== submission.kind || result.current.id !== submission.id)
-    ) {
-      return invalid("conflict record identity");
+    if (result.status === "conflict" && result.current) {
+      if (result.current.kind !== submission.kind || result.current.id !== submission.id) {
+        return invalid("conflict record identity");
+      }
+      if (submission.baseRevision !== null && result.current.revision < submission.baseRevision) {
+        throw new SyncWireError(
+          "cursor-reset",
+          "The server record moved behind the submission base",
+        );
+      }
+      if (
+        submission.op === "put" &&
+        result.current.state === "deleted" &&
+        result.reason !== "deleted"
+      ) {
+        return invalid("conflict reason for a deleted record");
+      }
     }
   }
   return { ...scope, results };
@@ -325,10 +336,14 @@ export function decodePullResponse(
     return invalid("pull page cursor");
   }
   const changes = readList(body.changes, request.limit ?? maxSyncPage, "changes", decodeChange);
+  const recordIds = new Set<string>();
   let last = request.cursor;
   for (const change of changes) {
     if (change.revision <= last || change.revision > cursor)
       return invalid("pull change revision or order");
+    const key = JSON.stringify([change.kind, change.id]);
+    if (recordIds.has(key)) return invalid("duplicate pull record");
+    recordIds.add(key);
     last = change.revision;
   }
   if (last !== cursor) return invalid("unrepresented pull revisions");
