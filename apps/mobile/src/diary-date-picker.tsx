@@ -38,10 +38,19 @@ export function DiaryDatePicker({
   const panelWidth = Math.min(420, width);
   const cellSize = Math.max(44, Math.floor((panelWidth - 12) / 7));
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
-  const dateLabel = new Intl.DateTimeFormat(locale, { dateStyle: "full", timeZone: "UTC" });
+  const era = month.startsWith("0000") ? "short" : undefined;
+  const dateLabel = new Intl.DateTimeFormat(locale, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    era,
+    timeZone: "UTC",
+  });
   const monthLabel = new Intl.DateTimeFormat(locale, {
     month: "long",
     year: "numeric",
+    era,
     timeZone: "UTC",
   });
   const monday = mondayOf(today);
