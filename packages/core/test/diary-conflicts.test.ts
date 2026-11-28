@@ -6,8 +6,27 @@ import {
   foodForRecipe,
   reconcileDiaryMeal,
   reconcileDiaryRecipe,
+  reconcileDiaryWeighIn,
   updateDiaryPortion,
 } from "../src/index.ts";
+
+it("keeps the captured weigh-in day and instant together during reconciliation", () => {
+  const original = {
+    id: "fixture-weight",
+    localDay: "2026-11-25",
+    occurredAt: Date.parse("2026-11-26T01:00:00Z"),
+    kg: 80,
+  };
+  const newDay = { ...original, localDay: "2026-11-26" };
+  const newInstant = { ...original, occurredAt: Date.parse("2026-11-26T02:00:00Z") };
+  expect(reconcileDiaryWeighIn(original, newDay, newInstant)).toBeNull();
+  const changedWeight = { ...original, kg: 81 };
+  expect(reconcileDiaryWeighIn(original, changedWeight, { ...newInstant, kg: 81 })).toBeNull();
+  expect(reconcileDiaryWeighIn(original, changedWeight, newInstant)).toEqual({
+    ...newInstant,
+    kg: 81,
+  });
+});
 
 const food: Food = {
   id: { provider: "bls", sourceId: "synthetic" },
