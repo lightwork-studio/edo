@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
+import {
+  openFoodFactsCatalog,
+  openFoodFactsNotice,
+} from "../../packages/off-import/src/manifest.ts";
 import { inspectOffSource } from "./off-source-status.ts";
 import { maxManifestBytes } from "./state.ts";
 
@@ -13,11 +17,15 @@ const manifest = {
   importerVersion: "fixture",
   source: {
     release: "off-delta-v1-fixture",
-    url: "https://example.test/catalog",
+    url: openFoodFactsCatalog.deltaIndexUrl,
     sha256: "a".repeat(64),
     lastModified: checkpoint,
   },
-  attribution: { name: "Open Food Facts", license: "ODbL", changes: "Selected records" },
+  attribution: {
+    name: openFoodFactsNotice.name,
+    license: openFoodFactsNotice.license,
+    changes: openFoodFactsNotice.changes,
+  },
   artifact: { bytes: 1_024, sha256: "b".repeat(64) },
   counts: { accepted: 428_065, rejected: 0 },
 };
@@ -61,6 +69,17 @@ test("distinguishes a missing or future source date from a valid recent refresh"
       time,
     ),
   ).toThrow("Invalid");
+});
+
+test("requires a schema, source and attribution supported by the publisher", () => {
+  const time = Date.parse(checkpoint);
+  for (const invalid of [
+    { ...manifest, schemaVersion: openFoodFactsCatalog.schemaVersion + 1 },
+    { ...manifest, source: { ...manifest.source, url: "https://example.test/catalog" } },
+    { ...manifest, attribution: { ...manifest.attribution, license: "CC0" } },
+  ]) {
+    expect(() => inspectOffSource(invalid, time)).toThrow("Invalid");
+  }
 });
 
 test("the standard-input command reports stale data and rejects an oversized manifest", () => {

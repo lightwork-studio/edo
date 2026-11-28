@@ -1,4 +1,4 @@
-import { isCatalogManifest } from "../../packages/catalog-import/src/manifest.ts";
+import { compatibleOpenFoodFactsManifest } from "../../packages/off-import/src/manifest.ts";
 import { maxManifestBytes, maxOffSourceAgeMilliseconds } from "./state.ts";
 
 function freshness(age: number | null) {
@@ -9,16 +9,15 @@ function freshness(age: number | null) {
 
 /** Describe the source age of a published manifest without inferring when it was activated. */
 export function inspectOffSource(value: unknown, now: number) {
-  if (!isCatalogManifest(value) || value.provider !== "open-food-facts") {
-    throw new Error("Invalid Open Food Facts manifest");
-  }
-  const sourceLastModified = value.source.lastModified ?? null;
+  const manifest = compatibleOpenFoodFactsManifest(value);
+  if (!manifest) throw new Error("Invalid Open Food Facts manifest");
+  const sourceLastModified = manifest.source.lastModified ?? null;
   const age = sourceLastModified === null ? null : now - Date.parse(sourceLastModified);
   return {
     status: freshness(age),
-    release: value.source.release,
-    artifactSha256: value.artifact.sha256,
-    acceptedRows: value.counts.accepted,
+    release: manifest.source.release,
+    artifactSha256: manifest.artifact.sha256,
+    acceptedRows: manifest.counts.accepted,
     observedAt: new Date(now).toISOString(),
     sourceLastModified,
     sourceAgeSeconds: age === null ? null : Math.floor(age / 1000),
