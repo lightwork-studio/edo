@@ -3,7 +3,8 @@ import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-nati
 import { type Language, strings } from "./strings";
 import {
   type BlockerJournal,
-  formatWeighInKilograms,
+  formatReviewQuantity,
+  type MealReviewSide,
   readSyncBlocker,
   type syncBlockerNotice,
   type WeighInReviewSide,
@@ -12,6 +13,7 @@ import { DetailHeader, Notice, styles } from "./ui";
 
 const gregorianCutoverDay = "1582-10-15";
 const gregorianCutoverTime = Date.parse(`${gregorianCutoverDay}T00:00:00.000Z`);
+const mealPageSize = 20;
 
 const copy = {
   en: {
@@ -35,6 +37,13 @@ const copy = {
       deleted: "Deleted",
       unavailable: "Weigh-in values unavailable",
       unknown: "Current account value unknown",
+    },
+    meal: {
+      unavailable: "Meal contents unavailable",
+      empty: "No items in this meal.",
+      more: "Show more items",
+      offset: "Recorded UTC offset",
+      unknownEnergy: "Energy unknown",
     },
     kinds: {
       meal: "Meal",
@@ -76,6 +85,13 @@ const copy = {
       deleted: "Gelöscht",
       unavailable: "Gewichtsdaten nicht verfügbar",
       unknown: "Aktueller Kontowert unbekannt",
+    },
+    meal: {
+      unavailable: "Mahlzeit nicht verfügbar",
+      empty: "Diese Mahlzeit enthält keine Einträge.",
+      more: "Weitere Einträge anzeigen",
+      offset: "Erfasste UTC-Abweichung",
+      unknownEnergy: "Energie unbekannt",
     },
     kinds: {
       meal: "Mahlzeit",
@@ -172,6 +188,23 @@ export function SyncBlockerScreen({
                   words={words.weighIn}
                 />
               </>
+            ) : issue.meal ? (
+              <>
+                <MealSide
+                  key={`${position}-phone`}
+                  title={words.weighIn.phone}
+                  side={issue.meal.phone}
+                  locale={locale}
+                  language={language}
+                />
+                <MealSide
+                  key={`${position}-account`}
+                  title={words.weighIn.account}
+                  side={issue.meal.account}
+                  locale={locale}
+                  language={language}
+                />
+              </>
             ) : (
               <Text style={styles.meta}>{words[issue.operation]}</Text>
             )}
@@ -206,7 +239,6 @@ function WeighInSide({
   locale: string;
   words: (typeof copy)[Language]["weighIn"];
 }) {
-  const recorded = side.state === "live" ? new Date(side.occurredAt) : null;
   return (
     <View>
       <Text accessibilityRole="header" style={styles.title}>
@@ -215,36 +247,138 @@ function WeighInSide({
       {side.state === "live" ? (
         <>
           <Text style={[styles.body, styles.numbers]}>
-            {formatWeighInKilograms(side.kg, locale)} kg
+            {formatReviewQuantity(side.kg, locale)} kg
           </Text>
-          <Text style={styles.meta}>{words.localDay}</Text>
-          <Text style={styles.body}>
-            {side.localDay < gregorianCutoverDay
-              ? side.localDay
-              : new Intl.DateTimeFormat(locale, {
-                  dateStyle: "medium",
-                  timeZone: "UTC",
-                }).format(new Date(`${side.localDay}T00:00:00.000Z`))}
-          </Text>
-          <Text style={styles.meta}>{words.instant}</Text>
-          <Text style={styles.body}>
-            {recorded && (side.occurredAt < gregorianCutoverTime || side.occurredAt % 1000 !== 0)
-              ? recorded.toISOString()
-              : new Intl.DateTimeFormat(locale, {
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                  second: "2-digit",
-                  timeZone: "UTC",
-                  timeZoneName: "short",
-                }).format(side.occurredAt)}
-          </Text>
+          <CapturedTime
+            localDay={side.localDay}
+            occurredAt={side.occurredAt}
+            locale={locale}
+            words={words}
+          />
         </>
       ) : (
         <Text style={styles.meta}>{words[side.state]}</Text>
       )}
     </View>
   );
+}
+
+function CapturedTime({
+  localDay,
+  occurredAt,
+  locale,
+  words,
+}: {
+  localDay: string;
+  occurredAt: number;
+  locale: string;
+  words: Pick<(typeof copy)[Language]["weighIn"], "localDay" | "instant">;
+}) {
+  return (
+    <>
+      <Text style={styles.meta}>{words.localDay}</Text>
+      <Text style={styles.body}>
+        {localDay < gregorianCutoverDay
+          ? localDay
+          : new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(
+              new Date(`${localDay}T00:00:00.000Z`),
+            )}
+      </Text>
+      <Text style={styles.meta}>{words.instant}</Text>
+      <Text style={styles.body}>
+        {occurredAt < gregorianCutoverTime || occurredAt % 1000 !== 0
+          ? new Date(occurredAt).toISOString()
+          : new Intl.DateTimeFormat(locale, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+              second: "2-digit",
+              timeZone: "UTC",
+              timeZoneName: "short",
+            }).format(occurredAt)}
+      </Text>
+    </>
+  );
+}
+
+function MealSide({
+  title,
+  side,
+  locale,
+  language,
+}: {
+  title: string;
+  side: MealReviewSide;
+  locale: string;
+  language: Language;
+}) {
+  const words = copy[language];
+  const [limit, setLimit] = useState(mealPageSize);
+  const heading = (
+    <Text accessibilityRole="header" style={styles.title}>
+      {title}
+    </Text>
+  );
+  if (side.state !== "live") {
+    return (
+      <View>
+        {heading}
+        <Text style={styles.meta}>
+          {side.state === "unavailable" ? words.meal.unavailable : words.weighIn[side.state]}
+        </Text>
+      </View>
+    );
+  }
+
+  const { meal } = side;
+  const offset = meal.utcOffsetMinutes;
+  return (
+    <View>
+      {heading}
+      <CapturedTime
+        localDay={meal.localDay}
+        occurredAt={meal.occurredAt}
+        locale={locale}
+        words={words.weighIn}
+      />
+      {offset !== undefined && (
+        <>
+          <Text style={styles.meta}>{words.meal.offset}</Text>
+          <Text style={styles.body}>{formatUtcOffset(offset)}</Text>
+        </>
+      )}
+      {meal.items.length === 0 && <Text style={styles.meta}>{words.meal.empty}</Text>}
+      {meal.items.slice(0, limit).map(({ id, food, portion, nutrients }) => (
+        <View key={id}>
+          <Text style={styles.body}>{food.name}</Text>
+          <Text style={[styles.meta, styles.numbers]}>
+            {formatReviewQuantity(portion.amount, locale)}{" "}
+            {portion.unit === "portion" ? strings[language].portion : portion.unit}
+            {" · "}
+            {nutrients.kcal === null
+              ? words.meal.unknownEnergy
+              : `${formatReviewQuantity(nutrients.kcal, locale)} kcal`}
+          </Text>
+        </View>
+      ))}
+      {meal.items.length > limit && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${title}. ${words.meal.more}`}
+          onPress={() => setLimit((current) => Math.min(current + mealPageSize, meal.items.length))}
+          style={styles.action}
+        >
+          <Text style={styles.actionText}>{words.meal.more}</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+function formatUtcOffset(offset: number): string {
+  const minutes = Math.abs(offset);
+  const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
+  return `UTC${offset < 0 ? "-" : "+"}${hours}:${String(minutes % 60).padStart(2, "0")}`;
 }

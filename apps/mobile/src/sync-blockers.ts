@@ -1,4 +1,4 @@
-import type { openDiary } from "@edo/storage";
+import { type DiaryMeal, type openDiary, readMealSnapshot } from "@edo/storage";
 
 type Diary = Awaited<ReturnType<typeof openDiary>>;
 export type BlockerJournal = Pick<
@@ -23,21 +23,28 @@ export type SyncBlocker = {
     readonly phone: WeighInReviewSide;
     readonly account: WeighInReviewSide;
   };
+  readonly meal?: {
+    readonly phone: MealReviewSide;
+    readonly account: MealReviewSide;
+  };
 };
 
-export type WeighInReviewSide =
-  | {
-      readonly state: "live";
-      readonly kg: number;
-      readonly localDay: string;
-      readonly occurredAt: number;
-    }
+type ReviewSide<T> =
+  | ({ readonly state: "live" } & T)
   | { readonly state: "deleted" | "unavailable" | "unknown" };
 
-export function formatWeighInKilograms(kg: number, locale: string): string {
+export type WeighInReviewSide = ReviewSide<{
+  readonly kg: number;
+  readonly localDay: string;
+  readonly occurredAt: number;
+}>;
+
+export type MealReviewSide = ReviewSide<{ readonly meal: Omit<DiaryMeal, "id"> }>;
+
+export function formatReviewQuantity(amount: number, locale: string): string {
   const formatter = new Intl.NumberFormat(locale);
   const decimal = formatter.format(1.1).replaceAll(formatter.format(1), "") || ".";
-  return kg.toString().replace(".", decimal);
+  return amount.toString().replace(".", decimal);
 }
 
 function weighInValues(content: Record<string, unknown>, id: string): WeighInReviewSide {
@@ -62,25 +69,39 @@ function weighInValues(content: Record<string, unknown>, id: string): WeighInRev
   return { state: "live", kg, localDay, occurredAt };
 }
 
-function accountWeighIn(change: AccountChange, id: string): WeighInReviewSide {
-  if (change.kind !== "weigh-in" || change.id !== id) return { state: "unavailable" };
-  return change.state === "live" ? weighInValues(change.content, id) : { state: change.state };
+function mealValues(content: Record<string, unknown>, id: string): MealReviewSide {
+  if (content.id !== id) return { state: "unavailable" };
+  try {
+    const { id: _mealId, ...meal } = readMealSnapshot(content);
+    return { state: "live", meal };
+  } catch {
+    return { state: "unavailable" };
+  }
 }
 
-function latestAccountWeighIn(review: Review, id: string): WeighInReviewSide {
+function latestAccountSide<T>(
+  review: Review,
+  key: Key,
+  decode: (content: Record<string, unknown>, id: string) => ReviewSide<T>,
+): ReviewSide<T> {
+  function read(change: AccountChange): ReviewSide<T> {
+    if (change.kind !== key.kind || change.id !== key.id) return { state: "unavailable" };
+    return change.state === "live" ? decode(change.content, key.id) : { state: change.state };
+  }
+
   const { result } = review.blocked;
   const reported = result.status === "conflict" ? result.current : null;
   const { pulled } = review;
   const latest = !reported || (pulled && pulled.revision >= reported.revision) ? pulled : reported;
   if (!latest || latest.revision < (review.baseRevision ?? 0)) return { state: "unknown" };
   const other = latest === pulled ? reported : pulled;
-  const side = accountWeighIn(latest, id);
+  const side = read(latest);
   if (side.state === "live" && other?.state === "deleted") return { state: "unavailable" };
   if (other?.revision !== latest.revision) return side;
   // A complete authenticated copy can fill an omitted body at the same revision.
-  if (latest.state === "unavailable" && other.state === "live") return accountWeighIn(other, id);
+  if (latest.state === "unavailable" && other.state === "live") return read(other);
   if (other.state === "unavailable" && side.state === "live") return side;
-  if (JSON.stringify(side) !== JSON.stringify(accountWeighIn(other, id))) {
+  if (JSON.stringify(side) !== JSON.stringify(read(other))) {
     return { state: "unavailable" };
   }
   return side;
@@ -118,7 +139,13 @@ export function readSyncBlocker(
       ...(key.kind === "weigh-in" && {
         weighIn: {
           phone: device.op === "put" ? weighInValues(device.content, key.id) : { state: "deleted" },
-          account: latestAccountWeighIn(review, key.id),
+          account: latestAccountSide(review, key, weighInValues),
+        },
+      }),
+      ...(key.kind === "meal" && {
+        meal: {
+          phone: device.op === "put" ? mealValues(device.content, key.id) : { state: "deleted" },
+          account: latestAccountSide(review, key, mealValues),
         },
       }),
     };

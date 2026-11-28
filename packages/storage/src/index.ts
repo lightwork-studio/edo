@@ -15,4 +15,5 @@ export type {
   PrivateArchivePreview,
   PrivateArchiveResult,
 } from "./private-archive.ts";
+export { readMealSnapshot } from "./snapshot.ts";
 export type { DiarySqliteConnection, SqliteConnection } from "./sqlite.ts";
