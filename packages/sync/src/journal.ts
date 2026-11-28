@@ -51,8 +51,12 @@ interface Binding extends Pick<AuthenticatedHistory, "accountBinding" | "lineage
   readonly server: string;
 }
 
-function inTransaction<T>(db: JournalSqlite, operation: () => T): T {
-  db.exec("BEGIN IMMEDIATE");
+function inTransaction<T>(
+  db: JournalSqlite,
+  begin: "BEGIN" | "BEGIN IMMEDIATE",
+  operation: () => T,
+): T {
+  db.exec(begin);
   try {
     const result = operation();
     db.exec("COMMIT");
@@ -179,6 +183,15 @@ function requireUnusedId(db: JournalSqlite, id: string) {
   db.run("INSERT INTO edo_sync_submission_ids VALUES (?)", id);
 }
 
+function reserveLocalEdit(db: JournalSqlite, key: RecordKey, submissionId: string) {
+  if (!savedBinding(db)) throw new Error("Connect this diary before queueing account changes");
+  if (!isKnownRecordKind(key.kind)) throw new Error("This client cannot edit this record kind");
+  requireUnusedId(db, submissionId);
+  return localRecord(db, key);
+}
+
+type ProjectedEdit = { op: "put"; content: unknown } | { op: "delete" };
+
 function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
 }
@@ -188,8 +201,22 @@ function requireSynchronousWrite(result: undefined): void {
 }
 
 /** Candidate on-device persistence. Schema installation belongs to the diary migration. */
-export function openSyncJournal(db: JournalSqlite) {
+export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () => void) {
   let activeSession: NegotiatedSync | null = null;
+
+  function transact<T>(
+    operation: () => T,
+    begin: "BEGIN" | "BEGIN IMMEDIATE" = "BEGIN IMMEDIATE",
+  ): T {
+    return inTransaction(db, begin, () => {
+      requireCurrentStorage?.();
+      return operation();
+    });
+  }
+
+  function inspect<T>(operation: () => T): T {
+    return requireCurrentStorage ? transact(operation, "BEGIN") : operation();
+  }
 
   function checkSession(session: NegotiatedSync) {
     if (activeSession !== session)
@@ -199,12 +226,12 @@ export function openSyncJournal(db: JournalSqlite) {
   }
 
   return {
-    history: () => savedBinding(db),
-    requiredRelease: () => pinnedRelease(db),
+    history: () => inspect(() => savedBinding(db)),
+    requiredRelease: () => inspect(() => pinnedRelease(db)),
     bind(session: NegotiatedSync) {
       assertSession(session);
       const endpoint = serverForSession(session);
-      inTransaction(db, () => {
+      transact(() => {
         const binding = savedBinding(db);
         if (binding) {
           if (binding.server !== endpoint)
@@ -230,24 +257,36 @@ export function openSyncJournal(db: JournalSqlite) {
       activeSession = session;
     },
     commitLocal(key: RecordKey, edit: OutboxEdit, applyLocal: () => undefined) {
-      return inTransaction(db, () => {
-        if (!savedBinding(db))
-          throw new Error("Connect this diary before queueing account changes");
-        if (!isKnownRecordKind(key.kind))
-          throw new Error("This client cannot edit this record kind");
-        requireUnusedId(db, edit.submissionId);
-        const { record, release } = localRecord(db, key);
+      return transact(() => {
+        const { record, release } = reserveLocalEdit(db, key, edit.submissionId);
         const validated = decodeSubmission({ ...edit, ...key, baseRevision: record.baseRevision });
         const changed = queueOutboxEdit(record, validated);
         requireSynchronousWrite(applyLocal());
         saveRecord(db, changed, release);
       });
     },
+    /** Queue the persisted result of a synchronous local write on the same connection. */
+    commitLocalProjection(key: RecordKey, submissionId: string, applyLocal: () => ProjectedEdit) {
+      return transact(() => {
+        const { record, release } = reserveLocalEdit(db, key, submissionId);
+        const edit = applyLocal();
+        if (edit?.op !== "put" && edit?.op !== "delete") {
+          throw new TypeError("A diary write must synchronously return its projected edit");
+        }
+        const validated = decodeSubmission({
+          ...edit,
+          ...key,
+          submissionId,
+          baseRevision: record.baseRevision,
+        });
+        saveRecord(db, queueOutboxEdit(record, validated), release);
+      });
+    },
     prepare(session: NegotiatedSync, limit = 32): Submission[] {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > maxSyncSubmissions) {
         throw new RangeError("Invalid outbox batch size");
       }
-      return inTransaction(db, () => {
+      return transact(() => {
         checkSession(session);
         assertSession(session, true);
         const required = pinnedRelease(db);
@@ -314,7 +353,7 @@ export function openSyncJournal(db: JournalSqlite) {
       response: PushResponse,
       applyRemote: (change: Change) => undefined,
     ) {
-      return inTransaction(db, () => {
+      return transact(() => {
         const binding = checkSession(session);
         assertResponseSession(response, session);
         let revision = binding.revision;
@@ -378,7 +417,7 @@ export function openSyncJournal(db: JournalSqlite) {
         { ...syncScope(session), cursor: requestCursor },
         session,
       );
-      return inTransaction(db, () => {
+      return transact(() => {
         const binding = checkSession(session);
         if (binding.cursor !== requestCursor)
           throw new Error("The pull cursor changed before the page was saved");
@@ -417,7 +456,7 @@ export function openSyncJournal(db: JournalSqlite) {
       seenSubmissionId: string,
       submissionId: string,
     ) {
-      return inTransaction(db, () => {
+      return transact(() => {
         const { record } = localRecord(db, key);
         const server = remoteRecord(db, key);
         if ((server?.revision ?? null) !== seenRevision) {
@@ -434,10 +473,12 @@ export function openSyncJournal(db: JournalSqlite) {
       });
     },
     queued: () =>
-      db
-        .all("SELECT * FROM edo_sync_outbox ORDER BY kind, id")
-        .map((row) => storedRecord(row).record)
-        .filter(hasLocalWork),
-    serverCopy: (key: RecordKey) => remoteRecord(db, key),
+      inspect(() =>
+        db
+          .all("SELECT * FROM edo_sync_outbox ORDER BY kind, id")
+          .map((row) => storedRecord(row).record)
+          .filter(hasLocalWork),
+      ),
+    serverCopy: (key: RecordKey) => inspect(() => remoteRecord(db, key)),
   };
 }

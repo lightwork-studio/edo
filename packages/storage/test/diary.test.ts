@@ -17,7 +17,9 @@ import {
   type OpenDiaryOptions,
   openDiary,
 } from "@edo/storage";
+import { createSyncClient } from "@edo/sync";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { applyRecordContent } from "../../../apps/sync-node/src/record-projection.ts";
 import { diaryMigrations, migrateDiary } from "../src/migrations.ts";
 import { decodeSnapshot } from "../src/snapshot.ts";
 
@@ -119,6 +121,96 @@ const revisedTarget: NutritionTargetRecord = {
   configuredAt: target.configuredAt - 3_600_000,
   target: { ...target.target, kcal: 2100, availableCarbohydratesG: 280 },
 };
+
+function mealSyncSession() {
+  return createSyncClient({
+    origin: "https://example.test",
+    releases: [{ release: "0.1", features: ["write-records"], writableKinds: ["meal"] }],
+    authorization: () => "Bearer synthetic",
+    fetch: async () =>
+      Response.json({
+        accountBinding: "account",
+        lineage: "fixture",
+        revision: 0,
+        restoredFrom: null,
+        release: "0.1",
+        features: ["write-records"],
+      }),
+  }).connect();
+}
+
+test("queues the actual persisted meal and preserves an in-flight edit over a restart", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const captured = { ...meal, utcOffsetMinutes: -240 };
+  diary.saveMeal(captured);
+  expect(diary.sync.journal.queued()).toEqual([]);
+  expect(() => diary.sync.saveMeal(meal, "unbound")).toThrow(/Connect this diary/);
+  expect(diary.getMeal(meal.id)).toEqual(captured);
+
+  const session = await mealSyncSession();
+  diary.sync.journal.bind(session);
+  diary.sync.saveMeal(meal, "first-edit");
+  const [first] = diary.sync.journal.prepare(session);
+  if (first?.op !== "put") throw new Error("Expected a meal submission");
+  expect(first.content).toEqual(captured);
+  expect(
+    applyRecordContent({
+      key: first,
+      release: session.release,
+      current: null,
+      submitted: first.content,
+    }),
+  ).toEqual(captured);
+
+  const item = meal.items[0];
+  if (!item) throw new Error("Expected a fixture item");
+  const edited = { ...captured, items: [updateDiaryPortion(item, { amount: 150, unit: "ml" })] };
+  diary.sync.saveMeal(edited, "newer-edit");
+  source.db.close();
+  const persisted = await createDatabase().start();
+  expect(persisted.getMeal(meal.id)).toEqual(edited);
+  persisted.sync.journal.bind(session);
+  expect(persisted.sync.journal.prepare(session)).toEqual([first]);
+  expect(persisted.sync.journal.queued()).toMatchObject([
+    {
+      attempt: first,
+      pending: {
+        submissionId: "newer-edit",
+        content: edited,
+      },
+    },
+  ]);
+});
+
+test("rolls back a sync meal deletion and its submission reservation if the journal write fails", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  diary.saveMeal(meal);
+  const session = await mealSyncSession();
+  diary.sync.journal.bind(session);
+  source.db.exec(`PRAGMA user_version = ${currentVersion + 1}`);
+  expect(() => diary.sync.deleteMeal(meal.id, "retry-delete")).toThrow(
+    /storage version has changed/,
+  );
+  expect(() => diary.sync.journal.bind(session)).toThrow(/storage version has changed/);
+  source.db.exec(`PRAGMA user_version = ${currentVersion}`);
+  source.db.exec(`CREATE TRIGGER deny_outbox BEFORE INSERT ON edo_sync_outbox
+    BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`);
+  expect(() => diary.sync.deleteMeal(meal.id, "retry-delete")).toThrow(/journal unavailable/);
+  expect(diary.getMeal(meal.id)).toEqual(meal);
+  expect(diary.sync.journal.queued()).toEqual([]);
+  source.db.exec("DROP TRIGGER deny_outbox");
+  diary.sync.deleteMeal(meal.id, "retry-delete");
+  expect(diary.getMeal(meal.id)).toBeNull();
+  expect(diary.sync.journal.prepare(session)).toEqual([
+    { kind: "meal", id: meal.id, submissionId: "retry-delete", baseRevision: null, op: "delete" },
+  ]);
+  source.db.close();
+  const reopened = await createDatabase().start();
+  expect(reopened.getMeal(meal.id)).toBeNull();
+  expect(reopened.sync.journal.queued()[0]?.attempt?.submissionId).toBe("retry-delete");
+});
 
 test("reopens locally, preserving the event day, stable IDs and nutrition after a catalog refresh", async () => {
   const source = createDatabase();
@@ -855,6 +947,12 @@ test("blocks reads and writes on an open handle after another connection upgrade
   expect(() => legacy.listMeals(meal.localDay)).toThrow(/version has changed/);
   expect(() => legacy.saveMeal({ ...meal, localDay: "2026-11-01" })).toThrow(/version has changed/);
   expect(() => legacy.deleteMeal(meal.id)).toThrow(/version has changed/);
+  expect(() => legacy.sync.journal.history()).toThrow(/version has changed/);
+  expect(() => legacy.sync.journal.requiredRelease()).toThrow(/version has changed/);
+  expect(() => legacy.sync.journal.queued()).toThrow(/version has changed/);
+  expect(() => legacy.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toThrow(
+    /version has changed/,
+  );
   expect(() => legacy.listWeighIns(weighIn.localDay, weighIn.localDay)).toThrow(
     /version has changed/,
   );
