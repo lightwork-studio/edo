@@ -1,0 +1,44 @@
+name: Check published Open Food Facts freshness
+
+on:
+  schedule:
+    - cron: "43 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    if: github.repository == 'lightwork-studio/edo' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - name: Read the public catalog manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/off-active.json"
+          report="$RUNNER_TEMP/off-source-status.json"
+          outcome=0
+          curl --proto '=https' --fail --silent --show-error --connect-timeout 10 \
+            --max-time 20 --max-filesize 262144 --retry 2 --retry-max-time 60 \
+            https://edo.timweb.app/catalog-preview/open-food-facts/active.json -o "$manifest" &&
+            node apps/catalog-edge/off-source-status.ts < "$manifest" > "$report" || outcome=$?
+          if [ -s "$report" ]; then
+            {
+              printf '%s\n' 'Open Food Facts public source status' '~~~json'
+              jq -c . "$report"
+              printf '%s\n' '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$outcome" -ne 0 ]; then
+            printf '%s\n' '::error title=Open Food Facts freshness::The public catalog manifest is unavailable, invalid, or outside the permitted source age.'
+            exit "$outcome"
+          fi

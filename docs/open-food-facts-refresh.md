@@ -96,6 +96,11 @@ Check the published Open Food Facts source independently of GitHub Actions from 
 The command reads the public manifest and exits nonzero when the source is stale, the timestamp
 is missing or in the future, or the manifest cannot be read.
 
+The **Check published Open Food Facts freshness** workflow runs the same read-only
+check at 13:43 UTC and on demand from `main`. It can surface a stale release even if
+the publisher did not run. It uses the public endpoint without Cloudflare or R2
+credentials and records the source age, release and artifact in the Actions summary.
+
 ```sh
 set -o pipefail
 curl --fail --silent --show-error --max-time 20 \
