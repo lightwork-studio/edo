@@ -73,7 +73,7 @@ def review_saved_records():
     find("Sync issues")
     find("Weigh-in")
     find("Issue 1")
-    find("Latest phone change")
+    find("Pending phone change")
     find("80.002 kg")
     find("Nov 10, 2026")
     find("Saved account copy")
