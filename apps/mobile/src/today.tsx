@@ -29,6 +29,8 @@ export type WeekDay = {
   target: DailyNutritionTarget | null;
 };
 
+const weekdayColumns = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+
 export function TodayScreen({
   t,
   locale,
@@ -52,7 +54,7 @@ export function TodayScreen({
   today: string;
   lastDay: string;
   day: string;
-  week: WeekDay[];
+  week: (WeekDay | null)[];
   meals: DiaryMeal[] | null;
   target: DailyNutritionTarget | null;
   feedback: string | null;
@@ -96,7 +98,7 @@ export function TodayScreen({
           onClose={() => setShowPicker(false)}
           onChoose={(date) => {
             setShowPicker(false);
-            if (date !== day) onDay(date);
+            onDay(date);
           }}
         />
       )}
@@ -109,7 +111,12 @@ export function TodayScreen({
           { width: Math.max(width, weekMinWidth), paddingHorizontal: weekPadding },
         ]}
       >
-        {week.map((entry) => {
+        {weekdayColumns.map((column, index) => {
+          const entry = week[index];
+          if (!entry) {
+            // The first and last supported diary weeks can contain blank outer columns.
+            return <View key={column} style={local.day} />;
+          }
           const selected = entry.day === day;
           const isToday = entry.day === today;
           const unavailable = entry.day > lastDay;

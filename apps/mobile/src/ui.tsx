@@ -311,5 +311,6 @@ export function showDay(day: string, locale: string, today: string): string {
     day: "numeric",
     timeZone: "UTC",
     year: day.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric",
+    era: day.startsWith("0000") ? "short" : undefined,
   }).format(new Date(`${day}T00:00:00Z`));
 }

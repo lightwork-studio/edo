@@ -40,13 +40,12 @@ import { BarcodeEntry, type BarcodeState } from "./src/barcode-entry";
 import { packagedCatalogOrigin } from "./src/catalog-origin";
 import { CustomFoodList } from "./src/custom-food-list";
 import { CustomFoodScreen } from "./src/custom-food-screen";
+import { diaryWeekDates } from "./src/diary-calendar";
 import {
-  addDays,
   diaryDayLimit,
   type EntryTime,
   entryTime,
   localDay,
-  mondayOf,
   nextMidnight,
   saveFood,
   totalNutrition,
@@ -221,11 +220,11 @@ function DiaryApp({
   // biome-ignore lint/correctness/useExhaustiveDependencies: A committed write or retry invalidates the SQLite read.
   const lastDay = useMemo(() => diaryDayLimit(diary, today), [diary, today, refresh]);
   const day = selectedDay && selectedDay <= lastDay ? selectedDay : today;
-  const monday = mondayOf(day);
+  const weekStart = diaryWeekDates(day).find((date) => date !== null) ?? day;
   // biome-ignore lint/correctness/useExhaustiveDependencies: A committed write or retry invalidates the SQLite read.
   const week = useMemo(() => {
-    return Array.from({ length: 7 }, (_, index) => {
-      const date = addDays(monday, index);
+    return diaryWeekDates(weekStart).map((date) => {
+      if (!date) return null;
       const meals = date > lastDay ? null : readMeals(diary, date);
       const target = date > lastDay ? null : (readTarget(diary, date)?.target ?? null);
       return {
@@ -235,8 +234,8 @@ function DiaryApp({
         kcal: meals ? (totalNutrition(meals)?.kcal ?? null) : null,
       };
     });
-  }, [diary, monday, lastDay, refresh]);
-  const selectedWeekDay = week.find((entry) => entry.day === day);
+  }, [diary, weekStart, lastDay, refresh]);
+  const selectedWeekDay = week.find((entry) => entry?.day === day);
   const meals = selectedWeekDay?.meals ?? null;
 
   useEffect(() => {
