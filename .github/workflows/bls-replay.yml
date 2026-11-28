@@ -1,14 +1,15 @@
 name: Rebuild reviewed BLS catalog
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [verify/bls-replay]
 
 permissions:
   contents: read
 
 jobs:
   replay:
-    if: github.repository == 'lightwork-studio/edo' && github.ref == 'refs/heads/main'
+    if: github.repository == 'lightwork-studio/edo' && github.ref == 'refs/heads/verify/bls-replay'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
