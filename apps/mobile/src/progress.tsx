@@ -18,7 +18,15 @@ import {
 
 const dayGap = 3;
 
-function WeightChart({ points, locale }: { points: WeightPoint[]; locale: string }) {
+function WeightChart({
+  points,
+  locale,
+  compact,
+}: {
+  points: WeightPoint[];
+  locale: string;
+  compact: boolean;
+}) {
   const [width, setWidth] = useState(0);
   const measured = points.flatMap(({ measured, averageKg }) =>
     [measured?.kg, averageKg].filter((value): value is number => typeof value === "number"),
@@ -35,7 +43,9 @@ function WeightChart({ points, locale }: { points: WeightPoint[]; locale: string
     x: 6 + (index * graphWidth) / (points.length - 1),
     y: ((upper - kg) / (upper - lower)) * height,
   });
-  const sampleDates = [points[0], points[Math.floor(points.length / 2)], points.at(-1)];
+  const sampleDates = compact
+    ? [points[0], points.at(-1)]
+    : [points[0], points[Math.floor(points.length / 2)], points.at(-1)];
   const labels = new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
@@ -139,7 +149,8 @@ export function ProgressScreen({
   onArchive: () => void;
 }) {
   const [, retry] = useState(0);
-  const { fontScale } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
+  const compact = width < 390 && fontScale > 1.2;
   const dayWidth = Math.ceil(42 * Math.max(1, fontScale));
   const dayRing = Math.ceil(34 * Math.max(1, fontScale));
   const summary = loadProgress(diary, today, range);
@@ -176,14 +187,19 @@ export function ProgressScreen({
     <>
       <View style={styles.header}>
         <IconButton glyph="‹" label={t.back} onPress={onBack} />
-        <Text accessibilityRole="header" style={[styles.title, styles.stretch]}>
+        <Text
+          accessibilityRole="header"
+          style={[styles.title, styles.stretch]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
           {t.progress}
         </Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t.addWeight}
           onPress={onWeight}
-          style={local.weightAction}
+          style={[local.weightAction, compact && local.compactWeightAction]}
         >
           <Text
             importantForAccessibility="no"
@@ -192,7 +208,7 @@ export function ProgressScreen({
           >
             +
           </Text>
-          <Text style={styles.title}>{t.weight}</Text>
+          {!compact && <Text style={styles.title}>{t.weight}</Text>}
         </Pressable>
       </View>
       {syncNotice && <View style={local.syncNotice}>{syncNotice}</View>}
@@ -219,8 +235,8 @@ export function ProgressScreen({
             ))}
           </View>
           <View style={styles.card}>
-            <View style={local.spread}>
-              <Text accessibilityRole="header" style={[styles.meta, styles.stretch]}>
+            <View style={[local.spread, compact && local.stacked]}>
+              <Text accessibilityRole="header" style={[styles.meta, !compact && styles.stretch]}>
                 {t.weight}
               </Text>
               <Text style={styles.meta}>{t.sevenDayAverage}</Text>
@@ -235,17 +251,21 @@ export function ProgressScreen({
                 kg
               </Text>
             )}
-            <WeightChart points={summary.points} locale={locale} />
+            <WeightChart points={summary.points} locale={locale} compact={compact} />
             {trend && <Text style={styles.meta}>{trend}</Text>}
             {average === null && <Text style={styles.meta}>{t.weightTrendEmpty}</Text>}
           </View>
           <View style={styles.card}>
-            <View style={local.spread}>
-              <Text accessibilityRole="header" style={[styles.meta, styles.stretch]}>
+            <View style={[local.spread, compact && local.stacked]}>
+              <Text accessibilityRole="header" style={[styles.meta, !compact && styles.stretch]}>
                 {t.progressCalories}
               </Text>
               {summary.averageCalories !== null && (
-                <Text style={local.calorieAverage} numberOfLines={2} adjustsFontSizeToFit>
+                <Text
+                  style={[local.calorieAverage, compact && local.stackedAverage]}
+                  numberOfLines={2}
+                  adjustsFontSizeToFit
+                >
                   {t.progressAverage}{" "}
                   <Text style={[styles.body, styles.numbers]}>
                     {displayNumber(roundEnergyKcal(summary.averageCalories), locale, 0)}
@@ -333,8 +353,8 @@ export function ProgressScreen({
             )}
           </View>
           <View style={styles.card}>
-            <View style={local.spread}>
-              <Text accessibilityRole="header" style={[styles.meta, styles.stretch]}>
+            <View style={[local.spread, compact && local.stacked]}>
+              <Text accessibilityRole="header" style={[styles.meta, !compact && styles.stretch]}>
                 {t.progressMacros}
               </Text>
               <Pressable accessibilityRole="button" style={styles.action} onPress={onTargets}>
@@ -441,6 +461,7 @@ const local = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
+  compactWeightAction: { minWidth: 44, justifyContent: "center" },
   rangeLabel: { ...styles.body, fontWeight: "600" },
   weightUnit: { ...styles.body, color: colors.muted, fontWeight: "500" },
   dateAxis: {
@@ -457,6 +478,7 @@ const local = StyleSheet.create({
   activeDay: { color: colors.accent, fontWeight: "700" },
   excess: { color: colors.text, fontWeight: "700" },
   calorieAverage: { ...styles.meta, maxWidth: "60%", flexShrink: 1, textAlign: "right" },
+  stackedAverage: { maxWidth: "100%", textAlign: "left" },
   days: { flexDirection: "row", justifyContent: "space-between", gap: 3 },
   dot: {
     position: "absolute",
@@ -473,5 +495,6 @@ const local = StyleSheet.create({
   selected: { backgroundColor: colors.text },
   selectedText: { color: colors.background },
   spread: { ...styles.row, justifyContent: "space-between" },
+  stacked: { flexDirection: "column", alignItems: "flex-start", gap: 4 },
   syncNotice: { marginHorizontal: 16 },
 });
