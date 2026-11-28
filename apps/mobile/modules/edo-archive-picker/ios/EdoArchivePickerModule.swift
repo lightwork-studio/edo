@@ -17,40 +17,44 @@ public final class EdoArchivePickerModule: Module {
     Name("EdoArchivePicker")
 
     AsyncFunction("pickArchiveAsync") { (promise: Promise) in
-      guard self.activeReads < 2 else {
-        promise.reject("ERR_EDO_ARCHIVE_PROVIDER_BUSY", "The file provider is still busy")
-        return
-      }
-      guard self.pickerDelegate == nil,
-            let presenter = self.appContext?.utilities?.currentViewController() else {
-        promise.reject("ERR_EDO_ARCHIVE_PICKER", "Could not open the archive picker")
-        return
-      }
-      let picker = UIDocumentPickerViewController(
-        forOpeningContentTypes: [.json, .plainText, .data],
-        asCopy: false
-      )
-      let delegate = ArchivePickerDelegate { [weak self] url in
-        guard let self else {
-          promise.reject("ERR_EDO_ARCHIVE_PICKER", "The archive picker closed")
-          return
-        }
-        guard let url else {
-          self.pickerDelegate = nil
-          promise.resolve(["status": "cancelled"])
-          return
-        }
-        self.readFromProvider(url, promise: promise)
-      }
-      self.pickerDelegate = delegate
-      picker.delegate = delegate
-      picker.presentationController?.delegate = delegate
-      picker.modalPresentationStyle = .pageSheet
-      presenter.present(picker, animated: true)
+      self.pickFile(types: [.json, .plainText, .data], requireArchiveObject: true, promise: promise)
+    }.runOnQueue(.main)
+    AsyncFunction("pickFddbCsvAsync") { (promise: Promise) in
+      self.pickFile(types: [.commaSeparatedText, .plainText, .data], requireArchiveObject: false, promise: promise)
     }.runOnQueue(.main)
   }
 
-  private func readFromProvider(_ url: URL, promise: Promise) {
+  private func pickFile(types: [UTType], requireArchiveObject: Bool, promise: Promise) {
+    guard activeReads < 2 else {
+      promise.reject("ERR_EDO_ARCHIVE_PROVIDER_BUSY", "The file provider is still busy")
+      return
+    }
+    guard pickerDelegate == nil,
+          let presenter = appContext?.utilities?.currentViewController() else {
+      promise.reject("ERR_EDO_ARCHIVE_PICKER", "Could not open the diary file picker")
+      return
+    }
+    let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
+    let delegate = ArchivePickerDelegate { [weak self] url in
+      guard let self else {
+        promise.reject("ERR_EDO_ARCHIVE_PICKER", "The diary file picker closed")
+        return
+      }
+      guard let url else {
+        self.pickerDelegate = nil
+        promise.resolve(["status": "cancelled"])
+        return
+      }
+      self.readFromProvider(url, requireArchiveObject: requireArchiveObject, promise: promise)
+    }
+    pickerDelegate = delegate
+    picker.delegate = delegate
+    picker.presentationController?.delegate = delegate
+    picker.modalPresentationStyle = .pageSheet
+    presenter.present(picker, animated: true)
+  }
+
+  private func readFromProvider(_ url: URL, requireArchiveObject: Bool, promise: Promise) {
     activeReads += 1
     let cancellation = ArchiveReadCancellation()
     let coordinator = NSFileCoordinator()
@@ -58,11 +62,13 @@ public final class EdoArchivePickerModule: Module {
       cancellation.cancel()
       coordinator.cancel()
       self?.pickerDelegate = nil
-      promise.reject("ERR_EDO_ARCHIVE_TIMEOUT", "Timed out reading the selected diary archive")
+      promise.reject("ERR_EDO_ARCHIVE_TIMEOUT", "Timed out reading the selected diary file")
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + 45, execute: deadline)
     readQueue.async { [weak self] in
-      let selection = try? readSelection(url, coordinator: coordinator, cancellation: cancellation)
+      let selection = try? readSelection(
+        url, coordinator: coordinator, cancellation: cancellation, requireArchiveObject: requireArchiveObject
+      )
       DispatchQueue.main.async { [weak self] in
         self?.activeReads -= 1
         guard !cancellation.isCancelled else { return }
@@ -71,7 +77,7 @@ public final class EdoArchivePickerModule: Module {
         if let selection {
           promise.resolve(selection)
         } else {
-          promise.reject("ERR_EDO_ARCHIVE_READ", "Could not read the selected diary archive")
+          promise.reject("ERR_EDO_ARCHIVE_READ", "Could not read the selected diary file")
         }
       }
     }
@@ -129,7 +135,8 @@ private final class ArchivePickerDelegate: NSObject,
 private func readSelection(
   _ url: URL,
   coordinator: NSFileCoordinator,
-  cancellation: ArchiveReadCancellation
+  cancellation: ArchiveReadCancellation,
+  requireArchiveObject: Bool
 ) throws -> [String: String] {
   try cancellation.check()
   guard url.startAccessingSecurityScopedResource() else {
@@ -155,7 +162,9 @@ private func readSelection(
       guard descriptor >= 0 else { throw ArchiveReadError.unreadable }
       let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
       defer { try? handle.close() }
-      return try readArchive(from: handle, checkCancellation: cancellation.check)
+      return try readArchive(
+        from: handle, requireArchiveObject: requireArchiveObject, checkCancellation: cancellation.check
+      )
     }
   }
   if let coordinationError { throw coordinationError }

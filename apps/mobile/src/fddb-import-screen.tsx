@@ -12,7 +12,7 @@ import {
   ArchiveProviderBusyError,
   ArchiveReadTimeoutError,
   ArchiveSizeError,
-  chooseDiaryFile,
+  chooseFddbCsv,
 } from "./archive-import";
 import { fddbImportLimits, InvalidFddbSourceTimeZone, previewFddbFile } from "./fddb-file-import";
 import type { Strings } from "./strings";
@@ -102,7 +102,7 @@ export function FddbImportScreen({
             style={styles.action}
             onPress={() =>
               void run("open", async () => {
-                const csv = await chooseDiaryFile();
+                const csv = await chooseFddbCsv();
                 if (csv === null || !active.current) return;
                 setSource(csv);
                 setPreview(null);

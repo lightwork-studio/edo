@@ -12,6 +12,7 @@ internal const val MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
 internal fun readArchive(
   input: InputStream,
   maxBytes: Int = MAX_ARCHIVE_BYTES,
+  requireArchiveObject: Boolean = true,
   checkCancellation: () -> Unit = {},
 ): String? {
   val output = ByteArrayOutputStream()
@@ -27,8 +28,8 @@ internal fun readArchive(
   }
   checkCancellation()
   val source = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(output.toByteArray())).toString()
-  // Only an archive object may cross the native bridge as document text.
-  if ('\u0000' in source || !source.removePrefix("\uFEFF").trimStart(' ', '\t', '\r', '\n').startsWith("{")) {
+  if ('\u0000' in source) throw IOException("The selected file contains a literal NUL")
+  if (requireArchiveObject && !source.removePrefix("\uFEFF").trimStart(' ', '\t', '\r', '\n').startsWith("{")) {
     throw IOException("The selected file is not a diary archive object")
   }
   return source

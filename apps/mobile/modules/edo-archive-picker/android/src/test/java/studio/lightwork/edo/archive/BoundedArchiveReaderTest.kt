@@ -41,6 +41,14 @@ class BoundedArchiveReaderTest {
   }
 
   @Test
+  fun acceptsBomPrefixedCsvOnlyWhenReadingDiaryText() {
+    val source = "\uFEFFDatum;Lebensmittel\r\n27.11.2026;Äpfel"
+    val bytes = source.toByteArray(Charsets.UTF_8)
+    assertEquals(source, readArchive(ChunkedInput(bytes), bytes.size, requireArchiveObject = false))
+    assertNull(readArchive(ChunkedInput(bytes), bytes.size - 1, requireArchiveObject = false))
+  }
+
+  @Test
   fun rejectsLiteralNulAndPreservesAnEscapedNul() {
     val escaped = "{\"field\":\"\\u0000\"}"
     assertEquals(escaped, readArchive(escaped.byteInputStream(), 24))
@@ -48,6 +56,11 @@ class BoundedArchiveReaderTest {
       readArchive("{}\u0000trailing".byteInputStream(), 16)
       throw AssertionError("Accepted a literal NUL")
     } catch (_: IOException) {}
+  }
+
+  @Test(expected = IOException::class)
+  fun rejectsLiteralNulInDiaryText() {
+    readArchive("Datum;\u0000".byteInputStream(), 16, requireArchiveObject = false)
   }
 
   @Test

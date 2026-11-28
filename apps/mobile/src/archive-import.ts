@@ -5,10 +5,12 @@ type ArchiveSelection =
   | { status: "too-large" }
   | { status: "selected"; source: string };
 
-const picker = requireOptionalNativeModule<{ pickArchiveAsync(): Promise<ArchiveSelection> }>(
-  "EdoArchivePicker",
-);
+const picker = requireOptionalNativeModule<{
+  pickArchiveAsync(): Promise<ArchiveSelection>;
+  pickFddbCsvAsync?(): Promise<ArchiveSelection>;
+}>("EdoArchivePicker");
 export const archivePickerAvailable = picker !== null;
+export const fddbPickerAvailable = typeof picker?.pickFddbCsvAsync === "function";
 const maxArchiveJsonStructureTokens = 512_000;
 const maxArchiveJsonDepth = 32;
 let choosingArchive = false;
@@ -45,11 +47,14 @@ function checkArchiveComplexity(source: string): void {
   }
 }
 
-export async function chooseDiaryFile(): Promise<string | null> {
-  if (!picker || choosingArchive) throw new Error("Archive selection is unavailable");
+async function chooseDiaryFile(
+  method: "pickArchiveAsync" | "pickFddbCsvAsync",
+): Promise<string | null> {
+  if (!picker || typeof picker[method] !== "function" || choosingArchive)
+    throw new Error("Diary file selection is unavailable");
   choosingArchive = true;
   try {
-    const result = await picker.pickArchiveAsync();
+    const result = await picker[method]();
     if (result.status === "cancelled") return null;
     if (result.status === "too-large")
       throw new ArchiveSizeError("Diary archive exceeds the restore size limit");
@@ -70,7 +75,11 @@ export async function chooseDiaryFile(): Promise<string | null> {
 }
 
 export async function chooseArchive(): Promise<string | null> {
-  const source = await chooseDiaryFile();
+  const source = await chooseDiaryFile("pickArchiveAsync");
   if (source !== null) checkArchiveComplexity(source);
   return source;
+}
+
+export function chooseFddbCsv(): Promise<string | null> {
+  return chooseDiaryFile("pickFddbCsvAsync");
 }

@@ -6,24 +6,32 @@ import {
   ArchiveSizeError,
   archivePickerAvailable,
   chooseArchive,
-  chooseDiaryFile,
+  chooseFddbCsv,
+  fddbPickerAvailable,
 } from "../src/archive-import";
 
 const mock = vi.hoisted(() => ({
   available: true,
+  csvAvailable: true,
   pickArchiveAsync: vi.fn(),
+  pickFddbCsvAsync: vi.fn(),
 }));
 
 vi.mock("expo", () => ({
   requireOptionalNativeModule: (name: string) =>
     mock.available && name === "EdoArchivePicker"
-      ? { pickArchiveAsync: mock.pickArchiveAsync }
+      ? {
+          pickArchiveAsync: mock.pickArchiveAsync,
+          pickFddbCsvAsync: mock.csvAvailable ? mock.pickFddbCsvAsync : undefined,
+        }
       : null,
 }));
 
 beforeEach(() => {
   mock.available = true;
+  mock.csvAvailable = true;
   mock.pickArchiveAsync.mockReset();
+  mock.pickFddbCsvAsync.mockReset();
 });
 
 it("accepts UTF-8 archive text from the picker and handles cancellation", async () => {
@@ -38,9 +46,11 @@ it("accepts UTF-8 archive text from the picker and handles cancellation", async 
 
 it("reads CSV through the same bounded picker without treating its text as JSON structure", async () => {
   const csv = `date;food\n27.11.2026;${"[".repeat(100)}`;
-  mock.pickArchiveAsync.mockResolvedValueOnce({ status: "selected", source: `\uFEFF${csv}` });
-  await expect(chooseDiaryFile()).resolves.toBe(csv);
-  expect(mock.pickArchiveAsync).toHaveBeenCalledTimes(1);
+  mock.pickFddbCsvAsync.mockResolvedValueOnce({ status: "selected", source: `\uFEFF${csv}` });
+  expect(fddbPickerAvailable).toBe(true);
+  await expect(chooseFddbCsv()).resolves.toBe(csv);
+  expect(mock.pickFddbCsvAsync).toHaveBeenCalledTimes(1);
+  expect(mock.pickArchiveAsync).not.toHaveBeenCalled();
 });
 
 it("reports the native size rejection and permits another choice", async () => {
@@ -88,12 +98,22 @@ it("prevents overlapping selections across screens and unlocks after a provider 
       }),
   );
   const first = chooseArchive();
-  await expect(chooseArchive()).rejects.toThrow(/selection is unavailable/);
+  await expect(chooseFddbCsv()).rejects.toThrow(/selection is unavailable/);
   rejectPick?.(new Error("Provider failed"));
   await expect(first).rejects.toThrow(/Provider failed/);
   mock.pickArchiveAsync.mockResolvedValueOnce({ status: "cancelled" });
   await expect(chooseArchive()).resolves.toBeNull();
   expect(mock.pickArchiveAsync).toHaveBeenCalledTimes(2);
+});
+
+it("keeps archive restore available on a native build without the CSV picker", async () => {
+  mock.csvAvailable = false;
+  vi.resetModules();
+  const archiveOnly = await import("../src/archive-import");
+  mock.pickArchiveAsync.mockResolvedValueOnce({ status: "selected", source: "{}" });
+  expect(archiveOnly.fddbPickerAvailable).toBe(false);
+  await expect(archiveOnly.chooseFddbCsv()).rejects.toThrow(/selection is unavailable/);
+  await expect(archiveOnly.chooseArchive()).resolves.toBe("{}");
 });
 
 it("disables restore when the native picker is unavailable", async () => {

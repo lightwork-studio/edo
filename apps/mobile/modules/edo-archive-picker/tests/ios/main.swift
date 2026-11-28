@@ -24,3 +24,30 @@ precondition(done.wait(timeout: .now() + .seconds(2)) == .success,
 try pipe.fileHandleForWriting.close()
 try pipe.fileHandleForReading.close()
 print("A stalled archive stream released its reader after cancellation")
+
+func readFixture(_ source: String, maxBytes: Int, requireArchiveObject: Bool) throws -> String? {
+    let fixture = Pipe()
+    defer { try? fixture.fileHandleForReading.close() }
+    try fixture.fileHandleForWriting.write(contentsOf: source.utf8)
+    try fixture.fileHandleForWriting.close()
+    return try readArchive(
+        from: fixture.fileHandleForReading,
+        maxBytes: maxBytes,
+        requireArchiveObject: requireArchiveObject
+    )
+}
+
+let csv = "\u{FEFF}Datum;Lebensmittel\r\n27.11.2026;Äpfel"
+let byteCount = csv.utf8.count
+let text = try readFixture(csv, maxBytes: byteCount, requireArchiveObject: false)
+precondition(text == csv, "CSV should cross the bridge intact")
+let oversized = try readFixture(csv, maxBytes: byteCount - 1, requireArchiveObject: false)
+precondition(oversized == nil, "CSV should have the same byte limit as archives")
+do {
+    _ = try readFixture(csv, maxBytes: byteCount, requireArchiveObject: true)
+    fatalError("Archive restore accepted a CSV")
+} catch ArchiveReadError.unreadable {}
+do {
+    _ = try readFixture("Datum;\0", maxBytes: 16, requireArchiveObject: false)
+    fatalError("CSV import accepted a literal NUL")
+} catch ArchiveReadError.unreadable {}
