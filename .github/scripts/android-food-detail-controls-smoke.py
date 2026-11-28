@@ -79,6 +79,16 @@ def metric_top(label):
     return int(re.findall(r"\d+", node.attrib["bounds"])[1])
 
 
+def scroll_to_metric(expected):
+    for attempt in range(4):
+        try:
+            return find(expected, timeout=4)
+        except AssertionError:
+            if attempt == 3:
+                raise
+            adb("shell", "input", "swipe", "24", "1350", "24", "720", "350")
+
+
 def open_banana():
     tap("Log")
     tap("Search by food name", widget="android.widget.EditText")
@@ -113,7 +123,7 @@ find("1,086")
 tap("Foods")
 tap("Mock yogurt", fragments=True)
 find("Add 100 g · 100 kcal")
-tap("portion", fragments=True)
+tap("portion, 150 g", fragments=True)
 find("Add 1 portion · 150 kcal")
 assert metric_top("Energy.") == metric_top("Carbs.")
 capture("food-detail-controls-390dp")
@@ -127,11 +137,31 @@ assert_offline()
 find("936")
 tap("Lebensmittel")
 tap("Mock yogurt", fragments=True)
-tap("Portion", fragments=True)
+tap("Portion, 150 g", fragments=True)
 find("1 Portion · 150 kcal eintragen")
 assert metric_top("Kohlenhydrate.") > metric_top("Energie.")
 capture("food-detail-controls-320dp-de")
 for _ in range(2):
     adb("shell", "input", "swipe", "300", "975", "300", "270", "360")
 find("Nicht verfügbar", fragments=True)
-print("Verified measured portions, live CTA energy, edit cancellation, persistence and EN/DE reflow offline.")
+
+adb("shell", "am", "force-stop", APP)
+adb("shell", "wm", "size", "640x1680")
+adb("shell", "settings", "put", "system", "font_scale", "2.0")
+start()
+assert_offline()
+tap("Lebensmittel")
+tap("Mock yogurt", fragments=True)
+tap("Menge (g)", widget="android.widget.EditText")
+adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
+for _ in range(3):
+    adb("shell", "input", "keyevent", "KEYCODE_DEL")
+adb("shell", "input", "text", "1200")
+find("1200", widget="android.widget.EditText")
+adb("shell", "input", "keyevent", "4")
+find("1200 g · 1.200 kcal eintragen")
+metric = scroll_to_metric("+1.200")
+_, top, _, bottom = map(int, re.findall(r"\d+", metric.attrib["bounds"]))
+assert bottom - top >= 36, "Large-text portion value is too short"
+capture("food-detail-controls-320dp-de-200")
+print("Verified measured portions, CTA energy, cancellation, persistence and full-size large energy text offline.")
