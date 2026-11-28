@@ -91,6 +91,16 @@ export const strings = {
     amount: "Amount",
     selectedPortion: "In this portion",
     nutritionBasis: "Nutrition reference",
+    foodDetailNutrition: (basis: "per-100-g" | "per-100-ml" | "per-portion") =>
+      ({
+        "per-100-g": "Nutrition per 100 g",
+        "per-100-ml": "Nutrition per 100 ml",
+        "per-portion": "Nutrition per portion",
+      })[basis],
+    foodDetailPortions: (amount: string, count: number) =>
+      `${amount} ${count === 1 ? "portion" : "portions"}`,
+    foodDetailAdd: (portion: string) => `Add ${portion}`,
+    foodDetailSave: (portion: string) => `Save ${portion}`,
     per100g: "Per 100 g",
     per100ml: "Per 100 ml",
     perPortion: "Per portion",
@@ -280,6 +290,16 @@ export const strings = {
     amount: "Menge",
     selectedPortion: "In dieser Menge",
     nutritionBasis: "Nährwertbezug",
+    foodDetailNutrition: (basis: "per-100-g" | "per-100-ml" | "per-portion") =>
+      ({
+        "per-100-g": "Nährwerte pro 100 g",
+        "per-100-ml": "Nährwerte pro 100 ml",
+        "per-portion": "Nährwerte pro Portion",
+      })[basis],
+    foodDetailPortions: (amount: string, count: number) =>
+      `${amount} ${count === 1 ? "Portion" : "Portionen"}`,
+    foodDetailAdd: (portion: string) => `${portion} eintragen`,
+    foodDetailSave: (portion: string) => `${portion} speichern`,
     per100g: "Pro 100 g",
     per100ml: "Pro 100 ml",
     perPortion: "Pro Portion",
