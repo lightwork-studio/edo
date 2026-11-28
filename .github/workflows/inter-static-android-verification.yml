@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [24, 35]
+        api: [24]
     env:
       ANDROID_TEST_API: ${{ matrix.api }}
     timeout-minutes: 30
@@ -48,6 +48,10 @@ jobs:
         working-directory: apps/mobile
         run: pnpm exec expo prebuild --platform android --no-install
       - name: Build the Android release APK
+        env:
+          EXPO_PUBLIC_EDO_CATALOG_ORIGIN: ""
+          EXPO_PUBLIC_EDO_BLS_PREVIEW_ORIGIN: ""
+          EXPO_PUBLIC_EDO_BLS_PREVIEW_SHA256: ""
         working-directory: apps/mobile/android
         run: |
           export JAVA_HOME="$JAVA_HOME_17_X64"

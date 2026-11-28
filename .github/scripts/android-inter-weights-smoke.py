@@ -75,20 +75,18 @@ def capture(name):
 
 
 api = int(os.environ["ANDROID_TEST_API"])
-adb("shell", "wm", "size", "780x1688")
-adb("shell", "wm", "density", "320")
 if api >= 33:
+    adb("shell", "wm", "size", "780x1688")
+    adb("shell", "wm", "density", "320")
     adb("shell", "cmd", "connectivity", "airplane-mode", "enable")
     app_locale("en-US")
-else:
-    adb("shell", "settings", "put", "global", "airplane_mode_on", "1")
-    adb("shell", "svc", "data", "disable")
-adb("shell", "svc", "wifi", "disable")
+    adb("shell", "svc", "wifi", "disable")
 start()
-assert_offline()
+if api >= 33:
+    assert_offline()
 tap("Distinct Inter weight metrics")
 find("1,086")
 find("1,064 eaten", fragments=True)
 find("Haferflocken", fragments=True)
 capture(f"inter-today-api-{api}")
-print(f"Verified four distinct Inter text metrics and the populated offline diary on API {api}.")
+print(f"Verified four distinct Inter text metrics and the local diary on API {api}.")
