@@ -1,0 +1,13 @@
+{
+  "name": "@edo/usda-import",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preview": "node src/foundation.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "fflate": "0.8.3"
+  }
+}
