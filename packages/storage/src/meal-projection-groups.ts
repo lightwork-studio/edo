@@ -1,20 +1,30 @@
 import type { DiaryMeal } from "@edo/core";
 
-interface MealProjectionCandidate {
+export interface MealProjectionCandidate {
   readonly id: string;
   readonly current: DiaryMeal | null;
   /** Undefined means the diary has no evidence of a prior projection. Null is a known deletion. */
   readonly prior: DiaryMeal | null | undefined;
   /** A v5 journal may know the revision without retaining its effective local contents. */
   readonly hadPriorBase?: boolean;
-  readonly incoming: DiaryMeal | null;
+  /** Undefined means the account copy is opaque or unavailable. */
+  readonly incoming: DiaryMeal | null | undefined;
+  readonly opaqueClaims?: readonly string[];
+  readonly blocked?: boolean;
 }
 
-function sameMeal(left: DiaryMeal | null, right: DiaryMeal | null): boolean {
+function sameMeal(left: DiaryMeal | null, right: DiaryMeal | null | undefined): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function canProject({ current, prior, incoming, hadPriorBase }: MealProjectionCandidate): boolean {
+function canProject({
+  current,
+  prior,
+  incoming,
+  hadPriorBase,
+  blocked,
+}: MealProjectionCandidate): boolean {
+  if (blocked || incoming === undefined) return false;
   if (prior === null && incoming !== null) return false;
   if (sameMeal(current, incoming)) return true;
   return prior === undefined ? !hadPriorBase && current === null : sameMeal(current, prior);
@@ -35,26 +45,54 @@ export function groupMealProjections(
     candidates.filter((candidate) => !canProject(candidate)).map(({ id }) => id),
   );
   const claims = new Map<string, string>();
+  const priorOwners = new Map<string, Set<string>>();
+  const unknownClaims = candidates.some(
+    ({ incoming, opaqueClaims }) => incoming === undefined && opaqueClaims === undefined,
+  );
+  const unknownHistory = candidates.some(
+    ({ current, incoming, prior, hadPriorBase }) =>
+      hadPriorBase && prior === undefined && !sameMeal(current, incoming),
+  );
+  for (const { id, prior } of candidates) {
+    for (const item of prior?.items ?? []) {
+      const itemOwners = priorOwners.get(item.id) ?? new Set<string>();
+      itemOwners.add(id);
+      priorOwners.set(item.id, itemOwners);
+    }
+  }
 
   function link(first: string, second: string) {
     neighbors.get(first)?.add(second);
     neighbors.get(second)?.add(first);
   }
 
-  for (const { id, incoming } of candidates) {
-    for (const item of incoming?.items ?? []) {
-      const other = claims.get(item.id);
+  function linkOwner(id: string, owner: string | undefined) {
+    if (owner === undefined || owner === id) return;
+    if (byId.has(owner)) link(id, owner);
+    else blocked.add(id);
+  }
+
+  for (const { id, current, incoming, opaqueClaims } of candidates) {
+    const itemIds =
+      incoming === undefined ? opaqueClaims : (incoming?.items.map(({ id }) => id) ?? []);
+    if (!itemIds) continue;
+    if (unknownClaims || unknownHistory) {
+      const currentIds = new Set(current?.items.map(({ id }) => id));
+      if (itemIds.length !== currentIds.size || itemIds.some((itemId) => !currentIds.has(itemId))) {
+        blocked.add(id);
+      }
+    }
+    for (const itemId of itemIds) {
+      const other = claims.get(itemId);
       if (other !== undefined && other !== id) {
         link(id, other);
         blocked.add(id);
         blocked.add(other);
       } else {
-        claims.set(item.id, id);
+        claims.set(itemId, id);
       }
-      const owner = owners.get(item.id);
-      if (owner === undefined || owner === id) continue;
-      if (byId.has(owner)) link(id, owner);
-      else blocked.add(id);
+      linkOwner(id, owners.get(itemId));
+      for (const priorOwner of priorOwners.get(itemId) ?? []) linkOwner(id, priorOwner);
     }
   }
 

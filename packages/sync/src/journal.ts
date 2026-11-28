@@ -248,10 +248,9 @@ function pulledMealProjection(change: Change | null): StoredMealProjection | nul
 
 function localRecord(db: JournalSqlite, key: RecordKey) {
   const row = db.get("SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?", key.kind, key.id);
-  if (row) return { ...storedRecord(row), persisted: true };
-  const remote = remoteRecord(db, key);
-  const base = remote?.state === "unavailable" ? null : remote;
-  return { record: createOutboxRecord(key, base), release: null, persisted: false };
+  if (row) return storedRecord(row);
+  // A staged account copy is evidence for review, never an implicit base for a local write.
+  return { record: createOutboxRecord(key), release: null };
 }
 
 function requireUnusedId(db: JournalSqlite, id: string) {
@@ -302,11 +301,13 @@ function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
 }
 
-function availableMealProjection(db: JournalSqlite, id: string): MealProjection | null {
+function mealProjectionAtBase(
+  db: JournalSqlite,
+  id: string,
+  record: OutboxRecord,
+): MealProjection | null {
   const projection = readMealProjection(db, id);
-  if (!projection) return null;
-  const { record } = localRecord(db, { kind: "meal", id });
-  if (hasLocalWork(record) || record.baseRevision !== projection.revision) return null;
+  if (!projection || record.baseRevision !== projection.revision) return null;
   if (projection.origin === "accepted") return projection;
   const base = record.base;
   if (base?.state === "deleted") return projection;
@@ -315,61 +316,75 @@ function availableMealProjection(db: JournalSqlite, id: string): MealProjection 
     : null;
 }
 
+function availableMealProjection(db: JournalSqlite, id: string): MealProjection | null {
+  const { record } = localRecord(db, { kind: "meal", id });
+  return hasLocalWork(record) ? null : mealProjectionAtBase(db, id, record);
+}
+
 export interface MealProjectionHistory {
+  /** Prior locally applied evidence, including for a meal whose current work blocks projection. */
   readonly projection: MealProjection | null;
   readonly hadPriorBase: boolean;
 }
 
+export interface StagedMealChange {
+  readonly change: Change;
+  readonly blocked: boolean;
+}
+
 type ProjectMeals = (
-  changes: readonly Change[],
+  changes: readonly StagedMealChange[],
   history: (id: string) => MealProjectionHistory,
 ) => readonly string[];
 
+const stagedMealSelection = `
+  FROM edo_sync_remote AS remote
+  LEFT JOIN edo_sync_meal_projections AS projected ON projected.id = remote.id
+  WHERE remote.kind = 'meal'
+    AND (projected.origin IS NULL OR projected.origin <> 'pulled' OR projected.revision <> remote.revision)
+`;
+
 function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
-  const available = new Map<
+  const staged = new Map<
     string,
-    { record: OutboxRecord; change: Change; hadPriorBase: boolean }
+    { record: OutboxRecord | null; change: Change; history: MealProjectionHistory }
   >();
-  const deferred: string[] = [];
   for (const row of db.all(`
-    SELECT remote.id FROM edo_sync_remote AS remote
-    LEFT JOIN edo_sync_meal_projections AS projected ON projected.id = remote.id
-    WHERE remote.kind = 'meal'
-      AND (projected.origin IS NULL OR projected.origin <> 'pulled' OR projected.revision <> remote.revision)
+    SELECT remote.id ${stagedMealSelection}
     ORDER BY remote.revision, remote.id
   `)) {
     if (typeof row.id !== "string") throw new Error("Stored meal identity is invalid");
     const key = { kind: "meal", id: row.id };
     const remote = remoteRecord(db, key);
     if (!remote) throw new Error("Missing meal copy");
-    const { record, persisted } = localRecord(db, key);
+    const { record } = localRecord(db, key);
     if (remote.revision < (record.baseRevision ?? 0)) continue;
-    if (remote.state === "unavailable" || hasLocalWork(record)) {
-      deferred.push(remote.id);
-      continue;
-    }
-    const projected = createOutboxRecord(remote, remote);
-    if (!projected.base) throw new Error("Missing immutable meal projection");
-    available.set(remote.id, {
+    const projected =
+      remote.state === "unavailable" || hasLocalWork(record)
+        ? null
+        : createOutboxRecord(remote, remote);
+    staged.set(remote.id, {
       record: projected,
-      change: projected.base,
-      hadPriorBase: persisted && record.baseRevision !== null,
+      change: projected?.base ?? remote,
+      history: {
+        projection: mealProjectionAtBase(db, remote.id, record),
+        hadPriorBase: record.baseRevision !== null,
+      },
     });
   }
   const applied = new Set(
     apply(
-      [...available.values()].map(({ change }) => change),
-      (id) => ({
-        projection: availableMealProjection(db, id),
-        hadPriorBase: available.get(id)?.hadPriorBase ?? false,
-      }),
+      [...staged.values()].map(({ change, record }) => ({ change, blocked: record === null })),
+      (id) => staged.get(id)?.history ?? { projection: null, hadPriorBase: false },
     ),
   );
   for (const id of applied) {
-    if (!available.has(id)) throw new Error("The meal writer reported an unstaged ID");
+    if (!staged.get(id)?.record)
+      throw new Error("The meal writer reported a blocked or unstaged ID");
   }
-  for (const [id, { record, change }] of available) {
-    if (applied.has(id)) {
+  const deferred: string[] = [];
+  for (const [id, { record, change }] of staged) {
+    if (record && applied.has(id)) {
       saveRecord(db, record);
       writeMealProjection(db, id, pulledMealProjection(change));
     } else deferred.push(id);
@@ -735,12 +750,13 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       session: NegotiatedSync,
       key: RecordKey,
       submissionId: string,
-      resolve: (evidence: StalePutEvidence) => unknown,
+      resolve: (evidence: StalePutEvidence, hasOtherStagedMeal: () => boolean) => unknown,
       writeMerged: (content: JsonObject) => undefined,
     ): boolean {
       return transact(() => {
-        checkSession(session);
+        const binding = checkSession(session);
         assertSession(session, true);
+        if (binding.cursor < binding.revision) return false;
         if (!isKnownRecordKind(key.kind) || !session.writableKinds.includes(key.kind)) return false;
 
         const { record } = localRecord(db, key);
@@ -774,11 +790,11 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         }
 
         const rebased = createOutboxRecord(key, server);
-        const content = resolve({
-          base: base.content,
-          draft: draft.content,
-          server: server.content,
-        });
+        const content = resolve(
+          { base: base.content, draft: draft.content, server: server.content },
+          () =>
+            Boolean(db.get(`SELECT 1 ${stagedMealSelection} AND remote.id <> ? LIMIT 1`, key.id)),
+        );
         if (content === null) return false;
         const candidate = {
           ...key,
@@ -806,6 +822,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         if (queued.pending?.op !== "put") throw new Error("Expected a rebased put");
         requireSynchronousWrite(writeMerged(queued.pending.content));
         saveRecord(db, queued);
+        requireActiveSession(session);
         return true;
       });
     },
