@@ -1,8 +1,8 @@
-import { roundNutritionForDisplay } from "@edo/core";
+import { type DailyNutritionTarget, type Nutrients, roundNutritionForDisplay } from "@edo/core";
 import type { DiaryMeal } from "@edo/storage";
 import type { ReactNode } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { calendarDate, showTime, totalNutrition } from "./diary-view";
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { calendarDate, nutritionTargetProgress, showTime, totalNutrition } from "./diary-view";
 import type { Strings } from "./strings";
 import {
   colors,
@@ -13,12 +13,16 @@ import {
   Notice,
   nutrientValue,
   PrimaryButton,
-  Ring,
   showDay,
   styles,
+  TargetRing,
 } from "./ui";
 
-export type WeekDay = { day: string; kcal: number | null };
+export type WeekDay = {
+  day: string;
+  kcal: number | null;
+  target: DailyNutritionTarget | null;
+};
 
 export function TodayScreen({
   t,
@@ -28,7 +32,7 @@ export function TodayScreen({
   day,
   week,
   meals,
-  kcalTarget,
+  target,
   feedback,
   syncNotice,
   onDay,
@@ -46,7 +50,7 @@ export function TodayScreen({
   day: string;
   week: WeekDay[];
   meals: DiaryMeal[] | null;
-  kcalTarget: number | null;
+  target: DailyNutritionTarget | null;
   feedback: string | null;
   syncNotice: ReactNode;
   onDay: (day: string) => void;
@@ -58,8 +62,7 @@ export function TodayScreen({
   onRetry: () => void;
 }) {
   const nutrition = meals && totalNutrition(meals);
-  const total = nutrition && roundNutritionForDisplay(nutrition);
-  const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
+  const weekday = new Intl.DateTimeFormat(locale, { weekday: "narrow", timeZone: "UTC" });
   const includesLastDay = week.some((entry) => entry.day === lastDay);
   return (
     <>
@@ -86,28 +89,39 @@ export function TodayScreen({
           const isToday = entry.day === today;
           const unavailable = entry.day > lastDay;
           const date = calendarDate(entry.day);
-          const color = selected || isToday ? colors.accent : colors.border;
-          const kcal = entry.kcal === null ? "—" : displayNumber(entry.kcal, locale, 0);
+          const progress = nutritionTargetProgress(entry.kcal, entry.target?.kcal ?? null);
+          const color = selected || isToday ? colors.accent : colors.muted;
+          const kcal = entry.kcal === null ? null : displayNumber(entry.kcal, locale, 0);
+          const over = progress !== null && Math.round(-progress.balance) > 0;
+          const amount = isToday
+            ? t.today.toLocaleLowerCase(locale)
+            : over
+              ? `+${displayNumber(-progress.balance, locale, 0)}`
+              : (kcal ?? "—");
           return (
             <Pressable
               key={entry.day}
               accessibilityRole="button"
-              accessibilityLabel={`${showDay(entry.day, locale, today)}, ${entry.kcal === null ? t.unavailable : `${kcal} kcal`}`}
+              accessibilityLabel={`${showDay(entry.day, locale, today)}, ${kcal === null ? t.unavailable : `${kcal} kcal`}`}
               accessibilityState={{ selected, disabled: unavailable }}
               disabled={unavailable}
               onPress={() => onDay(entry.day)}
-              style={[local.day, unavailable && styles.faded]}
+              style={[local.day, selected && local.selectedDay, unavailable && styles.faded]}
             >
               <Text style={[styles.meta, isToday && styles.actionText]}>
                 {weekday.format(date)}
               </Text>
-              <Ring size={34} color={color}>
+              <TargetRing size={34} color={color} fraction={progress?.fraction}>
                 <Text style={[styles.body, styles.numbers, selected && styles.actionText]}>
                   {date.getUTCDate()}
                 </Text>
-              </Ring>
-              <Text style={local.dayTotal} numberOfLines={1}>
-                {unavailable ? " " : kcal}
+              </TargetRing>
+              <Text
+                style={[local.dayTotal, isToday && local.activeCaption, over && local.number]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
+                {unavailable ? " " : amount}
               </Text>
             </Pressable>
           );
@@ -115,46 +129,8 @@ export function TodayScreen({
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         {syncNotice}
-        {total && (
-          <View style={[styles.card, local.hero]}>
-            <Ring size={134} color={colors.accent}>
-              <Text
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                accessibilityLabel={
-                  total.kcal === null ? `${t.energy}: ${t.unavailable}` : undefined
-                }
-                style={local.calories}
-              >
-                {total.kcal === null ? "—" : displayNumber(total.kcal, locale, 0)}
-              </Text>
-              <Text style={styles.meta}>kcal</Text>
-            </Ring>
-            <View style={local.macros}>
-              {kcalTarget !== null && (
-                <Text style={styles.meta}>
-                  {t.nutritionTargets} · {displayNumber(kcalTarget, locale, 0)} kcal
-                </Text>
-              )}
-              {macros.map(({ label, nutrient, color }) => (
-                <View key={label} style={[styles.row, local.macro]}>
-                  <Ring size={19} color={color}>
-                    {null}
-                  </Ring>
-                  <View style={styles.stretch}>
-                    <Text style={styles.meta}>{t[label]}</Text>
-                    <Text style={[styles.body, styles.numbers]}>
-                      {total[nutrient] === null
-                        ? t.unavailable
-                        : nutrientValue(total[nutrient], locale, "g")}
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-        {meals && !total && <Notice text={t.totalsError} />}
+        {nutrition && <DayNutrition nutrition={nutrition} target={target} locale={locale} t={t} />}
+        {meals && !nutrition && <Notice text={t.totalsError} />}
         {feedback && (
           <Text accessibilityLiveRegion="polite" style={styles.actionText}>
             {feedback}
@@ -164,61 +140,20 @@ export function TodayScreen({
           <Notice text={t.dayError} action={{ label: t.retry, onPress: onRetry }} />
         ) : (
           <>
-            <Text accessibilityRole="header" style={styles.title}>
-              {t.logged}
-            </Text>
             {meals.length === 0 && (
               <View style={styles.card}>
                 <Text style={styles.meta}>{t.noEntries}</Text>
               </View>
             )}
             {meals.map((meal) => (
-              <View key={meal.id} style={styles.card}>
-                <View style={styles.row}>
-                  <Text style={[styles.meta, styles.stretch]}>{showTime(meal, locale)}</Text>
-                  {meal.items.length > 0 && (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={t.saveMealAt(
-                        showTime(meal, locale),
-                        meal.items[0]?.food.name ?? "",
-                      )}
-                      onPress={() => onSaveMeal(meal)}
-                      style={styles.action}
-                    >
-                      <Text style={styles.actionText}>{t.saveMealTemplate}</Text>
-                    </Pressable>
-                  )}
-                </View>
-                {meal.items.map((item) => (
-                  <Pressable
-                    key={item.id}
-                    accessibilityRole="button"
-                    accessibilityHint={t.editPortion}
-                    onPress={() => onEdit(meal.id, item.id)}
-                    style={({ pressed }) => [styles.row, local.item, pressed && styles.pressed]}
-                  >
-                    <View style={styles.stretch}>
-                      <Text style={[styles.body, local.foodName]}>{item.food.name}</Text>
-                      <Text
-                        style={styles.meta}
-                      >{`${displayAmount(item.portion.amount, locale)} ${item.portion.unit === "portion" ? t.portion : item.portion.unit}`}</Text>
-                    </View>
-                    <Text style={[styles.body, styles.numbers]}>
-                      {item.nutrients.kcal === null
-                        ? t.unavailable
-                        : nutrientValue(
-                            roundNutritionForDisplay(item.nutrients).kcal,
-                            locale,
-                            "kcal",
-                          )}
-                    </Text>
-                    <Text importantForAccessibility="no" style={styles.icon}>
-                      ›
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
+              <MealCard
+                key={meal.id}
+                meal={meal}
+                locale={locale}
+                t={t}
+                onEdit={onEdit}
+                onSaveMeal={onSaveMeal}
+              />
             ))}
           </>
         )}
@@ -235,6 +170,165 @@ export function TodayScreen({
   );
 }
 
+function DayNutrition({
+  nutrition,
+  target,
+  locale,
+  t,
+}: {
+  nutrition: Nutrients;
+  target: DailyNutritionTarget | null;
+  locale: string;
+  t: Strings;
+}) {
+  const { width, fontScale } = useWindowDimensions();
+  const ringSize = Math.min(150, Math.round(width * 0.385));
+  const stack = width < 345 || fontScale >= 1.35;
+  const energy = nutritionTargetProgress(nutrition.kcal, target?.kcal ?? null);
+  const energyAmount = energy ? Math.abs(energy.balance) : nutrition.kcal;
+  const energyLabel = energy ? (energy.balance < 0 ? t.kcalOver : t.kcalLeft) : t.kcalLogged;
+  return (
+    <View style={[styles.card, local.hero]}>
+      <View style={[local.heroContent, stack && local.heroStack]}>
+        <TargetRing size={ringSize} color={colors.accent} fraction={energy?.fraction}>
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            accessibilityLabel={energyAmount === null ? `${t.energy}: ${t.unavailable}` : undefined}
+            style={[local.calories, { maxWidth: ringSize - 30 }]}
+          >
+            {energyAmount === null ? "—" : displayNumber(energyAmount, locale, 0)}
+          </Text>
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            style={[styles.meta, { maxWidth: ringSize - 26 }]}
+          >
+            {energyLabel}
+          </Text>
+        </TargetRing>
+        <View style={[local.macros, stack && local.stackedMacros]}>
+          {macros.map(({ label, nutrient, color }) => {
+            const used = nutrition[nutrient];
+            const goal = target?.[nutrient] ?? null;
+            const progress = nutritionTargetProgress(used, goal);
+            const amount = progress ? Math.abs(progress.balance) : used;
+            const direction = progress ? (progress.balance < 0 ? t.targetOver : t.targetLeft) : "";
+            return (
+              <View key={label} style={[styles.row, local.macro]}>
+                <TargetRing size={42} color={color} fraction={progress?.fraction}>
+                  <Text
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
+                    style={[local.glyph, { color }]}
+                  >
+                    {t[label][0]}
+                  </Text>
+                </TargetRing>
+                <View style={styles.stretch}>
+                  <Text style={[local.macroAmount, styles.numbers]}>
+                    {amount === null ? "—" : `${displayNumber(amount, locale)} g`}
+                    {direction && <Text style={local.macroDirection}> {direction}</Text>}
+                  </Text>
+                  <Text style={styles.meta}>
+                    {t[label]}
+                    {goal !== null &&
+                      ` · ${used === null ? "—" : displayNumber(used, locale)} / ${displayNumber(goal, locale)}`}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+      {target && (
+        <View style={local.heroFooter}>
+          <Text style={[styles.meta, styles.stretch]}>
+            <Text style={local.number}>
+              {nutrition.kcal === null ? "—" : displayNumber(nutrition.kcal, locale, 0)}
+            </Text>{" "}
+            {t.targetEaten} ·{" "}
+            <Text style={local.number}>{displayNumber(target.kcal, locale, 0)}</Text>{" "}
+            {t.targetLabel}
+          </Text>
+          {energy?.percent != null && (
+            <Text style={styles.meta}>
+              {new Intl.NumberFormat(locale, { style: "percent" }).format(energy.percent / 100)}
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function MealCard({
+  meal,
+  locale,
+  t,
+  onEdit,
+  onSaveMeal,
+}: {
+  meal: DiaryMeal;
+  locale: string;
+  t: Strings;
+  onEdit: (mealId: string, itemId: string) => void;
+  onSaveMeal: (meal: DiaryMeal) => void;
+}) {
+  const time = showTime(meal, locale);
+  const energy = totalNutrition([meal])?.kcal ?? null;
+  return (
+    <View style={[styles.card, local.mealCard]}>
+      <View style={styles.row}>
+        <Text accessibilityRole="header" style={[styles.title, styles.stretch]}>
+          {time}
+        </Text>
+        <Text style={styles.meta}>
+          <Text style={[styles.body, local.number]}>
+            {energy === null ? "—" : displayNumber(energy, locale, 0)}
+          </Text>{" "}
+          kcal
+        </Text>
+      </View>
+      {meal.items.map((item, index) => {
+        const amount = `${displayAmount(item.portion.amount, locale)} ${item.portion.unit === "portion" ? t.portion : item.portion.unit}`;
+        const kcal = roundNutritionForDisplay(item.nutrients).kcal;
+        return (
+          <Pressable
+            key={item.id}
+            accessibilityRole="button"
+            accessibilityLabel={`${item.food.name}, ${amount}, ${kcal === null ? t.unavailable : nutrientValue(kcal, locale, "kcal")}`}
+            accessibilityHint={t.editPortion}
+            onPress={() => onEdit(meal.id, item.id)}
+            style={({ pressed }) => [
+              styles.row,
+              local.item,
+              index > 0 && local.itemDivider,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.body, styles.stretch, local.foodName]}>{item.food.name}</Text>
+            <Text style={[styles.meta, local.itemAmount]}>{amount}</Text>
+            <Text style={[styles.body, local.number, local.itemEnergy]}>
+              {kcal === null ? "—" : displayNumber(kcal, locale, 0)}
+            </Text>
+          </Pressable>
+        );
+      })}
+      {meal.items.length > 0 && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t.saveMealAt(time, meal.items[0]?.food.name ?? "")}
+          onPress={() => onSaveMeal(meal)}
+          style={[styles.action, local.saveMeal]}
+        >
+          <Text style={styles.actionText}>{t.saveMealTemplate}</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
 const local = StyleSheet.create({
   date: { textAlign: "center" },
   week: { flexDirection: "row", paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 },
@@ -246,17 +340,38 @@ const local = StyleSheet.create({
     justifyContent: "center",
     gap: 4,
   },
+  selectedDay: { borderRadius: 15, backgroundColor: colors.surface },
+  activeCaption: { color: colors.accent, fontWeight: "700" },
   dayTotal: { color: colors.muted, fontSize: 11, fontVariant: ["tabular-nums"], maxWidth: "100%" },
-  hero: { flexDirection: "row", alignItems: "center", gap: 16, padding: 18 },
+  hero: { borderRadius: 24, padding: 16, gap: 14 },
+  heroContent: { flexDirection: "row", alignItems: "center", gap: 14 },
+  heroStack: { flexDirection: "column" },
+  heroFooter: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
   calories: {
-    color: colors.accent,
+    color: colors.text,
     fontSize: 29,
     fontWeight: "700",
     fontVariant: ["tabular-nums"],
-    maxWidth: 106,
   },
-  macros: { flex: 1, gap: 8 },
-  macro: { gap: 8 },
-  item: { minHeight: 44 },
-  foodName: { fontWeight: "600", marginBottom: 3 },
+  macros: { flex: 1, gap: 10 },
+  stackedMacros: { flex: 0, alignSelf: "stretch" },
+  macro: { gap: 10 },
+  macroAmount: { color: colors.text, fontSize: 18 },
+  macroDirection: { color: colors.muted, fontSize: 13, fontWeight: "500" },
+  glyph: { fontSize: 12, fontWeight: "700" },
+  number: { color: colors.text, fontWeight: "700", fontVariant: ["tabular-nums"] },
+  mealCard: { gap: 0, paddingBottom: 4 },
+  item: { minHeight: 46, paddingVertical: 8, gap: 9 },
+  itemDivider: { borderTopColor: colors.field, borderTopWidth: StyleSheet.hairlineWidth },
+  itemAmount: { maxWidth: "34%", flexShrink: 1, textAlign: "right" },
+  itemEnergy: { minWidth: 42, maxWidth: "30%", flexShrink: 1, textAlign: "right" },
+  foodName: { fontWeight: "600" },
+  saveMeal: { alignSelf: "flex-end", paddingHorizontal: 0 },
 });

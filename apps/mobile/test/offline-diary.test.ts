@@ -14,12 +14,30 @@ import {
   localDay,
   mondayOf,
   nextMidnight,
+  nutritionTargetProgress,
   readAmount,
   saveFood,
   totalNutrition,
 } from "../src/diary-view";
 import { foodKey, resolveFavoriteFoods } from "../src/favorite-foods";
 import { appLocale } from "../src/strings";
+
+test("shows logged progress, remaining amounts, and over-target amounts without inventing missing values", () => {
+  expect(nutritionTargetProgress(1064, 2150)).toEqual({
+    balance: 1086,
+    fraction: 1064 / 2150,
+    percent: 49,
+  });
+  expect(nutritionTargetProgress(2240, 2150)).toEqual({
+    balance: -90,
+    fraction: 1,
+    percent: 104,
+  });
+  expect(nutritionTargetProgress(0, 0)).toEqual({ balance: 0, fraction: 0, percent: null });
+  expect(nutritionTargetProgress(2.75, 0)).toEqual({ balance: -2.75, fraction: 1, percent: null });
+  expect(nutritionTargetProgress(null, 150)).toBeNull();
+  expect(nutritionTargetProgress(0, null)).toBeNull();
+});
 
 function syntheticCatalog() {
   const db = new DatabaseSync(":memory:");
