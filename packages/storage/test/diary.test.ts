@@ -152,6 +152,35 @@ function diarySyncSession() {
   return diarySyncClient().connect();
 }
 
+async function withLoopbackAccount(
+  run: (
+    phone: ReturnType<typeof createSyncClient>,
+    tablet: ReturnType<typeof createSyncClient>,
+  ) => Promise<void>,
+) {
+  using store = openSyncStore(join(directory, "remote-account.db"), {
+    applyContent: applyRecordContent,
+  });
+  store.createAccount("account", "fixture");
+  await using server = createHealthServer({
+    sync: {
+      store,
+      authorize(request) {
+        const token = request.headers.authorization;
+        return token ? { accountBinding: "account", sessionKey: token } : null;
+      },
+    },
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing sync test port");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const client = (name: string) =>
+    createSyncClient({ origin, allowLoopbackHttp: true, authorization: () => `Bearer ${name}` });
+  await run(client("phone"), client("tablet"));
+}
+
 test("queues the actual persisted meal and preserves an in-flight edit over a restart", async () => {
   const source = createDatabase();
   const diary = await source.start();
@@ -782,8 +811,13 @@ test.each(["pending delete", "pending put", "v5 revision only"] as const)(
   },
 );
 
-test.each(["staged pull", "conflict receipt"] as const)(
-  "retains ownership seen only in a %s after an unbased delete and superseding page",
+test.each([
+  "staged pull",
+  "conflict receipt",
+  "legacy conflict receipt",
+  "legacy reviewed retry",
+] as const)(
+  "retains earlier ownership with %s after an unbased delete and superseding page",
   async (observation) => {
     using store = openSyncStore(join(directory, "remote-account.db"), {
       applyContent: applyRecordContent,
@@ -846,6 +880,9 @@ test.each(["staged pull", "conflict receipt"] as const)(
     expect(source.db.prepare("SELECT * FROM edo_sync_staged_meal_claims").all()).toEqual([
       { id: left.id, item_ids: JSON.stringify(left.items.map(({ id }) => id)), unknown_prior: 0 },
     ]);
+    if (observation.startsWith("legacy")) {
+      source.db.exec("DELETE FROM edo_sync_staged_meal_claims");
+    }
     expect(original.sync.journal.mealProjection(left.id)).toBeNull();
     original.sync.deleteMeal(left.id, "local-delete");
     expect(original.sync.journal.queued()).toMatchObject([
@@ -879,23 +916,32 @@ test.each(["staged pull", "conflict receipt"] as const)(
     if (!history) throw new Error("Expected the resumed phone connection");
     session = await phone.connect(history);
     diary.sync.journal.bind(session);
-    const page = await phone.pull(session, history.cursor);
+    let cursor = history.cursor;
+    if (observation === "legacy reviewed retry") {
+      const sourceDeletion = await phone.pull(session, cursor, 1);
+      expect(sourceDeletion.changes).toMatchObject([
+        { ...sourceKey, state: "deleted", revision: 2 },
+      ]);
+      diary.sync.journal.applyPage(session, cursor, sourceDeletion, () => {
+        throw new Error("The source still has pending local work");
+      });
+      const review = diary.sync.journal.blockedReview(sourceKey);
+      if (!review) throw new Error("Expected the legacy conflict receipt");
+      diary.sync.journal.retryReviewed(review, "reviewed-delete");
+      cursor = sourceDeletion.cursor;
+    }
+    const page = await phone.pull(session, cursor);
     reopening.db.exec(`
       CREATE TRIGGER stop_claim_write BEFORE INSERT ON edo_sync_staged_meal_claims
       WHEN NEW.id = 'destination' BEGIN SELECT RAISE(ABORT, 'simulated claim interruption'); END
     `);
-    expect(() => diary.sync.applyMealPage(session, history.cursor, page)).toThrow(
-      /claim interruption/,
-    );
-    expect(diary.sync.journal.history()?.cursor).toBe(history.cursor);
+    expect(() => diary.sync.applyMealPage(session, cursor, page)).toThrow(/claim interruption/);
+    expect(diary.sync.journal.history()?.cursor).toBe(cursor);
     expect(diary.sync.journal.serverCopy(sourceKey)?.revision).toBe(
-      observation === "staged pull" ? 1 : undefined,
+      observation === "staged pull" ? 1 : observation === "legacy reviewed retry" ? 2 : undefined,
     );
     reopening.db.exec("DROP TRIGGER stop_claim_write");
-    expect(diary.sync.applyMealPage(session, history.cursor, page).deferred).toEqual([
-      left.id,
-      right.id,
-    ]);
+    expect(diary.sync.applyMealPage(session, cursor, page).deferred).toEqual([left.id, right.id]);
     expect(diary.sync.journal.serverCopy(sourceKey)).toMatchObject({
       state: "deleted",
       revision: 2,
@@ -904,7 +950,11 @@ test.each(["staged pull", "conflict receipt"] as const)(
     expect(diary.getMeal(left.id)).toBeNull();
     expect(diary.getMeal(right.id)).toBeNull();
     expect(diary.sync.journal.queued()).toMatchObject([
-      { key: sourceKey, baseRevision: null, pending: { op: "delete" } },
+      {
+        key: sourceKey,
+        baseRevision: observation === "legacy reviewed retry" ? 2 : null,
+        pending: { op: "delete" },
+      },
     ]);
     expect(
       reopening.db
@@ -913,6 +963,224 @@ test.each(["staged pull", "conflict receipt"] as const)(
     ).toEqual({ item_ids: JSON.stringify(left.items.map(({ id }) => id)) });
   },
 );
+
+test("a delayed meal acceptance leaves ownership observed at a newer staged revision", async () => {
+  await withLoopbackAccount(async (phone, tablet) => {
+    const file = createDatabase();
+    const diary = await file.start();
+    const phoneSession = await phone.connect();
+    diary.sync.journal.bind(phoneSession);
+    const local = { ...meal, utcOffsetMinutes: -240, items: [] };
+    diary.sync.saveMeal(local, "phone-older");
+    const older = await phone.push(phoneSession, diary.sync.journal.prepare(phoneSession));
+    expect(older.results).toEqual([
+      { status: "accepted", submissionId: "phone-older", revision: 1 },
+    ]);
+    const tabletSession = await tablet.connect();
+    const withoutOffset = { ...meal, occurredAt: meal.occurredAt + 60_000 };
+    const remotePut = (entry: DiaryMeal, id: string, baseRevision: number | null) =>
+      decodeSubmission({
+        kind: "meal",
+        id: entry.id,
+        op: "put",
+        submissionId: id,
+        baseRevision,
+        content: entry,
+      });
+    await tablet.push(tabletSession, [remotePut(withoutOffset, "tablet-owner", 1)]);
+    const first = await phone.pull(phoneSession, 0);
+    expect(first.cursor).toBe(2);
+    expect(diary.sync.applyMealPage(phoneSession, 0, first).deferred).toEqual([meal.id]);
+    const destination = { ...withoutOffset, id: "destination" };
+    const moved = await tablet.push(tabletSession, [
+      remotePut({ ...meal, items: [] }, "tablet-release", 2),
+      remotePut(destination, "tablet-move", null),
+    ]);
+    expect(moved.results).toMatchObject([
+      { status: "accepted", revision: 3 },
+      { status: "accepted", revision: 4 },
+    ]);
+    const terminal = await phone.pull(phoneSession, first.cursor);
+    const expected = { awaitingPages: false, deferred: [meal.id, destination.id] };
+    expect(diary.sync.applyMealPage(phoneSession, first.cursor, terminal)).toEqual(expected);
+    expect(diary.sync.applyMealResults(phoneSession, older)).toEqual(expected);
+    expect(diary.getMeal(meal.id)).toEqual(local);
+    expect(diary.getMeal(destination.id)).toBeNull();
+    expect(
+      file.db.prepare("SELECT item_ids FROM edo_sync_staged_meal_claims WHERE id = ?").get(meal.id),
+    ).toEqual({ item_ids: JSON.stringify(meal.items.map(({ id }) => id)) });
+  });
+});
+
+test.each(["receipt before pull", "receipt after pull"] as const)(
+  "applies the remote weigh-in past a missing accepted revision with %s",
+  async (ordering) => {
+    await withLoopbackAccount(async (phone, tablet) => {
+      const file = createDatabase();
+      const diary = await file.start();
+      const phoneSession = await phone.connect();
+      diary.sync.journal.bind(phoneSession);
+      diary.sync.saveWeighIn(weighIn, "phone-weight");
+      const receipt = await phone.push(phoneSession, diary.sync.journal.prepare(phoneSession));
+      expect(receipt.results).toMatchObject([{ status: "accepted", revision: 1 }]);
+      if (ordering === "receipt before pull") {
+        diary.sync.applyMealResults(phoneSession, receipt);
+        const saved = file.db
+          .prepare("SELECT revision, content FROM edo_sync_weigh_in_projections")
+          .get();
+        expect(saved).toEqual({ revision: 1, content: JSON.stringify(weighIn) });
+        const record = file.db.prepare("SELECT content FROM edo_sync_outbox").get();
+        expect(JSON.parse(String(record?.content))).toMatchObject({ base: null, baseRevision: 1 });
+      }
+      const tabletSession = await tablet.connect();
+      const key = { kind: "weigh-in", id: weighIn.id };
+      const newer = { ...weighIn, kg: 82 };
+      const updated = await tablet.push(tabletSession, [
+        decodeSubmission({
+          ...key,
+          op: "put",
+          submissionId: "tablet-weight",
+          baseRevision: 1,
+          content: newer,
+        }),
+      ]);
+      expect(updated.results).toMatchObject([{ status: "accepted", revision: 2 }]);
+      const page = await phone.pull(phoneSession, 0);
+      expect(page.changes).toMatchObject([{ ...key, revision: 2 }]);
+      diary.sync.applyMealPage(phoneSession, 0, page);
+      if (ordering === "receipt after pull") {
+        expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([weighIn]);
+        diary.sync.applyMealResults(phoneSession, receipt);
+      }
+      file.db.close();
+      const reopened = await createDatabase().start();
+      expect(reopened.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([newer]);
+      expect(reopened.sync.journal.serverCopy(key)).toMatchObject({ revision: 2, content: newer });
+      expect(reopened.sync.journal.queued()).toEqual([]);
+    });
+  },
+);
+
+test("a meal rebase respects the retained owner of an item outside the pull", async () => {
+  await withLoopbackAccount(async (phone, tablet) => {
+    const diary = await createDatabase().start();
+    const session = await phone.connect();
+    diary.sync.journal.bind(session);
+    const tabletSession = await tablet.connect();
+    const destination = { ...meal, id: "destination", items: [] };
+    const remotePut = (entry: DiaryMeal, submissionId: string, baseRevision: number | null) =>
+      decodeSubmission({
+        kind: "meal",
+        id: entry.id,
+        op: "put",
+        submissionId,
+        baseRevision,
+        content: entry,
+      });
+    await tablet.push(tabletSession, [remotePut(destination, "tablet-original", null)]);
+    const first = await phone.pull(session, 0);
+    expect(diary.sync.applyMealPage(session, 0, first).deferred).toEqual([]);
+    const draft = { ...destination, occurredAt: destination.occurredAt + 60_000 };
+    diary.sync.saveMeal(draft, "phone-edit");
+    const pending = diary.sync.journal.prepare(session);
+    await tablet.push(tabletSession, [
+      remotePut({ ...destination, items: meal.items }, "tablet-add-item", 1),
+    ]);
+    const refused = await phone.push(session, pending);
+    expect(refused.results).toMatchObject([{ status: "conflict" }]);
+    diary.sync.applyMealResults(session, refused);
+
+    diary.sync.saveMeal(meal, "source-create");
+    diary.sync.deleteMeal(meal.id, "source-delete");
+    const terminal = await phone.pull(session, first.cursor);
+    expect(diary.sync.applyMealPage(session, first.cursor, terminal).deferred).toEqual([
+      destination.id,
+    ]);
+    expect(diary.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toBeNull();
+    expect(diary.sync.tryRebaseMeal(session, destination.id, "merged-edit")).toBe(false);
+    expect(diary.getMeal(destination.id)).toEqual(draft);
+    expect(diary.sync.replayMealProjections(session).deferred).toEqual([destination.id]);
+  });
+});
+
+test("an exact pulled weigh-in remains the base of a newer persistent conflict", async () => {
+  await withLoopbackAccount(async (phone, tablet) => {
+    const diary = await createDatabase().start();
+    const session = await phone.connect();
+    diary.sync.journal.bind(session);
+    diary.sync.saveWeighIn(weighIn, "first-weight");
+    const receipt = await phone.push(session, diary.sync.journal.prepare(session));
+    diary.sync.applyMealResults(session, receipt);
+    const device = { ...weighIn, kg: 81 };
+    diary.sync.saveWeighIn(device, "second-weight");
+    const base = await phone.pull(session, 0);
+    diary.sync.applyMealPage(session, 0, base);
+    const key = { kind: "weigh-in", id: weighIn.id };
+    const updated = { ...weighIn, kg: 82 };
+    const tabletSession = await tablet.connect();
+    await tablet.push(tabletSession, [
+      decodeSubmission({
+        ...key,
+        op: "put",
+        submissionId: "tablet-weight",
+        baseRevision: 1,
+        content: updated,
+      }),
+    ]);
+    const conflict = await phone.push(session, diary.sync.journal.prepare(session));
+    expect(conflict.results).toMatchObject([{ status: "conflict", current: { revision: 2 } }]);
+    diary.sync.applyMealResults(session, conflict);
+    diary.sync.applyMealPage(session, base.cursor, await phone.pull(session, base.cursor));
+    expect(diary.sync.journal.blockedReview(key)).toMatchObject({
+      original: { revision: 1, content: weighIn },
+      device: { content: device },
+      pulled: { revision: 2, content: updated },
+    });
+    expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([device]);
+  });
+});
+
+test("a direct journal projection releases a previously retained meal owner", async () => {
+  const file = createDatabase();
+  const diary = await file.start();
+  const sourceKey = { kind: "meal", id: meal.id };
+  const destination = { ...meal, id: "destination" };
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  let reply: object = {
+    ...scope,
+    cursor: 1,
+    hasMore: false,
+    changes: [{ ...sourceKey, state: "live", revision: 1, content: meal }],
+  };
+  const client = diarySyncClient(() => Response.json(reply));
+  const session = await client.connect();
+  diary.sync.journal.bind(session);
+  diary.saveMeal({ ...meal, items: [], occurredAt: meal.occurredAt + 60_000 });
+  expect(diary.sync.applyMealPage(session, 0, await client.pull(session, 0)).deferred).toEqual([
+    meal.id,
+  ]);
+  reply = {
+    ...scope,
+    cursor: 2,
+    hasMore: false,
+    changes: [{ ...sourceKey, state: "deleted", revision: 2 }],
+  };
+  diary.sync.journal.applyPage(session, 1, await client.pull(session, 1), (change) => {
+    expect(change).toMatchObject({ ...sourceKey, state: "deleted" });
+    file.options.connection.run("DELETE FROM diary_meals WHERE id = ?", change.id);
+  });
+  expect(file.db.prepare("SELECT * FROM edo_sync_staged_meal_claims").all()).toEqual([]);
+  reply = {
+    ...scope,
+    cursor: 3,
+    hasMore: false,
+    changes: [
+      { ...sourceKey, id: destination.id, state: "live", revision: 3, content: destination },
+    ],
+  };
+  expect(diary.sync.applyMealPage(session, 2, await client.pull(session, 2)).deferred).toEqual([]);
+  expect(diary.getMeal(destination.id)).toEqual(destination);
+});
 
 test("retains unknown ownership from a superseded unavailable meal across a pending delete", async () => {
   const source = createDatabase();

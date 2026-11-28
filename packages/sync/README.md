@@ -33,6 +33,8 @@ the attached-account flow and grouped conflict review before it can offer this c
 The diary candidate's grouped meal path stages each authenticated pull and applies dependent meal
 updates together once its cursor catches up. Item IDs observed in a superseded pull, a conflict
 receipt or a local edit remain available to the grouping decision. Unresolved prior membership
-can defer changes to item ownership. The path applies independent weigh-ins when the local
-record can safely advance. Other record kinds retain their staged copies. Grouped meal receipts
-commit independently of replay, so the caller can retry an interrupted replay after reopening.
+can defer changes to item ownership. An accepted receipt cannot clear an observation from a later
+remote revision. The path applies independent weigh-ins when the local record can safely advance.
+An accepted weigh-in's effective device value stays separate from its authenticated account copy.
+Other record kinds retain their staged copies. Grouped meal receipts commit independently of
+replay, so the caller can retry an interrupted replay after reopening.

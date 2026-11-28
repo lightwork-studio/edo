@@ -1,4 +1,4 @@
-import type { Change, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
+import type { Change, JsonObject, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
 import {
   type MealProjectionHistory,
@@ -180,34 +180,43 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
   return meal?.id === id ? meal : null;
 }
 
-function pulledWeighIn(change: Change | null): WeighIn | null | undefined {
-  if (change?.state === "deleted") return null;
-  if (change?.state !== "live" || change.content.id !== change.id) return undefined;
+function readWeighInContent(id: string, content: JsonObject): WeighIn | undefined {
+  if (content.id !== id) return undefined;
   try {
     return readWeighIn({
-      id: change.id,
-      local_day: change.content.localDay,
-      occurred_at: change.content.occurredAt,
-      kg: change.content.kg,
+      id,
+      local_day: content.localDay,
+      occurred_at: content.occurredAt,
+      kg: content.kg,
     });
   } catch {
     return undefined;
   }
 }
 
+function pulledWeighIn(change: Change | null): WeighIn | null | undefined {
+  if (change?.state === "deleted") return null;
+  return change?.state === "live" ? readWeighInContent(change.id, change.content) : undefined;
+}
+
 function projectWeighIn(
   db: DiarySqliteConnection,
   change: Change,
   { base, baseRevision }: Pick<OutboxRecord, "base" | "baseRevision">,
+  accepted: JsonObject | null | undefined,
 ): boolean {
   const incoming = pulledWeighIn(change);
   if (incoming === undefined) return false;
   const row = db.get("SELECT * FROM diary_weigh_ins WHERE id = ?", change.id);
   const current = row ? readWeighIn(row) : null;
+  const previous =
+    accepted === undefined
+      ? pulledWeighIn(base)
+      : accepted === null
+        ? null
+        : readWeighInContent(change.id, accepted);
+  if (previous === null && incoming !== null) return false;
   if (JSON.stringify(current) === JSON.stringify(incoming)) return true;
-
-  const previous = pulledWeighIn(base);
-  if (previous === null) return false;
   if (
     previous === undefined
       ? baseRevision !== null || current !== null
@@ -365,8 +374,11 @@ export async function openDiary({
     history: (id: string) => MealProjectionHistory,
     claims: readonly StagedMealClaims[],
   ) => projectMeals(db, changes, history, claims);
-  const applyWeighIn = (change: Change, evidence: Pick<OutboxRecord, "base" | "baseRevision">) =>
-    projectWeighIn(db, change, evidence);
+  const applyWeighIn = (
+    change: Change,
+    evidence: Pick<OutboxRecord, "base" | "baseRevision">,
+    accepted: JsonObject | null | undefined,
+  ) => projectWeighIn(db, change, evidence, accepted);
   return {
     ...diaryProgress(db),
     ...myFoods(db),
