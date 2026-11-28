@@ -1,7 +1,9 @@
+import { createDiaryItem, manualNutritionTarget } from "@edo/core";
 import { type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { File } from "expo-file-system";
 import { moveAsync } from "expo-file-system/legacy";
 import { backupDatabaseAsync, deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
+import { addDays, calendarDate, localDay } from "./diary-view";
 import { connectionFor } from "./local-sqlite";
 
 const diaryName = "edo-diary.db";
@@ -64,6 +66,66 @@ async function openLocalDiaryConnection() {
   const db = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
     const diary = await openDiary({ connection: connectionFor(db), backupBeforeMigration });
+    const today = localDay(new Date());
+    if (!diary.nutritionTargetAt(today)) {
+      const when = (day: string) => calendarDate(day).setUTCHours(12);
+      for (const [offset, kcal] of [
+        [-7, 2050],
+        [-1, 2150],
+      ] as const) {
+        const effectiveDay = addDays(today, offset);
+        diary.saveNutritionTarget({
+          id: `progress-target-${offset}`,
+          effectiveDay,
+          configuredAt: when(effectiveDay),
+          mode: "manual",
+          target: manualNutritionTarget({ kcal, proteinG: 150, fatG: 70 }),
+        });
+      }
+      const sample = [
+        { offset: -3, kcal: 61.5, proteinG: 8, availableCarbohydratesG: 7, fatG: 1 },
+        { offset: -2, kcal: 2080, proteinG: 70, availableCarbohydratesG: 160, fatG: 60 },
+        { offset: -1, kcal: 2240, proteinG: 80, availableCarbohydratesG: 175, fatG: 70 },
+        { offset: 0, kcal: 1064, proteinG: 73, availableCarbohydratesG: 136, fatG: 21 },
+      ];
+      for (const { offset, ...nutrients } of sample) {
+        const localDay = addDays(today, offset);
+        const id = `progress-meal-${offset}`;
+        diary.saveMeal({
+          id,
+          localDay,
+          occurredAt: when(localDay),
+          utcOffsetMinutes: 0,
+          items: [
+            createDiaryItem(
+              `${id}-meal`,
+              {
+                id: { provider: "local", sourceId: id },
+                name: "Synthetic meal",
+                release: null,
+                preparation: "prepared",
+                nutrition: { basis: "per-100-g", nutrients: { ...nutrients, fiberG: 0 } },
+              },
+              { amount: 100, unit: "g" },
+            ),
+          ],
+        });
+      }
+      for (const [offset, kg] of [
+        [-5, 79.7],
+        [-3, 79.3],
+        [-1, 78.5],
+        [0, 78.4],
+      ] as const) {
+        const localDay = addDays(today, offset);
+        diary.saveWeighIn({
+          id: `progress-weight-${offset}`,
+          localDay,
+          occurredAt: calendarDate(localDay).getTime(),
+          kg,
+        });
+      }
+    }
     return {
       diary,
       newId() {
