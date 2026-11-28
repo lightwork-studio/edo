@@ -63,7 +63,51 @@ const backupBeforeMigration: OpenDiaryOptions["backupBeforeMigration"] = async (
 async function openLocalDiaryConnection() {
   const db = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
-    const diary = await openDiary({ connection: connectionFor(db), backupBeforeMigration });
+    const connection = connectionFor(db);
+    const diary = await openDiary({ connection, backupBeforeMigration });
+    if (connection.get("SELECT 1 FROM edo_sync_binding LIMIT 1")) {
+      console.info("EDO_NATIVE_PROGRESS_REVIEW_REOPENED");
+    } else {
+      const key = { kind: "weigh-in", id: "native-progress-weigh-in" };
+      const submission = {
+        ...key,
+        op: "put",
+        baseRevision: 1,
+        submissionId: "progress-fixture",
+        content: {
+          id: key.id,
+          localDay: "2026-11-10",
+          occurredAt: Date.UTC(2026, 10, 10, 19, 17),
+          kg: 75.125,
+        },
+      };
+      const record = {
+        key,
+        baseRevision: 1,
+        base: null,
+        pending: null,
+        attempt: null,
+        blocked: {
+          submission,
+          result: {
+            status: "conflict",
+            reason: "stale",
+            submissionId: submission.submissionId,
+            current: { ...key, revision: 2, state: "unavailable" },
+          },
+        },
+      };
+      db.withTransactionSync(() => {
+        connection.exec(`INSERT INTO edo_sync_binding
+          VALUES (1, 'https://example.test', 'fixture-account', 'fixture-lineage', 2, 2)`);
+        connection.run(
+          "INSERT INTO edo_sync_outbox VALUES (?, ?, NULL, NULL, ?)",
+          key.kind,
+          key.id,
+          JSON.stringify(record),
+        );
+      });
+    }
     return {
       diary,
       newId() {
