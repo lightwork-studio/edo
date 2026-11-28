@@ -74,7 +74,14 @@ def capture(name):
         subprocess.run(["adb", "exec-out", "screencap", "-p"], stdout=file, timeout=18, check=True)
 
 
-def type_query(text):
+def type_query(text, label="Search foods by name"):
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        editor = find(label, widget="android.widget.EditText", timeout=5)
+        if editor.get("focused") == "true":
+            break
+    else:
+        raise AssertionError("Search input was not ready for typing")
     for character in text:
         adb("shell", "input", "text", character)
         time.sleep(0.08)
@@ -120,7 +127,7 @@ app_locale("de-DE")
 start()
 tap("Lebensmittel hinzufügen", fragments=True)
 tap("Lebensmittel nach Name suchen")
-type_query("bananennektar")
+type_query("bananennektar", label="Lebensmittel nach Name suchen")
 find("Datenbank")
 find("Bananennektar, BLS", fragments=True)
 capture("search-de")
