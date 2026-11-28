@@ -95,10 +95,11 @@ const barcodeCandidatesMigration = `
   PRAGMA main.user_version = ${schemaVersion};
 `;
 
-const saveRow = `
+const insertProducts = `
   INSERT INTO main.packaged_food
     (source_id, barcode, lookup_code, name, alternate_name, payload, checked_at, accessed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`;
+const updateProductOnConflict = `
   ON CONFLICT (source_id) DO UPDATE SET
     barcode = excluded.barcode,
     lookup_code = excluded.lookup_code,
@@ -109,6 +110,7 @@ const saveRow = `
     accessed_at = MAX(packaged_food.accessed_at, excluded.accessed_at)
   WHERE excluded.checked_at >= packaged_food.checked_at
 `;
+const saveRow = `${insertProducts} VALUES (?, ?, ?, ?, ?, ?, ?, ?) ${updateProductOnConflict}`;
 
 function timestamp(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new RangeError("Invalid catalog timestamp");
@@ -190,6 +192,15 @@ function markVerified(db: SqliteConnection, sourceId: string): void {
   );
 }
 
+function markVerifiedBatch(db: SqliteConnection, sourceIds: readonly string[]): void {
+  if (!sourceIds.length) return;
+  db.run(
+    `UPDATE main.packaged_food SET validation_pending = 0 WHERE validation_pending = 1
+     AND source_id IN (SELECT value FROM json_each(?))`,
+    JSON.stringify(sourceIds),
+  );
+}
+
 function cacheRowId(row: SqlRow): string {
   if (typeof row.row_id !== "string") throw new Error("Cache row is missing its SQLite identity");
   return row.row_id;
@@ -199,6 +210,14 @@ function removeRow(db: SqliteConnection, row: SqlRow): void {
   db.run("DELETE FROM main.packaged_food WHERE rowid = CAST(? AS INTEGER)", cacheRowId(row));
 }
 
+function removeRows(db: SqliteConnection, rowIds: readonly string[]): void {
+  if (!rowIds.length) return;
+  db.run(
+    "DELETE FROM main.packaged_food WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))",
+    JSON.stringify(rowIds),
+  );
+}
+
 function payloadBytes(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new Error("Could not measure the catalog cache");
@@ -206,13 +225,7 @@ function payloadBytes(value: unknown): number {
   return value;
 }
 
-function writeProduct(
-  db: SqliteConnection,
-  product: PackagedFood,
-  checkedAt: number,
-  budget: number,
-  retained: boolean,
-): void {
+function encodeProduct(product: PackagedFood) {
   const stored = decodePackagedFood(product);
   const lookup = stored && normalizeOpenFoodFactsBarcode(stored.barcode);
   if (!stored || !lookup) throw new TypeError("Invalid packaged-food cache product");
@@ -223,13 +236,30 @@ function writeProduct(
   ) {
     throw new TypeError("Invalid packaged-food cache product text");
   }
-  const payload = JSON.stringify(stored);
+  return {
+    sourceId: stored.id.sourceId,
+    barcode: stored.barcode,
+    lookupCode: lookup,
+    name: stored.name.normalize("NFKC"),
+    alternateName: stored.alternateName?.normalize("NFKC") ?? null,
+    payload: JSON.stringify(stored),
+  };
+}
+
+function writeProduct(
+  db: SqliteConnection,
+  product: PackagedFood,
+  checkedAt: number,
+  budget: number,
+  retained: boolean,
+): void {
+  const { sourceId, barcode, lookupCode, name, alternateName, payload } = encodeProduct(product);
   const size = db.get("SELECT length(CAST(? AS BLOB)) AS bytes", payload)?.bytes;
   if (typeof size !== "number") throw new Error("Could not measure the catalog payload");
   if (!retained && size > budget) return;
   const previous = db.get(
     `SELECT ${productColumns} FROM main.packaged_food WHERE source_id = ?`,
-    stored.id.sourceId,
+    sourceId,
   );
   if (previous && !readCachedRow(previous)) {
     // A corrupt row cannot supply the timestamp that protects a valid recent result.
@@ -237,22 +267,78 @@ function writeProduct(
   }
   db.run(
     saveRow,
-    stored.id.sourceId,
-    stored.barcode,
-    lookup,
-    stored.name.normalize("NFKC"),
-    stored.alternateName?.normalize("NFKC") ?? null,
+    sourceId,
+    barcode,
+    lookupCode,
+    name,
+    alternateName,
     payload,
     checkedAt,
     checkedAt,
   );
-  markVerified(db, stored.id.sourceId);
+  markVerified(db, sourceId);
+}
+
+// Expand a verified response once per statement. SQL applies the byte budget and stale-write guard.
+const barcodeSaveCandidates = `
+  WITH candidates AS (
+    SELECT json_extract(value, '$.sourceId') AS source_id,
+      json_extract(value, '$.barcode') AS barcode,
+      json_extract(value, '$.lookupCode') AS lookup_code,
+      json_extract(value, '$.name') AS name,
+      json_extract(value, '$.alternateName') AS alternate_name,
+      json_extract(value, '$.payload') AS payload
+    FROM json_each(?)
+    WHERE json_extract(value, '$.retained') = 1
+      OR length(CAST(json_extract(value, '$.payload') AS BLOB)) <= ?
+  )`;
+
+function saveCompleteProducts(
+  db: SqliteConnection,
+  products: readonly PackagedFood[],
+  checkedAt: number,
+  budget: number,
+  retainedIds: readonly string[],
+) {
+  const retained = new Set(retainedIds);
+  const batch = JSON.stringify(
+    products.map((product) => ({
+      ...encodeProduct(product),
+      retained: retained.has(product.id.sourceId),
+    })),
+  );
+  const previous = db.all(
+    `${barcodeSaveCandidates}
+     SELECT ${productColumns} FROM main.packaged_food WHERE source_id IN (SELECT source_id FROM candidates)`,
+    batch,
+    budget,
+  );
+  removeRows(db, previous.filter((row) => !readCachedRow(row)).map(cacheRowId));
+  db.run(
+    `${barcodeSaveCandidates} ${insertProducts}
+     SELECT source_id, barcode, lookup_code, name, alternate_name, payload, ?, ?
+     FROM candidates WHERE 1 ${updateProductOnConflict}`,
+    batch,
+    budget,
+    checkedAt,
+    checkedAt,
+  );
+  db.run(
+    `${barcodeSaveCandidates}
+     UPDATE main.packaged_food SET validation_pending = 0
+     WHERE validation_pending = 1 AND source_id IN (SELECT source_id FROM candidates)`,
+    batch,
+    budget,
+  );
 }
 
 function evict(db: SqliteConnection, byteBudget: number, retainedIds: readonly string[]): void {
   db.exec("CREATE TEMP TABLE retained_packaged_food (source_id TEXT PRIMARY KEY NOT NULL)");
-  for (const id of retainedIds) {
-    db.run("INSERT OR IGNORE INTO temp.retained_packaged_food VALUES (?)", id);
+  if (retainedIds.length) {
+    db.run(
+      "INSERT OR IGNORE INTO temp.retained_packaged_food SELECT value FROM json_each(?)",
+      JSON.stringify(retainedIds),
+    );
   }
   const ordinary = "source_id NOT IN (SELECT source_id FROM temp.retained_packaged_food)";
   const totals = db.get(`SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) AS bytes,
@@ -265,24 +351,26 @@ function evict(db: SqliteConnection, byteBudget: number, retainedIds: readonly s
     const rows =
       db.all(`SELECT ${productColumns}, length(CAST(payload AS BLOB)) AS payload_bytes FROM main.packaged_food
       WHERE validation_pending = 1 AND ${ordinary}`);
+    const verified: string[] = [];
+    const corrupt: string[] = [];
     for (const row of rows) {
       const validated = readCachedRow(row);
-      if (validated) markVerified(db, validated.product.id.sourceId);
+      if (validated) verified.push(validated.product.id.sourceId);
       else {
-        removeRow(db, row);
+        corrupt.push(cacheRowId(row));
         used -= payloadBytes(row.payload_bytes);
       }
     }
+    markVerifiedBatch(db, verified);
+    removeRows(db, corrupt);
     if (largest > byteBudget) {
       const oversized = db.all(
         `SELECT CAST(rowid AS TEXT) AS row_id, length(CAST(payload AS BLOB)) AS payload_bytes
         FROM main.packaged_food WHERE ${ordinary} AND length(CAST(payload AS BLOB)) > ?`,
         byteBudget,
       );
-      for (const row of oversized) {
-        removeRow(db, row);
-        used -= payloadBytes(row.payload_bytes);
-      }
+      for (const row of oversized) used -= payloadBytes(row.payload_bytes);
+      removeRows(db, oversized.map(cacheRowId));
     }
     while (used > byteBudget) {
       const oldest =
@@ -291,11 +379,13 @@ function evict(db: SqliteConnection, byteBudget: number, retainedIds: readonly s
         ORDER BY accessed_at, source_id DESC LIMIT 32`);
       if (oldest.length === 0)
         throw new Error("The catalog cache budget does not match its contents");
+      const evicted: string[] = [];
       for (const row of oldest) {
-        removeRow(db, row);
+        evicted.push(cacheRowId(row));
         used -= payloadBytes(row.payload_bytes);
         if (used <= byteBudget) break;
       }
+      removeRows(db, evicted);
     }
   }
   db.exec("DROP TABLE temp.retained_packaged_food");
@@ -346,23 +436,33 @@ function touch(
   limit = Number.POSITIVE_INFINITY,
 ): CachedPackagedFood[] {
   const results: CachedPackagedFood[] = [];
+  const corrupt: string[] = [];
   for (const row of rows) {
     const data = readCachedRow(row);
     if (!data) {
-      db.run(
-        "UPDATE main.packaged_food SET validation_pending = 1 WHERE rowid = CAST(? AS INTEGER) AND validation_pending = 0",
-        cacheRowId(row),
-      );
+      corrupt.push(cacheRowId(row));
       continue;
     }
-    db.run(
-      "UPDATE main.packaged_food SET accessed_at = MAX(accessed_at, ?) WHERE source_id = ?",
-      accessedAt,
-      data.product.id.sourceId,
-    );
-    markVerified(db, data.product.id.sourceId);
     results.push(data);
     if (results.length >= limit) break;
+  }
+  if (corrupt.length) {
+    db.run(
+      `UPDATE main.packaged_food SET validation_pending = 1 WHERE validation_pending = 0
+       AND rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`,
+      JSON.stringify(corrupt),
+    );
+  }
+  if (results.length) {
+    const ids = results.map(({ product }) => product.id.sourceId);
+    db.run(
+      `UPDATE main.packaged_food SET accessed_at = ? WHERE accessed_at < ?
+       AND source_id IN (SELECT value FROM json_each(?))`,
+      accessedAt,
+      accessedAt,
+      JSON.stringify(ids),
+    );
+    markVerifiedBatch(db, ids);
   }
   return results;
 }
@@ -418,7 +518,6 @@ export function openPackagedFoodCache(
       if (
         !key ||
         ids.length === 0 ||
-        ids.length > 100 ||
         new Set(ids).size !== ids.length ||
         products.some((product) => normalizeOpenFoodFactsBarcode(product.barcode) !== key)
       ) {
@@ -433,7 +532,7 @@ export function openPackagedFoodCache(
           checkedAt,
         );
         if (previous) return;
-        saveProducts(products, checkedAt, retainedIds);
+        saveCompleteProducts(db, products, checkedAt, byteBudget, retainedIds);
         db.run(
           `INSERT INTO main.packaged_food_barcode_set VALUES (?, ?, ?)
            ON CONFLICT(lookup_code) DO UPDATE SET
@@ -462,9 +561,11 @@ export function openPackagedFoodCache(
                ON match.lookup_code = packaged_food.lookup_code
              WHERE packaged_food.lookup_code = ?
                AND (match.lookup_code IS NULL OR packaged_food.checked_at > match.checked_at OR
-                 EXISTS (SELECT 1 FROM json_each(match.candidate_ids)
-                   WHERE value = packaged_food.source_id))
+                 packaged_food.source_id IN (
+                   SELECT value FROM main.packaged_food_barcode_set AS candidates,
+                     json_each(candidates.candidate_ids) WHERE candidates.lookup_code = ?))
              ORDER BY (barcode = ?) DESC, source_id`,
+            key,
             key,
             text,
           ),

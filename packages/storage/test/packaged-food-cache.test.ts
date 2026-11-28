@@ -64,6 +64,66 @@ it("keeps bilingual names, exact candidates and nutrient basis through a reopen"
   }
 });
 
+it("stores and looks up a large complete group without per-candidate statements", () => {
+  using db = new DatabaseSync(":memory:");
+  const actual = connection(db);
+  let statements = 0;
+  const cache = openPackagedFoodCache({
+    exec(sql) {
+      statements += 1;
+      actual.exec(sql);
+    },
+    run(sql, ...parameters) {
+      statements += 1;
+      actual.run(sql, ...parameters);
+    },
+    get(sql, ...parameters) {
+      statements += 1;
+      return actual.get(sql, ...parameters);
+    },
+    all(sql, ...parameters) {
+      statements += 1;
+      return actual.all(sql, ...parameters);
+    },
+  });
+  const barcode = "034000470693";
+  const products = Array.from({ length: 1_500 }, (_, index) =>
+    food(String(index).padStart(4, "0"), barcode, "A"),
+  );
+
+  statements = 0;
+  cache.saveBarcodeCandidates(barcode, products, 10, []);
+  expect(statements).toBeLessThan(30);
+  statements = 0;
+  const results = cache.lookupBarcode(barcode, 20);
+  expect(results.map(({ product }) => product.id)).toEqual(products.map(({ id }) => id));
+  expect(statements).toBeLessThan(20);
+  expect(
+    db.prepare("SELECT count(*) AS count FROM packaged_food WHERE accessed_at = 20").get(),
+  ).toEqual({ count: products.length });
+});
+
+it("refreshes corrupt candidates while preserving healthy newer copies in a complete set", () => {
+  using db = new DatabaseSync(":memory:");
+  const cache = openPackagedFoodCache(connection(db), 1024);
+  const barcode = "034000470693";
+  const healthy = food("healthy", barcode, "New healthy label");
+  const damaged = food("damaged", barcode, "Unverified label");
+  cache.save([healthy, damaged], 30, []);
+  db.prepare("UPDATE packaged_food SET payload = '{}' WHERE source_id = ?").run(
+    damaged.id.sourceId,
+  );
+  const replacement = { ...damaged, name: "Verified replacement" };
+  cache.saveBarcodeCandidates(barcode, [{ ...healthy, name: "Older label" }, replacement], 20, []);
+  expect(cache.lookupBarcode(barcode, 50)).toEqual([
+    { product: replacement, checkedAt: 20 },
+    { product: healthy, checkedAt: 30 },
+  ]);
+  expect(cache.search("verified replacement", 51)).toEqual([
+    { product: replacement, checkedAt: 20 },
+  ]);
+});
+
 it("uses last access for the byte budget and retains favourites or recent entries", () => {
   const favourite = food("favourite", "12345670", "Müsliriegel");
   const older = food("older", "12345671", "Oat bar");
