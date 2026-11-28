@@ -23,7 +23,8 @@ export const liveLookupWindowMs = 60_000;
 export const liveLookupRequestsPerWindow = 10;
 
 export interface LiveLookupQuota {
-  reserve(at: number): boolean | Promise<boolean>;
+  /** The latest time this lookup may dispatch, or null when the quota is exhausted. */
+  reserve(at: number): number | null | Promise<number | null>;
   pause(until: number): void | Promise<void>;
 }
 
@@ -33,9 +34,9 @@ function memoryQuota(): LiveLookupQuota {
   return {
     reserve(at) {
       requests = requests.filter((request) => at - request < liveLookupWindowMs);
-      if (at < pausedUntil || requests.length >= liveLookupRequestsPerWindow) return false;
+      if (at < pausedUntil || requests.length >= liveLookupRequestsPerWindow) return null;
       requests.push(at);
-      return true;
+      return Number.POSITIVE_INFINITY;
     },
     pause(until) {
       pausedUntil = Math.max(pausedUntil, until);
@@ -98,12 +99,17 @@ export function createOpenFoodFactsLiveLookup(
 ): (barcode: string) => Promise<LiveBarcodeResult> {
   const inFlight = new Map<string, Promise<LiveBarcodeResult>>();
 
-  async function load(key: string, checkedAt: number): Promise<LiveBarcodeResult> {
+  async function load(
+    key: string,
+    checkedAt: number,
+    dispatchBy: number,
+  ): Promise<LiveBarcodeResult> {
     // The v3.0 alias does not return the structured nutrition that Edo imports.
     const url = new URL(`/api/v3.6/product/${key}`, origin);
     url.searchParams.set("product_type", "food");
     url.searchParams.set("fields", fields);
     try {
+      if (now() > dispatchBy) return { status: "rate-limited" };
       const response = await fetchProduct(url, {
         headers: { "User-Agent": "Edo/1 (https://github.com/lightwork-studio/edo)" },
         credentials: "omit",
@@ -147,7 +153,8 @@ export function createOpenFoodFactsLiveLookup(
   }
 
   async function admit(key: string, at: number): Promise<LiveBarcodeResult> {
-    return (await quota.reserve(at)) ? load(key, at) : { status: "rate-limited" };
+    const dispatchBy = await quota.reserve(at);
+    return dispatchBy === null ? { status: "rate-limited" } : load(key, at, dispatchBy);
   }
 
   return async (barcode) => {

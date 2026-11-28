@@ -108,5 +108,5 @@ the live lookup.
 
 Use a known snapshot barcode and a valid barcode absent from the snapshot when checking the
 staging route. Confirm the response source is `catalog` for the first and `live` for the second
-when the provider knows it. Removing the `OFF_LIVE` binding disables the fallback while leaving
-the existing lookup route available.
+when the provider knows it. To disable live lookup, remove the staging `OFF_LIVE` binding
+and redeploy staging with the Durable Object class and its `exports` declaration retained.

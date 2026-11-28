@@ -128,7 +128,7 @@ test("keeps the upstream quota and retry delay across object restarts", async ()
     const reopened = new OpenFoodFactsLive(state);
     expect((await reopened.fetch(request)).status).toBe(429);
 
-    time += 60_000;
+    time += 61_000;
     upstream.mockResolvedValueOnce(
       new Response(null, { status: 429, headers: { "Retry-After": "120" } }),
     );
@@ -139,6 +139,42 @@ test("keeps the upstream quota and retry delay across object restarts", async ()
     time += 1;
     expect((await reopened.fetch(request)).status).toBe(404);
     expect(upstream).toHaveBeenCalledTimes(12);
+  } finally {
+    clock.mockRestore();
+    vi.unstubAllGlobals();
+  }
+});
+
+test("expires a slow dispatch before it can violate the rolling quota", async () => {
+  const upstream = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }));
+  vi.stubGlobal("fetch", upstream);
+  const start = Date.parse("2026-11-28T12:00:00Z");
+  let time = start;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => time);
+  const entries = new Map<string, { requests: number[]; pausedUntil: number }>();
+  const sync = vi.fn(async () => {});
+  sync.mockImplementationOnce(async () => {
+    time = start + 2000;
+  });
+  const actor = new OpenFoodFactsLive({
+    storage: {
+      kv: { get: (key) => entries.get(key), put: (key, value) => entries.set(key, value) },
+      sync,
+    },
+  });
+  const request = new Request("https://off-live.internal/1234");
+  try {
+    expect((await actor.fetch(request)).status).toBe(429);
+    expect(upstream).not.toHaveBeenCalled();
+    for (let count = 0; count < 9; count += 1) {
+      expect((await actor.fetch(request)).status).toBe(404);
+    }
+    time = start + 60_000;
+    expect((await actor.fetch(request)).status).toBe(429);
+    expect(upstream).toHaveBeenCalledTimes(9);
+    time = start + 61_000;
+    expect((await actor.fetch(request)).status).toBe(404);
+    expect(upstream).toHaveBeenCalledTimes(10);
   } finally {
     clock.mockRestore();
     vi.unstubAllGlobals();

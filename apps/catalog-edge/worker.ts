@@ -91,6 +91,7 @@ interface BudgetStorage {
 }
 
 const quotaKey = "quota";
+const dispatchGraceMs = 1000;
 const liveStatus: Record<Exclude<LiveBarcodeResult["status"], "found">, number> = {
   invalid: 400,
   "not-found": 404,
@@ -99,7 +100,11 @@ const liveStatus: Record<Exclude<LiveBarcodeResult["status"], "found">, number> 
 };
 
 export class OpenFoodFactsLive {
-  constructor(private readonly state: { storage: BudgetStorage }) {}
+  private readonly state: { storage: BudgetStorage };
+
+  constructor(state: { storage: BudgetStorage }) {
+    this.state = state;
+  }
 
   async fetch(request: Request): Promise<Response> {
     const code = new URL(request.url).pathname.slice(1);
@@ -112,10 +117,12 @@ export class OpenFoodFactsLive {
       async reserve(at) {
         const budget = readBudget();
         const requests = budget.requests.filter((time) => at - time < liveLookupWindowMs);
-        if (at < budget.pausedUntil || requests.length >= liveLookupRequestsPerWindow) return false;
-        storage.kv.put(quotaKey, { ...budget, requests: [...requests, at] });
+        if (at < budget.pausedUntil || requests.length >= liveLookupRequestsPerWindow) return null;
+        // Charge the latest possible dispatch time. A slow flush cannot move a call past it.
+        const dispatchBy = at + dispatchGraceMs;
+        storage.kv.put(quotaKey, { ...budget, requests: [...requests, dispatchBy] });
         await storage.sync();
-        return true;
+        return dispatchBy;
       },
       async pause(until) {
         const budget = readBudget();
