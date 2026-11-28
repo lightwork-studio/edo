@@ -1,6 +1,6 @@
-import type { NegotiatedSync } from "@edo/contract";
+import type { Change, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
-import { openSyncJournal } from "@edo/sync";
+import { type MealProjection, openSyncJournal } from "@edo/sync";
 import { readMealEntries } from "./diary-archive.ts";
 import {
   type DiaryProgressStore,
@@ -10,6 +10,7 @@ import {
   verifyDiaryProgress,
   writeWeighIn,
 } from "./diary-progress.ts";
+import { groupMealProjections } from "./meal-projection-groups.ts";
 import {
   type DiaryBackup,
   diaryMigrations,
@@ -59,7 +60,15 @@ export interface SyncMealStore {
     saveMeal(meal: DiaryMeal, submissionId: string): void;
     deleteMeal(id: string, submissionId: string): void;
     tryRebaseMeal(session: NegotiatedSync, id: string, submissionId: string): boolean;
+    applyMealPage(session: NegotiatedSync, cursor: number, page: PullResponse): MealPullProgress;
+    applyMealResults(session: NegotiatedSync, results: PushResponse): MealPullProgress;
+    replayMealProjections(session: NegotiatedSync): MealPullProgress;
   };
+}
+
+interface MealPullProgress {
+  readonly awaitingPages: boolean;
+  readonly deferred: readonly string[];
 }
 
 export interface SyncDiaryStore extends SyncMealStore {
@@ -164,6 +173,69 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
   return meal?.id === id ? meal : null;
 }
 
+function projectMeals(
+  db: DiarySqliteConnection,
+  changes: readonly Change[],
+  previous: (id: string) => MealProjection | null,
+): string[] {
+  const candidates: {
+    id: string;
+    current: DiaryMeal | null;
+    prior: DiaryMeal | null | undefined;
+    incoming: DiaryMeal | null;
+  }[] = [];
+  const owners = new Map<string, string>();
+  for (const change of changes) {
+    const incoming = change.state === "live" ? readRebaseMeal(change.content, change.id) : null;
+    if (change.state !== "deleted" && !incoming) continue;
+    const current = readMeal(db, change.id);
+    // The existing writer would keep a known offset for an unchanged event. Keep this
+    // unsynchronized until a projection can remember the exact effective local value.
+    if (
+      current &&
+      incoming &&
+      current.utcOffsetMinutes !== undefined &&
+      incoming.utcOffsetMinutes === undefined &&
+      current.localDay === incoming.localDay &&
+      current.occurredAt === incoming.occurredAt
+    ) {
+      continue;
+    }
+    const evidence = previous(change.id);
+    const prior = evidence
+      ? evidence.content === null
+        ? null
+        : (readRebaseMeal(evidence.content, change.id) ?? undefined)
+      : undefined;
+    candidates.push({ id: change.id, current, prior, incoming });
+    for (const item of incoming?.items ?? []) {
+      const row = db.get("SELECT meal_id FROM diary_items WHERE id = ?", item.id);
+      if (row) owners.set(item.id, diaryId(row.meal_id, "meal ID"));
+    }
+  }
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const { groups } = groupMealProjections(candidates, owners);
+  for (const group of groups) {
+    const replacements = group.flatMap((id) => {
+      const candidate = byId.get(id);
+      if (!candidate) throw new Error("Missing meal projection candidate");
+      return JSON.stringify(candidate.current) === JSON.stringify(candidate.incoming)
+        ? []
+        : [candidate];
+    });
+    // Release all affected owners first so a swap never violates the global item IDs.
+    for (const { id } of replacements) db.run("DELETE FROM diary_items WHERE meal_id = ?", id);
+    for (const { id, incoming } of replacements) {
+      if (incoming) writeMeal(db, prepareMeal(incoming), true);
+      else db.run("DELETE FROM diary_meals WHERE id = ?", id);
+      if (JSON.stringify(readMeal(db, id)) !== JSON.stringify(incoming)) {
+        throw new Error("The meal projection changed while saving");
+      }
+    }
+  }
+  return groups.flat();
+}
+
 function planPrivateRestore(
   db: DiarySqliteConnection,
   archive: ReturnType<typeof readPrivateArchive>,
@@ -225,6 +297,10 @@ export async function openDiary({
     verifyMyFoods(connection);
   });
   const journal = openSyncJournal(db, () => requireCurrentDiaryVersion(db));
+  const applyMeals = (
+    changes: readonly Change[],
+    previous: (id: string) => MealProjection | null,
+  ) => projectMeals(db, changes, previous);
   return {
     ...diaryProgress(db),
     ...myFoods(db),
@@ -288,6 +364,13 @@ export async function openDiary({
           },
         );
       },
+      applyMealPage: (session, cursor, page) =>
+        journal.applyMealPage(session, cursor, page, applyMeals),
+      applyMealResults: (session, results) => {
+        journal.applyResults(session, results);
+        return journal.replayMealProjections(session, applyMeals);
+      },
+      replayMealProjections: (session) => journal.replayMealProjections(session, applyMeals),
       saveWeighIn: (entry, submissionId) => {
         const reading = prepareWeighIn(entry);
         journal.commitLocalProjection({ kind: "weigh-in", id: reading.id }, submissionId, () => {
