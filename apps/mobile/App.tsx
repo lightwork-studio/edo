@@ -227,10 +227,17 @@ function DiaryApp({
     return Array.from({ length: 7 }, (_, index) => {
       const date = addDays(monday, index);
       const meals = date > lastDay ? null : readMeals(diary, date);
-      return { day: date, meals, kcal: meals ? (totalNutrition(meals)?.kcal ?? null) : null };
+      const target = date > lastDay ? null : (readTarget(diary, date)?.target ?? null);
+      return {
+        day: date,
+        meals,
+        target,
+        kcal: meals ? (totalNutrition(meals)?.kcal ?? null) : null,
+      };
     });
   }, [diary, monday, lastDay, refresh]);
-  const meals = week.find((entry) => entry.day === day)?.meals ?? null;
+  const selectedWeekDay = week.find((entry) => entry.day === day);
+  const meals = selectedWeekDay?.meals ?? null;
 
   useEffect(() => {
     if (route.kind !== "revalidate-packaged") return;
@@ -323,7 +330,7 @@ function DiaryApp({
         day={day}
         week={week}
         meals={meals}
-        kcalTarget={readTarget(diary, day)?.target.kcal ?? null}
+        target={selectedWeekDay?.target ?? null}
         feedback={feedback?.day === day ? t[feedback.kind] : null}
         syncNotice={syncNotice}
         onDay={chooseDay}
@@ -456,6 +463,7 @@ function DiaryApp({
             mode,
             target,
           });
+          setRefresh((revision) => revision + 1);
           setRoute({ kind: "progress" });
         }}
       />
