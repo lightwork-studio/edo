@@ -110,7 +110,16 @@ private class ArchivePickerContract : AppContextActivityResultContract<String, U
     Intent(Intent.ACTION_GET_CONTENT).apply {
       addCategory(Intent.CATEGORY_OPENABLE)
       type = "*/*"
-      putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/csv", "text/plain", "application/octet-stream"))
+      putExtra(
+        Intent.EXTRA_MIME_TYPES,
+        arrayOf(
+          "application/json",
+          "text/csv",
+          "text/comma-separated-values",
+          "text/plain",
+          "application/octet-stream",
+        ),
+      )
       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
