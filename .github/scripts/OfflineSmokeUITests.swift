@@ -81,11 +81,13 @@ final class OfflineSmokeUITests: XCTestCase {
         for character in text {
             input.typeText(String(character))
             entered.append(character)
-            let ready = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "value == %@", entered),
-                object: input
-            )
-            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, app.debugDescription)
+            let deadline = Date().addingTimeInterval(12)
+            var observed = String(describing: input.value ?? "")
+            while observed != entered && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                observed = String(describing: input.value ?? "")
+            }
+            XCTAssertEqual(observed, entered, app.debugDescription)
         }
     }
 
