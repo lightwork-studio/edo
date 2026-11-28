@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": "27.11.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "preflight": {
+      "channel": "preflight",
+      "distribution": "store",
+      "environment": "preview",
+      "credentialsSource": "remote",
+      "autoIncrement": true,
+      "env": {
+        "EDO_APP_VARIANT": "preflight",
+        "EXPO_PUBLIC_EDO_CATALOG_ORIGIN": "https://edo.timweb.app"
+      }
+    }
+  },
+  "submit": {
+    "preflight": {
+      "ios": {
+        "ascAppId": "6840244969",
+        "groups": ["Archive Restore"],
+        "ascApiKeyPath": "$ASC_API_KEY_PATH",
+        "ascApiKeyId": "$ASC_API_KEY_ID",
+        "ascApiKeyIssuerId": "$ASC_API_ISSUER_ID"
+      }
+    }
+  }
+}
