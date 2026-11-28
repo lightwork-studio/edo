@@ -497,6 +497,91 @@ test("recovers an in-flight v8 diary when the attempt observation migration is i
   ).rejects.toThrow("saved by a newer version of Edo");
 });
 
+test("checks for a temporary shadow before returning an opened diary", async () => {
+  const source = fixture();
+  const diary = await source.open();
+  const meal = {
+    id: "existing-meal",
+    localDay: "2026-11-04",
+    occurredAt: Date.UTC(2026, 10, 4, 18),
+    items: [],
+  };
+  diary.saveMeal(meal);
+
+  const opening = source.open();
+  source.sqlite.exec("CREATE TEMP VIEW diary_meals AS SELECT * FROM main.diary_meals WHERE 0");
+  await expect(opening).rejects.toThrow("Reopen the diary on a clean SQLite connection");
+  source.sqlite.exec("DROP VIEW temp.diary_meals");
+  expect((await source.open()).listMeals(meal.localDay)).toEqual([meal]);
+});
+
+test.each([
+  {
+    version: 1,
+    temporary: "CREATE TEMP TABLE DIARY_MEALS AS SELECT * FROM main.diary_meals WHERE 0",
+    expectedBackups: 0,
+  },
+  {
+    version: 2,
+    temporary: "CREATE TEMP TABLE diary_weigh_ins (id TEXT)",
+    expectedBackups: 1,
+  },
+])(
+  "preserves a version $version diary until it can reopen on a clean connection",
+  async ({ version, temporary, expectedBackups }) => {
+    const dir = mkdtempSync(join(tmpdir(), "edo-migration-clean-connection-"));
+    directories.push(dir);
+    const path = join(dir, "diary.sqlite");
+    const source = openFile(path, dir);
+    await migrateDiary(
+      source.sqlite,
+      diaryMigrations.slice(0, version),
+      source.backupBeforeMigration,
+      () => {},
+    );
+    const day = "2026-11-04";
+    const occurredAt = Date.UTC(2026, 10, 4, 18);
+    source.sqlite.run(
+      "INSERT INTO main.diary_meals (id, local_day, occurred_at) VALUES (?, ?, ?)",
+      "preserved-meal",
+      day,
+      occurredAt,
+    );
+    const oldRows = source.sqlite.all("SELECT * FROM main.diary_meals");
+    const oldSchema = source.sqlite.all("SELECT * FROM main.sqlite_schema ORDER BY name");
+    source.sqlite.exec(temporary);
+
+    let backupCalls = 0;
+    await expect(
+      openDiary({
+        connection: source.sqlite,
+        backupBeforeMigration: async (installed, verify) => {
+          backupCalls++;
+          await source.backupBeforeMigration(installed, verify);
+        },
+      }),
+    ).rejects.toThrow("Reopen the diary on a clean SQLite connection");
+    expect(backupCalls).toBe(expectedBackups);
+    expect(source.sqlite.get("PRAGMA main.user_version")).toEqual({ user_version: version });
+    expect(source.sqlite.all("SELECT * FROM main.sqlite_schema ORDER BY name")).toEqual(oldSchema);
+    expect(source.sqlite.all("SELECT * FROM main.diary_meals")).toEqual(oldRows);
+    source.db.close();
+
+    const reopened = openFile(path, dir);
+    expect((await reopened.open()).listMeals(day)).toEqual([
+      { id: "preserved-meal", localDay: day, occurredAt, items: [] },
+    ]);
+    expect(reopened.sqlite.get("PRAGMA main.user_version")).toEqual({
+      user_version: diaryMigrations.length,
+    });
+    expect(
+      reopened.sqlite.get(
+        "SELECT name FROM main.sqlite_schema WHERE name = 'diary_weigh_ins_by_day'",
+      ),
+    ).toEqual({ name: "diary_weigh_ins_by_day" });
+  },
+);
+
 test.each([
   "edo_sync_attempt_observations",
   "edo_sync_submission_ids",
@@ -504,7 +589,7 @@ test.each([
   "edo_sync_staged_meal_claims",
   "edo_sync_weigh_in_projections",
 ] as const)(
-  "rejects a backup that drops a row from %s before a subsequent migration",
+  "verifies the persisted rows in %s when the backup also has a temporary copy",
   async (table) => {
     const source = fixture();
     await source.open();
@@ -546,16 +631,25 @@ test.each([
       '{"kind":"weigh-in","id":"weight","state":"deleted","revision":1}',
     );
 
+    const persisted = source.sqlite.all(`SELECT * FROM main.${table}`);
+    let advanced = false;
+    const nextMigrations = [
+      ...diaryMigrations,
+      () => {
+        advanced = true;
+      },
+    ];
     await expect(
       migrateDiary(
         source.sqlite,
-        [...diaryMigrations, () => {}],
+        nextMigrations,
         async (_, verify) => {
           const copy = join(source.dir, "missing-submission.sqlite");
           await copyDatabase(source.path, copy);
           const incomplete = new DatabaseSync(copy);
           try {
-            incomplete.exec(`DELETE FROM ${table}`);
+            incomplete.exec(`CREATE TEMP TABLE ${table} AS SELECT * FROM main.${table}`);
+            incomplete.exec(`DELETE FROM main.${table}`);
             verify(connection(incomplete));
           } finally {
             incomplete.close();
@@ -564,7 +658,13 @@ test.each([
         () => {},
       ),
     ).rejects.toThrow("Diary backup does not match the current diary");
+    expect(advanced).toBe(false);
     expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(diaryMigrations.length);
-    expect(source.sqlite.get(`SELECT count(*) AS count FROM ${table}`)).toEqual({ count: 1 });
+    expect(source.sqlite.all(`SELECT * FROM main.${table}`)).toEqual(persisted);
+
+    await migrateDiary(source.sqlite, nextMigrations, source.backupBeforeMigration, () => {});
+    expect(advanced).toBe(true);
+    expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(nextMigrations.length);
+    expect(source.sqlite.all(`SELECT * FROM main.${table}`)).toEqual(persisted);
   },
 );
