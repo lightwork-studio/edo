@@ -34,6 +34,18 @@ test("reports overlong bounded fields before unescaping them and retains the nex
   expect(previewFddbDiaryCsv(input).rows[0]?.name).toHaveLength(5_000);
 });
 
+test("rejects non-text control characters before archiving rows and preserves tab and newline", () => {
+  const input = [
+    header,
+    `27.11.2026 08:00;A\u0001B;;418,4;0;0;0;0`,
+    '27.11.2026 09:00;"A\tB\r\nC";;418,4;0;0;0;0',
+  ].join("\n");
+  expect(previewFddbDiaryCsv(input, 2)).toMatchObject({
+    issues: [{ line: 2, code: "non-text-control" }],
+    rows: [{ line: 3, name: "A\tB\r\nC" }],
+  });
+});
+
 test("previews German FDDB export rows without inventing a timezone or missing nutrients", () => {
   const input = [
     `\uFEFF${header}`,

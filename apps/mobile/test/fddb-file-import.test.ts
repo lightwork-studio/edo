@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openDiary } from "@edo/storage";
 import { expect, test } from "vitest";
-import { InvalidFddbSourceTimeZone, previewFddbFile } from "../src/fddb-file-import.ts";
+import {
+  FddbPreparedSizeError,
+  InvalidFddbSourceTimeZone,
+  previewFddbFile,
+} from "../src/fddb-file-import.ts";
 
 const header =
   "datum_tag_monat_jahr_stunde_minute;bezeichnung;interne_id;kj;kj_aktivitaeten;fett_g;kh_g;protein_g";
@@ -80,6 +84,23 @@ test("returns no import payload when the CSV ends inside a quoted row", async ()
   );
   expect(preview).toMatchObject({ archive: null, incompleteAtLine: 16 });
   expect(preview.issues.at(-1)).toEqual({ line: 16, code: "malformed-csv" });
+});
+
+test("bounds expanded archive text before the diary previews valid quoted rows", async () => {
+  const row = `27.11.2026 23:45;"A${"\r\n".repeat(4_048)}B";0000123;418,4;0;0;;`;
+  const source = [header, ...Array.from({ length: 1_050 }, () => row)].join("\n");
+  await expect(
+    previewFddbFile(
+      source,
+      "UTC",
+      {
+        previewPrivateArchive() {
+          throw new Error("The diary must not preview an oversized archive");
+        },
+      },
+      sha256,
+    ),
+  ).rejects.toBeInstanceOf(FddbPreparedSizeError);
 });
 
 test("rejects a missing or unsupported source time zone before previewing private records", async () => {

@@ -12,6 +12,8 @@ const germanHeader = [
   "protein_g",
 ];
 const maxBoundedFieldLength = 8_192;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Only tab and line breaks are supported text controls.
+const nonTextControl = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u;
 
 export interface FddbDiaryRow {
   readonly line: number;
@@ -29,6 +31,7 @@ type FddbIssueCode =
   | "malformed-csv"
   | "wrong-column-count"
   | "field-too-long"
+  | "non-text-control"
   | "invalid-timestamp"
   | "missing-food-name"
   | "invalid-nutrition"
@@ -179,6 +182,10 @@ export function previewFddbDiaryCsv(source: string, maxRecords?: number): FddbDi
     if (fields.length === 1 && !fields[0]?.trim()) continue;
     if (fields.length !== germanHeader.length) {
       issues.push({ line, code: "wrong-column-count" });
+      continue;
+    }
+    if (maxRecords !== undefined && fields.some((field) => nonTextControl.test(field))) {
+      issues.push({ line, code: "non-text-control" });
       continue;
     }
 

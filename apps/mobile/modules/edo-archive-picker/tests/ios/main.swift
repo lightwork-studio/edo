@@ -37,10 +37,12 @@ func readFixture(_ source: String, maxBytes: Int, requireArchiveObject: Bool) th
     )
 }
 
-let csv = "\u{FEFF}Datum;Lebensmittel\r\n27.11.2026;Äpfel"
+let body = "Datum;Lebensmittel\r\n27.11.2026;Äpfel"
+let csv = "\u{FEFF}" + body
 let byteCount = csv.utf8.count
 let text = try readFixture(csv, maxBytes: byteCount, requireArchiveObject: false)
-precondition(text == csv, "CSV should cross the bridge intact")
+// Foundation can remove the UTF-8 BOM. The CSV payload must be preserved.
+precondition(text == csv || text == body, "CSV payload should cross the bridge intact")
 let oversized = try readFixture(csv, maxBytes: byteCount - 1, requireArchiveObject: false)
 precondition(oversized == nil, "CSV should have the same byte limit as archives")
 do {
