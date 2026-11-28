@@ -345,7 +345,7 @@ export function FoodDetail({
                           )
                         : `${t[label]}, ${describe(value)}`
                     }
-                    style={local.metric}
+                    style={[local.metric, compact && local.metricCompact]}
                   >
                     {daily ? (
                       <TargetRing
@@ -489,6 +489,7 @@ const local = StyleSheet.create({
   selected: { backgroundColor: colors.accentSoft, borderColor: colors.accentSoft },
   rings: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-around", rowGap: 12 },
   metric: { flex: 1, minWidth: 60, alignItems: "center", gap: 3 },
+  metricCompact: { flexGrow: 0, flexBasis: "50%" },
   metricName: { textAlign: "center", fontSize: 11 },
   impactBalance: { maxWidth: "48%", flexShrink: 1, textAlign: "right" },
   reference: { gap: 6 },
