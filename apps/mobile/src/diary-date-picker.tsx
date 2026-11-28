@@ -9,8 +9,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { diaryMonthWeeks, shiftDiaryMonth } from "./diary-calendar";
-import { addDays, calendarDate, mondayOf } from "./diary-view";
+import { diaryMonthWeeks, firstGregorianDisplayDay, shiftDiaryMonth } from "./diary-calendar";
+import { addDays, calendarDate } from "./diary-view";
 import type { Strings } from "./strings";
 import { colors, IconButton, styles } from "./ui";
 
@@ -38,23 +38,19 @@ export function DiaryDatePicker({
   const panelWidth = Math.min(420, width);
   const cellSize = Math.max(44, Math.floor((panelWidth - 12) / 7));
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
-  const era = month.startsWith("0000") ? "short" : undefined;
   const dateLabel = new Intl.DateTimeFormat(locale, {
     weekday: "long",
     month: "long",
     day: "numeric",
     year: "numeric",
-    era,
     timeZone: "UTC",
   });
   const monthLabel = new Intl.DateTimeFormat(locale, {
     month: "long",
     year: "numeric",
-    era,
     timeZone: "UTC",
   });
-  const monday = mondayOf(today);
-  const weekdays = Array.from({ length: 7 }, (_, index) => addDays(monday, index));
+  const weekdays = Array.from({ length: 7 }, (_, index) => addDays("2024-01-01", index));
 
   return (
     <Modal animationType="fade" transparent onRequestClose={onClose}>
@@ -80,7 +76,9 @@ export function DiaryDatePicker({
                 accessibilityLiveRegion="polite"
                 style={[styles.title, styles.stretch, local.center]}
               >
-                {monthLabel.format(calendarDate(month))}
+                {month < firstGregorianDisplayDay
+                  ? month.slice(0, 7)
+                  : monthLabel.format(calendarDate(month))}
               </Text>
               <IconButton
                 label={t.nextMonth}
@@ -110,7 +108,11 @@ export function DiaryDatePicker({
                         <Pressable
                           key={date}
                           accessibilityRole="button"
-                          accessibilityLabel={dateLabel.format(calendarDate(date))}
+                          accessibilityLabel={
+                            date < firstGregorianDisplayDay
+                              ? date
+                              : dateLabel.format(calendarDate(date))
+                          }
                           accessibilityState={{ selected, disabled }}
                           disabled={disabled}
                           onPress={() => onChoose(date)}
