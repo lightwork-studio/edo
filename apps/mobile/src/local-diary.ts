@@ -63,7 +63,71 @@ const backupBeforeMigration: OpenDiaryOptions["backupBeforeMigration"] = async (
 async function openLocalDiaryConnection() {
   const db = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
-    const diary = await openDiary({ connection: connectionFor(db), backupBeforeMigration });
+    const connection = connectionFor(db);
+    const diary = await openDiary({ connection, backupBeforeMigration });
+    if (connection.get("SELECT 1 FROM edo_sync_binding LIMIT 1")) {
+      console.info("EDO_NATIVE_WEIGH_IN_REVIEW_REOPENED");
+    } else {
+      const key = { kind: "weigh-in", id: "native-weigh-in-review" };
+      const phone = {
+        id: key.id,
+        kg: 80.002,
+        localDay: "2026-11-10",
+        occurredAt: Date.UTC(2026, 10, 11, 0, 30, 0, 3),
+        phoneDetail: "Private phone sentinel",
+      };
+      const account = {
+        ...key,
+        revision: 3,
+        state: "live",
+        content: {
+          ...phone,
+          kg: 81.003,
+          localDay: "2026-11-11",
+          future: "Private account sentinel",
+        },
+      };
+      const submission = {
+        ...key,
+        op: "put",
+        baseRevision: 1,
+        submissionId: "native-prior",
+        content: phone,
+      };
+      const record = {
+        key,
+        baseRevision: 1,
+        base: null,
+        pending: { op: "put", submissionId: "native-latest", content: phone },
+        attempt: null,
+        blocked: {
+          submission,
+          result: {
+            status: "conflict",
+            reason: "stale",
+            submissionId: submission.submissionId,
+            current: { ...account, revision: 2, content: { ...phone, kg: 82 } },
+          },
+        },
+      };
+      db.withTransactionSync(() => {
+        connection.exec(`INSERT INTO edo_sync_binding
+          VALUES (1, 'https://example.test', 'fixture-account', 'fixture-lineage', 3, 3)`);
+        connection.run(
+          "INSERT INTO edo_sync_outbox VALUES (?, ?, NULL, NULL, ?)",
+          key.kind,
+          key.id,
+          JSON.stringify(record),
+        );
+        connection.run(
+          "INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)",
+          key.kind,
+          key.id,
+          account.revision,
+          JSON.stringify(account),
+        );
+      });
+    }
     return {
       diary,
       newId() {
