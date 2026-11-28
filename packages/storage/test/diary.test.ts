@@ -394,6 +394,114 @@ test("commits a bound weigh-in and its pending tombstone with the private diary"
   ]);
 });
 
+const localWeighIn = { ...weighIn, kg: 80.5 };
+const remoteWeighIn = {
+  ...weighIn,
+  localDay: "2026-11-01",
+  occurredAt: Date.parse("2026-11-01T05:30:00Z"),
+};
+const weighInKey = { kind: "weigh-in", id: weighIn.id };
+
+async function stageStaleWeighIn(
+  diary: Awaited<ReturnType<typeof openDiary>>,
+  remoteContent: unknown,
+) {
+  const { journal } = diary.sync;
+  const scope = { accountBinding: "account", lineage: "fixture", release: "0.1" };
+  const base = decodeChange({ ...weighInKey, state: "live", revision: 1, content: weighIn });
+  const remote = decodeChange(
+    remoteContent === null
+      ? { ...weighInKey, state: "deleted", revision: 2 }
+      : { ...base, revision: 2, content: remoteContent },
+  );
+  let page = { ...scope, cursor: 1, hasMore: false, changes: [base] };
+  const client = diarySyncClient((path) => {
+    if (path === "/sync/pull") return Response.json(page);
+    if (path !== "/sync/push") throw new Error("Unexpected sync request");
+    return Response.json({
+      ...scope,
+      results: [
+        {
+          status: "conflict",
+          reason: remote.state === "deleted" ? "deleted" : "stale",
+          submissionId: "local-weight",
+          current: remote,
+        },
+      ],
+    });
+  });
+  const session = await client.connect();
+  journal.bind(session);
+  diary.saveWeighIn(weighIn);
+  journal.applyPage(session, 0, await client.pull(session, 0), () => undefined);
+  diary.sync.saveWeighIn(localWeighIn, "local-weight");
+  const attempt = journal.prepare(session);
+  journal.applyResults(session, await client.push(session, attempt), () => undefined);
+  page = { ...page, cursor: 2, changes: [remote] };
+  journal.applyPage(session, 1, await client.pull(session, 1), () => undefined);
+  return session;
+}
+
+test("rebases an independent weight and event-time change together with its queued retry", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const session = await stageStaleWeighIn(diary, remoteWeighIn);
+  const blocked = diary.sync.journal.queued();
+  source.db.exec(`CREATE TRIGGER stop_weight_rebase BEFORE INSERT ON edo_sync_outbox
+    WHEN NEW.kind = 'weigh-in' BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`);
+  expect(() => diary.sync.tryRebaseWeighIn(session, weighIn.id, "merged-weight")).toThrow(
+    /journal unavailable/,
+  );
+  expect(diary.listWeighIns(weighIn.localDay, remoteWeighIn.localDay)).toEqual([localWeighIn]);
+  expect(diary.sync.journal.queued()).toEqual(blocked);
+  source.db.exec("DROP TRIGGER stop_weight_rebase");
+
+  expect(diary.sync.tryRebaseWeighIn(session, weighIn.id, "merged-weight")).toBe(true);
+  source.db.close();
+  const reopened = await createDatabase().start();
+  const merged = { ...remoteWeighIn, kg: localWeighIn.kg };
+  expect(reopened.listWeighIns(weighIn.localDay, remoteWeighIn.localDay)).toEqual([merged]);
+  const history = reopened.sync.journal.history();
+  if (!history) throw new Error("Expected saved sync history");
+  const reconnected = await diarySyncClient(undefined, 2).connect(history);
+  reopened.sync.journal.bind(reconnected);
+  const [attempt] = reopened.sync.journal.prepare(reconnected);
+  if (attempt?.op !== "put") throw new Error("Expected a rejected weigh-in's queued retry");
+  expect(attempt).toMatchObject({
+    ...weighInKey,
+    submissionId: "merged-weight",
+    baseRevision: 2,
+    content: merged,
+  });
+  expect(
+    applyRecordContent({
+      key: attempt,
+      release: reconnected.release,
+      current: remoteWeighIn,
+      submitted: attempt.content,
+    }),
+  ).toEqual(merged);
+});
+
+test.each([
+  ["overlapping weights", { ...weighIn, kg: 81 }, null],
+  ["opaque account fields", { ...remoteWeighIn, futureMeasure: "fixture" }, null],
+  ["account deletion", null, null],
+  ["an unjournaled edit", remoteWeighIn, { ...localWeighIn, kg: 85 }],
+])("keeps the diary and review unchanged for %s", async (_name, remote, unjournaled) => {
+  const diary = await createDatabase().start();
+  const session = await stageStaleWeighIn(diary, remote);
+  if (unjournaled) diary.saveWeighIn(unjournaled);
+  const blocked = diary.sync.journal.queued();
+  const accountCopy = diary.sync.journal.serverCopy(weighInKey);
+  expect(diary.sync.tryRebaseWeighIn(session, weighIn.id, "declined-weight")).toBe(false);
+  expect(diary.listWeighIns(weighIn.localDay, remoteWeighIn.localDay)).toEqual([
+    unjournaled ?? localWeighIn,
+  ]);
+  expect(diary.sync.journal.queued()).toEqual(blocked);
+  expect(diary.sync.journal.serverCopy(weighInKey)).toEqual(accountCopy);
+});
+
 test("reopens locally, preserving the event day, stable IDs and nutrition after a catalog refresh", async () => {
   const source = createDatabase();
   const diary = await source.start();

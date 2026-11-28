@@ -1,6 +1,7 @@
 import type { DiaryItem, DiaryMeal } from "./diary.ts";
 import type { Nutrients } from "./nutrition.ts";
 import { foodForRecipe, type Recipe } from "./recipe.ts";
+import type { WeighIn } from "./weight.ts";
 
 export type DiaryMealConflict =
   | { readonly kind: "record" | "time" | "item-order" }
@@ -71,7 +72,10 @@ function sameItems(a: readonly DiaryItem[], b: readonly DiaryItem[]): boolean {
   return a.length === b.length && a.every((item, index) => sameItem(item, b[index]));
 }
 
-function sameEvent(a: DiaryMeal, b: DiaryMeal): boolean {
+function sameEvent(
+  a: Pick<DiaryMeal, "localDay" | "occurredAt">,
+  b: Pick<DiaryMeal, "localDay" | "occurredAt">,
+): boolean {
   return a.localDay === b.localDay && a.occurredAt === b.occurredAt;
 }
 
@@ -254,6 +258,22 @@ export function reconcileDiaryMeal(
       items: sorted,
     },
   };
+}
+
+/** Combine independent changes to weight and to the captured day and instant. */
+export function reconcileDiaryWeighIn(
+  base: WeighIn,
+  local: WeighIn,
+  server: WeighIn,
+): WeighIn | null {
+  if (local.id !== base.id || server.id !== base.id) {
+    throw new TypeError("Diary reconciliation needs one weigh-in ID");
+  }
+  const event = choose(base, local, server, sameEvent);
+  const weight = choose(base.kg, local.kg, server.kg, Object.is);
+  if ("conflict" in event || "conflict" in weight) return null;
+  const { localDay, occurredAt } = event.value;
+  return { id: base.id, localDay, occurredAt, kg: weight.value };
 }
 
 function sameRecipeYield(a: Recipe, b: Recipe): boolean {

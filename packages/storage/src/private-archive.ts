@@ -73,7 +73,7 @@ function readArchiveItems(value: unknown) {
   return Array.from(value, readArchiveItem);
 }
 
-function readArchiveWeighIn(input: unknown) {
+export function readArchiveWeighIn(input: unknown) {
   const value = archiveRecord(input, ["id", "localDay", "occurredAt", "kg"]);
   return readWeighIn({
     id: value.id,
