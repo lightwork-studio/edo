@@ -98,3 +98,43 @@ it("rejects invalid snapshots, conflicting identity and unsupported new fields",
     applyRecordContent({ ...args, release: "9.9", current: null, submitted: meal }),
   ).toThrow(InvalidSyncContent);
 });
+
+it("preserves a captured UTC offset and source ID from a legacy food snapshot", () => {
+  const legacy = {
+    ...meal,
+    items: [{ ...item, food: { ...food, id: { ...food.id, sourceId: "legacy\u0000id" } } }],
+  };
+  const current = { ...legacy, utcOffsetMinutes: -300 };
+  expect(applyRecordContent({ ...args, current: null, submitted: current })).toEqual(current);
+  expect(applyRecordContent({ ...args, current, submitted: legacy })).toEqual(current);
+  const moved = { ...legacy, occurredAt: legacy.occurredAt + 60_000 };
+  expect(applyRecordContent({ ...args, current, submitted: moved })).toEqual(moved);
+  expect(() =>
+    applyRecordContent({ ...args, current, submitted: { ...legacy, utcOffsetMinutes: 1440 } }),
+  ).toThrow(InvalidSyncContent);
+});
+
+it("enforces the diary's nutrition budget and keeps target revision IDs immutable", () => {
+  const record = {
+    id: "target-1",
+    effectiveDay: "2026-11-27",
+    configuredAt: meal.occurredAt,
+    mode: "manual",
+    target: { kcal: 1000, proteinG: 0, fatG: 0, availableCarbohydratesG: 250 },
+  };
+  const targetArgs = { ...args, key: { kind: "nutrition-target", id: record.id } };
+  expect(applyRecordContent({ ...targetArgs, current: null, submitted: record })).toEqual(record);
+  expect(applyRecordContent({ ...targetArgs, current: record, submitted: record })).toEqual(record);
+  for (const target of [
+    { ...record.target, availableCarbohydratesG: 900 },
+    { ...record.target, proteinG: 250 },
+  ]) {
+    expect(() =>
+      applyRecordContent({ ...targetArgs, current: null, submitted: { ...record, target } }),
+    ).toThrow(InvalidSyncContent);
+  }
+  const target = { ...record.target, kcal: 1200, availableCarbohydratesG: 300 };
+  expect(() =>
+    applyRecordContent({ ...targetArgs, current: record, submitted: { ...record, target } }),
+  ).toThrow(/requires a new revision ID/);
+});

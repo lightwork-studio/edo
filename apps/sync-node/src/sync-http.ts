@@ -107,39 +107,40 @@ export function syncHttp({ store, authorize, releases = [syncCandidate] }: SyncH
       if (!access?.sessionKey) {
         throw new SyncWireError("unauthorized", "Account sync authorization is required");
       }
+      const { accountBinding, sessionKey } = access;
       const body = await jsonBody(request);
       const verified = await authorize(request);
-      const history = verified && store.history(verified.accountBinding);
       if (
         !verified ||
-        !history ||
-        verified.sessionKey !== access.sessionKey ||
-        verified.accountBinding !== access.accountBinding
+        verified.sessionKey !== sessionKey ||
+        verified.accountBinding !== accountBinding
       ) {
         throw new SyncWireError("unauthorized", "Account sync authorization changed");
       }
+      const history = store.history(accountBinding);
+      if (!history) throw new SyncWireError("unauthorized", "Account sync authorization changed");
       if (path === "/sync/hello") {
         const hello = negotiateHello(body, history, releases);
         if (hello.status === "update-required") {
-          sessions.delete(access.sessionKey);
+          sessions.delete(sessionKey);
           send(response, 426, hello);
         } else {
-          remember(access.sessionKey, hello.session);
+          remember(sessionKey, hello.session);
           send(response, 200, hello.response);
         }
         return true;
       }
-      const session = sessions.get(access.sessionKey);
-      if (!session || session.accountBinding !== access.accountBinding) {
+      const session = sessions.get(sessionKey);
+      if (!session || session.accountBinding !== accountBinding) {
         throw new SyncWireError("update-required", "Connect again before syncing records");
       }
-      remember(access.sessionKey, session);
+      remember(sessionKey, session);
       send(
         response,
         200,
         path === "/sync/push"
-          ? store.push(access.accountBinding, session, body)
-          : store.pull(access.accountBinding, session, body),
+          ? store.push(accountBinding, session, body)
+          : store.pull(accountBinding, session, body),
       );
     } catch (error) {
       request.resume();

@@ -105,7 +105,7 @@ const mealItemOwnershipSchema = `
 export class InvalidSyncContent extends Error {}
 
 export interface SyncStoreOptions {
-  applyContent?: (input: {
+  applyContent: (input: {
     key: RecordKey;
     release: string;
     current: JsonObject | null;
@@ -328,6 +328,12 @@ function invalidContent(submissionId: string, message: string): SubmissionResult
   };
 }
 
+function fitsPullPage(change: Change): boolean {
+  return (
+    Buffer.byteLength(JSON.stringify(change)) + pullEnvelopeReserve + 1 <= maxSyncEnvelopeBytes
+  );
+}
+
 function decide(
   submission: Submission,
   current: Change | null,
@@ -356,21 +362,25 @@ function decide(
   const expected = baseRevision === currentRevision;
   if (submission.op === "delete") {
     if (current?.state === "deleted") return accepted(current.revision);
-    return expected ? { content: null } : conflict("stale");
+    if (!expected) return conflict("stale");
+    if (!fitsPullPage({ state: "deleted", kind, id, revision: Number.MAX_SAFE_INTEGER })) {
+      return invalidContent(submissionId, "The submitted record ID is too large to sync");
+    }
+    return { content: null };
   }
-  if (current?.state === "deleted") return conflict("deleted");
+  if (current?.state === "deleted" && (kind !== "favorite" || !expected)) {
+    return conflict("deleted");
+  }
 
   let content: JsonObject;
   try {
     const storedContent = current?.state === "live" ? current.content : null;
-    content = applyContent
-      ? applyContent({
-          key: { kind, id },
-          release,
-          current: storedContent,
-          submitted: submission.content,
-        })
-      : submission.content;
+    content = applyContent({
+      key: { kind, id },
+      release,
+      current: storedContent,
+      submitted: submission.content,
+    });
   } catch (error) {
     if (!(error instanceof InvalidSyncContent)) throw error;
     if (!expected) return conflict(baseRevision === null ? "exists" : "stale");
@@ -392,10 +402,7 @@ function decide(
     return accepted(current.revision);
   }
   if (!expected) return conflict(baseRevision === null ? "exists" : "stale");
-  if (
-    Buffer.byteLength(JSON.stringify(candidate)) + pullEnvelopeReserve + 1 >
-    maxSyncEnvelopeBytes
-  ) {
+  if (!fitsPullPage(candidate)) {
     return invalidContent(submissionId, "The submitted record is too large to sync");
   }
   return { content: candidate.content };
@@ -415,10 +422,9 @@ function preparePrivateFile(filename: string) {
 }
 
 /** The candidate keeps full terminal receipts indefinitely. Retention needs a deployment policy. */
-export function openSyncStore(
-  filename: string,
-  { applyContent }: SyncStoreOptions = {},
-): SyncStore {
+export function openSyncStore(filename: string, { applyContent }: SyncStoreOptions): SyncStore {
+  if (typeof applyContent !== "function")
+    throw new TypeError("Sync storage needs record validation");
   preparePrivateFile(filename);
   const db = new DatabaseSync(filename);
   try {
@@ -505,6 +511,13 @@ export function openSyncStore(
         const { release, lineage } = request;
         return transaction(db, "BEGIN IMMEDIATE", () => {
           const account = assertCurrentHistory(history(accountBinding), session);
+          if (
+            request.submissions.some(
+              ({ baseRevision }) => baseRevision !== null && baseRevision > account.revision,
+            )
+          ) {
+            throw new SyncWireError("cursor-reset", "The submission base is ahead of this account");
+          }
           let revision = account.revision;
           const results = request.submissions.map((submission): SubmissionResult => {
             const { kind, id, submissionId } = submission;

@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   type AuthenticatedHistory,
   decodePullResponse,
+  favoriteRecordId,
   type JsonObject,
   maxSyncEnvelopeBytes,
   type NegotiatedSync,
@@ -14,7 +15,13 @@ import {
   syncScope,
 } from "@edo/contract";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { InvalidSyncContent, openSyncStore, type SyncStore } from "../src/sync-store.ts";
+import { applyRecordContent } from "../src/record-projection.ts";
+import {
+  InvalidSyncContent,
+  openSyncStore as openValidatedSyncStore,
+  type SyncStore,
+  type SyncStoreOptions,
+} from "../src/sync-store.ts";
 
 let directory: string;
 let filename: string;
@@ -25,6 +32,14 @@ beforeEach(() => {
 });
 
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
+
+// These fixtures isolate SQLite and packet behavior from the application record projection.
+function openSyncStore(
+  path: string,
+  options: SyncStoreOptions = { applyContent: ({ submitted }) => submitted },
+): SyncStore {
+  return openValidatedSyncStore(path, options);
+}
 
 function sessionFor(history: AuthenticatedHistory | null): NegotiatedSync {
   if (!history) throw new Error("Missing synthetic account history");
@@ -219,6 +234,60 @@ test("persists deletions and prevents a stale client from bringing back a tombst
       ],
     });
   }
+});
+
+test("requires a record projector before creating sync storage", () => {
+  expect(() => openValidatedSyncStore(filename, {} as SyncStoreOptions)).toThrow(
+    /needs record validation/,
+  );
+});
+
+test("rejects impossible base revisions for missing records before processing a batch", () => {
+  using store = openSyncStore(filename);
+  const session = sessionFor(store.createAccount("alpha", "history-alpha"));
+  expectWireError(
+    () => push(store, session, put("first", "add", null, {}), put("missing", "future", 1, {})),
+    "cursor-reset",
+  );
+  expect(store.history("alpha")?.revision).toBe(0);
+  expect(pull(store, session).changes).toEqual([]);
+});
+
+test("rejects a tombstone whose record ID cannot fit a pull page", () => {
+  using store = openSyncStore(filename);
+  const session = sessionFor(store.createAccount("alpha", "history-alpha"));
+  const id = "x".repeat(maxSyncEnvelopeBytes);
+  expect(push(store, session, remove(id, "oversized", null)).results).toMatchObject([
+    { status: "rejected", code: "invalid-content" },
+  ]);
+  expect(store.history("alpha")?.revision).toBe(0);
+  expect(pull(store, session).changes).toEqual([]);
+});
+
+test("re-adds a favourite when the client has observed its tombstone", () => {
+  using store = openSyncStore(filename, { applyContent: applyRecordContent });
+  const session = sessionFor(store.createAccount("alpha", "history-alpha"));
+  const content = { provider: "local", sourceId: "food-1" };
+  const id = favoriteRecordId(content.provider, content.sourceId);
+  const save = (submissionId: string, base: number | null): Submission => ({
+    ...put(id, submissionId, base, content),
+    kind: "favorite",
+  });
+  expect(push(store, session, save("first", null)).results).toMatchObject([{ revision: 1 }]);
+  expect(
+    push(store, session, { ...remove(id, "remove", 1), kind: "favorite" }).results,
+  ).toMatchObject([{ revision: 2 }]);
+  for (const base of [null, 1]) {
+    expect(push(store, session, save(`stale-${base}`, base)).results).toMatchObject([
+      { status: "conflict", reason: "deleted" },
+    ]);
+  }
+  expect(push(store, session, save("re-add", 2)).results).toMatchObject([
+    { status: "accepted", revision: 3 },
+  ]);
+  expect(pull(store, session).changes).toMatchObject([
+    { state: "live", kind: "favorite", content },
+  ]);
 });
 
 test("scopes record history, revisions, and receipts to the authenticated account", () => {

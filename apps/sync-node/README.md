@@ -24,14 +24,17 @@ and leave the default loopback binding in place.
 ## Account sync candidate
 
 For local integration tests, pass a sync store and an authenticator to `createHealthServer`.
-Use `applyRecordContent` with `openSyncStore` to validate diary records and preserve fields
-that a newer release wrote. The development entry point serves health and the optional
+The store requires a record projector. Pass `applyRecordContent` to `openSyncStore` to
+validate diary records and preserve fields that a newer release wrote. The development
+entry point serves health and the optional
 catalog preview. Account sync becomes available when the caller supplies an authenticator.
 
 The server rechecks authorization after reading a request. After a restart, the device
 negotiates again and can retry the same submission ID against its receipt in SQLite. An
 accepted change advances the account revision. A pull returns the current records and
 tombstones, so superseded revisions can leave gaps.
+A favourite can be re-added under its existing provider and source ID after the client
+has pulled the current deletion revision. Stale changes leave the deletion in place.
 
 Requests can be up to 768 KiB and replies up to 1 MiB. A conflict can report a record ID
 and revision with its content marked unavailable if the reply would otherwise exceed

@@ -1,5 +1,10 @@
 import { type JsonObject, type JsonValue, type RecordKey, syncCandidate } from "@edo/contract";
-import { foodForRecipe, type Recipe } from "@edo/core";
+import {
+  type DailyNutritionTarget,
+  foodForRecipe,
+  manualNutritionTarget,
+  type Recipe,
+} from "@edo/core";
 import { InvalidSyncContent } from "./sync-store.ts";
 
 type Scalar = (value: JsonValue) => boolean;
@@ -17,6 +22,8 @@ const positive: Scalar = (value) =>
 const nonNegative: Scalar = (value) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 const nutrientValue: Scalar = (value) => value === null || nonNegative(value);
+const utcOffset: Scalar = (value) =>
+  typeof value === "number" && Number.isInteger(value) && Math.abs(value) < 24 * 60;
 const instant: Scalar = (value) =>
   typeof value === "number" &&
   Number.isSafeInteger(value) &&
@@ -53,7 +60,7 @@ const nutrients = of({
 });
 const provider = oneOf("bls", "open-food-facts", "usda", "local");
 const food: Shape = {
-  id: required(of({ provider: required(provider), sourceId: required(id) })),
+  id: required(of({ provider: required(provider), sourceId: required(text) })),
   name: required(text),
   release: required((value) => value === null || text(value)),
   preparation: required(oneOf("raw", "cooked", "as-sold", "prepared", "unknown")),
@@ -79,6 +86,7 @@ const recordShape: Readonly<Record<string, Shape>> = {
     id: required(id),
     localDay: required(day),
     occurredAt: required(instant),
+    utcOffsetMinutes: optional(utcOffset),
     items: required(items(capturedItem, 0)),
   },
   "custom-food": food,
@@ -229,6 +237,19 @@ function verifyIdentity(key: RecordKey, record: JsonObject) {
     return;
   }
   if (record.id !== key.id) return invalid("The content does not match its record ID");
+  if (key.kind === "nutrition-target") {
+    const target = record.target as unknown as DailyNutritionTarget;
+    try {
+      const expected = manualNutritionTarget(target);
+      if (target.availableCarbohydratesG !== expected.availableCarbohydratesG) {
+        return invalid("The carbohydrate target must fill the remaining energy budget");
+      }
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError)
+        return invalid("Invalid nutrition target energy budget");
+      throw error;
+    }
+  }
   if (key.kind === "recipe") {
     try {
       foodForRecipe(record as unknown as Recipe);
@@ -258,5 +279,18 @@ export function applyRecordContent({
   }
   const record = project(shape, current, submitted, key.kind);
   verifyIdentity(key, record);
+  if (key.kind === "nutrition-target" && current && !sameJson(current, record)) {
+    return invalid("Changing a nutrition target requires a new revision ID");
+  }
+  if (
+    key.kind === "meal" &&
+    record.utcOffsetMinutes === undefined &&
+    current?.utcOffsetMinutes !== undefined &&
+    utcOffset(current.utcOffsetMinutes) &&
+    record.localDay === current.localDay &&
+    record.occurredAt === current.occurredAt
+  ) {
+    return { ...record, utcOffsetMinutes: current.utcOffsetMinutes };
+  }
   return record;
 }

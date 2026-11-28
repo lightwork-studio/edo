@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acceptHello, decodePullResponse, decodePushResponse } from "@edo/contract";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { applyRecordContent } from "../src/record-projection.ts";
 import { createHealthServer } from "../src/server.ts";
 import type { SyncAccess } from "../src/sync-http.ts";
@@ -25,6 +25,7 @@ async function withEndpoint(
   sessions: Map<string, SyncAccess>,
   run: (send: (path: string, key: string, body: unknown) => Promise<Response>) => Promise<void>,
 ) {
+  let switchingCalls = 0;
   const server = createHealthServer({
     sync: {
       store,
@@ -32,6 +33,9 @@ async function withEndpoint(
         const id = request.headers["x-fixture-session"];
         const access = typeof id === "string" ? (sessions.get(id) ?? null) : null;
         if (id === "revoking-fixture") sessions.delete(id);
+        if (id === "switching-fixture" && access && switchingCalls++ > 0) {
+          Object.assign(access, { accountBinding: "fixture-b" });
+        }
         return access;
       },
     },
@@ -66,8 +70,13 @@ it("scopes HTTP sync to authenticated negotiated accounts and replays receipts a
       using store = openSyncStore(path, { applyContent: applyRecordContent });
       store.createAccount("fixture-a", scope.lineage);
       store.createAccount("fixture-b", scope.lineage);
+      const readHistory = vi.spyOn(store, "history");
       await withEndpoint(store, access, async (send) => {
         expect((await send("hello", "untrusted", hello)).status).toBe(401);
+        access.set("switching-fixture", { accountBinding: "fixture-a", sessionKey: "session-a" });
+        const historyReads = readHistory.mock.calls.length;
+        expect((await send("hello", "switching-fixture", hello)).status).toBe(401);
+        expect(readHistory).toHaveBeenCalledTimes(historyReads);
         expect((await send("push", "a", push)).status).toBe(426);
         expect((await send("hello", "a", { ...hello, releases: ["9.9"] })).status).toBe(426);
         const first = await send("hello", "a", hello);
