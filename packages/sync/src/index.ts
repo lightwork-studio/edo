@@ -7,3 +7,4 @@ export {
 } from "./journal.ts";
 export { installSyncJournal } from "./journal-schema-v7.ts";
 export * from "./outbox.ts";
+export { mealItemIds, type StagedMealClaims } from "./staged-meal-claims.ts";

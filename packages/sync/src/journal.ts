@@ -32,13 +32,20 @@ import {
   receiveOutboxOutcome,
   retryBlockedOutbox,
 } from "./outbox.ts";
+import {
+  observeMealChange,
+  releaseMealClaims,
+  rememberMealClaims,
+  type StagedMealClaims,
+  stagedMealClaims,
+} from "./staged-meal-claims.ts";
 import { decodeStoredOutbox } from "./stored-outbox.ts";
 
 type Value = string | number | null;
 type Row = Record<string, unknown>;
 
 /** Uses the diary's existing SQLite connection so both writes can share the transaction. */
-interface JournalSqlite {
+export interface JournalSqlite {
   exec(sql: string): void;
   run(sql: string, ...parameters: Value[]): void;
   all(sql: string, ...parameters: Value[]): Row[];
@@ -267,7 +274,9 @@ function reserveLocalEdit(db: JournalSqlite, key: RecordKey, submissionId: strin
   return localRecord(db, key);
 }
 
-type ProjectedEdit = { op: "put"; content: unknown } | { op: "delete" };
+type ProjectedEdit = ({ op: "put"; content: unknown } | { op: "delete" }) & {
+  readonly formerMealItems?: readonly string[] | null;
+};
 
 interface StalePutEvidence {
   readonly base: JsonObject;
@@ -368,6 +377,7 @@ export interface StagedMealChange {
 type ProjectMeals = (
   changes: readonly StagedMealChange[],
   history: (id: string) => MealProjectionHistory,
+  claims: readonly StagedMealClaims[],
 ) => readonly string[];
 
 const stagedMealSelection = `
@@ -411,6 +421,7 @@ function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
       [...staged.values()].map(({ change, record }) => ({ change, blocked: record === null })),
       (id) =>
         staged.get(id)?.history ?? { projection: null, accountBase: null, hadPriorBase: false },
+      stagedMealClaims(db),
     ),
   );
   for (const id of applied) {
@@ -422,6 +433,7 @@ function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
     if (record && applied.has(id)) {
       saveRecord(db, record);
       writeMealProjection(db, id, pulledMealProjection(change));
+      releaseMealClaims(db, id);
     } else deferred.push(id);
   }
   return { awaitingPages: false, deferred };
@@ -509,12 +521,20 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         if (edit?.op !== "put" && edit?.op !== "delete") {
           throw new TypeError("A diary write must synchronously return its projected edit");
         }
+        const { formerMealItems, ...operation } = edit;
         const validated = decodeSubmission({
-          ...edit,
+          ...operation,
           ...key,
           submissionId,
           baseRevision: record.baseRevision,
         });
+        if (key.kind === "meal" && formerMealItems !== undefined) {
+          const hadUnknownItems =
+            formerMealItems === null &&
+            record.base?.state !== "deleted" &&
+            (record.baseRevision === null || record.base?.state !== "live");
+          rememberMealClaims(db, key.id, formerMealItems ?? [], hadUnknownItems);
+        }
         saveRecord(db, queueOutboxEdit(record, validated), release);
       });
     },
@@ -618,6 +638,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           if (!record.attempt) throw new Error("This receipt has no pending outbox attempt");
           assertReceiptMatchesAttempt(response, record.attempt);
           const next = receiveOutboxOutcome(record, result);
+          if (result.status === "conflict") observeMealChange(db, result.current);
           const remote =
             applyRemote && result.status === "accepted" && !hasLocalWork(next)
               ? remoteRecord(db, record.key)
@@ -647,6 +668,9 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           if (result.status !== "retryable")
             db.run("INSERT INTO edo_sync_receipts VALUES (?)", result.submissionId);
           if (result.status === "accepted") revision = Math.max(revision, result.revision);
+          if (result.status === "accepted" && record.key.kind === "meal" && !hasLocalWork(next)) {
+            releaseMealClaims(db, record.key.id);
+          }
           if (result.status === "conflict" && result.current)
             revision = Math.max(revision, result.current.revision);
         }
@@ -752,10 +776,25 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           throw new Error("The pull cursor changed before the page was saved");
         }
         for (const change of page.changes) {
-          saveRemoteRecord(db, change);
-          if (change.kind !== "meal" || change.state === "unavailable") continue;
+          if (change.kind !== "meal") {
+            saveRemoteRecord(db, change);
+            continue;
+          }
           const { record, release } = localRecord(db, change);
-          if (hasLocalWork(record) && !record.base && change.revision === record.baseRevision) {
+          if (change.revision >= (record.baseRevision ?? 0)) {
+            const prior = remoteRecord(db, change);
+            if (prior && prior.revision >= (record.baseRevision ?? 0)) {
+              observeMealChange(db, prior);
+            }
+            observeMealChange(db, change);
+          }
+          saveRemoteRecord(db, change);
+          if (
+            change.state !== "unavailable" &&
+            hasLocalWork(record) &&
+            !record.base &&
+            change.revision === record.baseRevision
+          ) {
             saveRecord(db, { ...record, base: change }, release);
           }
         }

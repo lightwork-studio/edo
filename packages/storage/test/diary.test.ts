@@ -759,6 +759,138 @@ test.each(["pending delete", "pending put", "v5 revision only"] as const)(
   },
 );
 
+test.each(["staged pull", "conflict receipt"] as const)(
+  "retains ownership seen only in a %s after an unbased delete and superseding page",
+  async (observation) => {
+    using store = openSyncStore(join(directory, "remote-account.db"), {
+      applyContent: applyRecordContent,
+    });
+    store.createAccount("account", "fixture");
+    await using server = createHealthServer({
+      sync: {
+        store,
+        authorize(request) {
+          const token = request.headers.authorization;
+          return token ? { accountBinding: "account", sessionKey: token } : null;
+        },
+      },
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing sync test port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const client = (name: string) =>
+      createSyncClient({ origin, allowLoopbackHttp: true, authorization: () => `Bearer ${name}` });
+    const tablet = client("tablet");
+    const tabletSession = await tablet.connect();
+    const phone = client("phone");
+    const left = { ...meal, id: "source" };
+    const right = { ...left, id: "destination" };
+    const sourceKey = { kind: "meal", id: left.id };
+    expect(
+      (
+        await tablet.push(tabletSession, [
+          decodeSubmission({
+            ...sourceKey,
+            op: "put",
+            baseRevision: null,
+            content: left,
+            submissionId: "tablet-create",
+          }),
+        ])
+      ).results,
+    ).toMatchObject([{ status: "accepted", revision: 1 }]);
+
+    const source = createDatabase();
+    const original = await source.start();
+    const divergent = { ...left, items: [], occurredAt: left.occurredAt + 60_000 };
+    original.saveMeal(divergent);
+    let session = await phone.connect();
+    original.sync.journal.bind(session);
+    if (observation === "staged pull") {
+      const page = await phone.pull(session, 0);
+      expect(original.sync.applyMealPage(session, 0, page).deferred).toEqual([left.id]);
+    } else {
+      original.sync.saveMeal(divergent, "first-phone-attempt");
+      const attempt = original.sync.journal.prepare(session);
+      const reply = await phone.push(session, attempt);
+      expect(reply.results).toMatchObject([
+        { status: "conflict", current: { state: "live", revision: 1, content: left } },
+      ]);
+      original.sync.applyMealResults(session, reply);
+    }
+    expect(source.db.prepare("SELECT * FROM edo_sync_staged_meal_claims").all()).toEqual([
+      { id: left.id, item_ids: JSON.stringify(left.items.map(({ id }) => id)), unknown_prior: 0 },
+    ]);
+    expect(original.sync.journal.mealProjection(left.id)).toBeNull();
+    original.sync.deleteMeal(left.id, "local-delete");
+    expect(original.sync.journal.queued()).toMatchObject([
+      { key: sourceKey, baseRevision: null, pending: { op: "delete" } },
+    ]);
+    source.db.close();
+
+    const moved = await tablet.push(tabletSession, [
+      decodeSubmission({
+        ...sourceKey,
+        op: "delete",
+        baseRevision: 1,
+        submissionId: "tablet-delete",
+      }),
+      decodeSubmission({
+        kind: "meal",
+        id: right.id,
+        op: "put",
+        content: right,
+        baseRevision: null,
+        submissionId: "tablet-move",
+      }),
+    ]);
+    expect(moved.results).toMatchObject([
+      { status: "accepted", revision: 2 },
+      { status: "accepted", revision: 3 },
+    ]);
+    const reopening = createDatabase();
+    const diary = await reopening.start();
+    const history = diary.sync.journal.history();
+    if (!history) throw new Error("Expected the resumed phone connection");
+    session = await phone.connect(history);
+    diary.sync.journal.bind(session);
+    const page = await phone.pull(session, history.cursor);
+    reopening.db.exec(`
+      CREATE TRIGGER stop_claim_write BEFORE INSERT ON edo_sync_staged_meal_claims
+      WHEN NEW.id = 'destination' BEGIN SELECT RAISE(ABORT, 'simulated claim interruption'); END
+    `);
+    expect(() => diary.sync.applyMealPage(session, history.cursor, page)).toThrow(
+      /claim interruption/,
+    );
+    expect(diary.sync.journal.history()?.cursor).toBe(history.cursor);
+    expect(diary.sync.journal.serverCopy(sourceKey)?.revision).toBe(
+      observation === "staged pull" ? 1 : undefined,
+    );
+    reopening.db.exec("DROP TRIGGER stop_claim_write");
+    expect(diary.sync.applyMealPage(session, history.cursor, page).deferred).toEqual([
+      left.id,
+      right.id,
+    ]);
+    expect(diary.sync.journal.serverCopy(sourceKey)).toMatchObject({
+      state: "deleted",
+      revision: 2,
+    });
+    expect(diary.sync.replayMealProjections(session).deferred).toEqual([left.id, right.id]);
+    expect(diary.getMeal(left.id)).toBeNull();
+    expect(diary.getMeal(right.id)).toBeNull();
+    expect(diary.sync.journal.queued()).toMatchObject([
+      { key: sourceKey, baseRevision: null, pending: { op: "delete" } },
+    ]);
+    expect(
+      reopening.db
+        .prepare("SELECT item_ids FROM edo_sync_staged_meal_claims WHERE id = ?")
+        .get(left.id),
+    ).toEqual({ item_ids: JSON.stringify(left.items.map(({ id }) => id)) });
+  },
+);
+
 test("leaves first local writes unbased when authenticated account copies are only staged", async () => {
   const diary = await createDatabase().start();
   diary.saveMeal({ ...meal, occurredAt: meal.occurredAt + 60_000 });

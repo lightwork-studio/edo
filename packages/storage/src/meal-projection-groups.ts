@@ -1,4 +1,5 @@
 import type { DiaryMeal } from "@edo/core";
+import type { StagedMealClaims } from "@edo/sync";
 
 export interface MealProjectionCandidate {
   readonly id: string;
@@ -49,6 +50,7 @@ function canProject(candidate: MealProjectionCandidate): boolean {
 export function groupMealProjections(
   candidates: readonly MealProjectionCandidate[],
   owners: ReadonlyMap<string, string>,
+  retainedClaims: readonly StagedMealClaims[] = [],
 ) {
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   if (byId.size !== candidates.length) throw new Error("Duplicate meal projection candidates");
@@ -61,14 +63,19 @@ export function groupMealProjections(
   const unknownClaims = candidates.some(
     ({ incoming, opaqueClaims }) => incoming === undefined && opaqueClaims === undefined,
   );
-  const unknownHistory = candidates.some(hasUnknownPrior);
-  for (const { id, prior, priorClaims } of candidates) {
-    for (const itemId of priorClaims ?? prior?.items.map((item) => item.id) ?? []) {
+  const unknownHistory =
+    candidates.some(hasUnknownPrior) || retainedClaims.some(({ unknownPrior }) => unknownPrior);
+  function rememberOwners(id: string, itemIds: readonly string[]) {
+    for (const itemId of itemIds) {
       const itemOwners = priorOwners.get(itemId) ?? new Set<string>();
       itemOwners.add(id);
       priorOwners.set(itemId, itemOwners);
     }
   }
+  for (const { id, prior, priorClaims } of candidates) {
+    rememberOwners(id, priorClaims ?? prior?.items.map((item) => item.id) ?? []);
+  }
+  for (const { id, itemIds } of retainedClaims) rememberOwners(id, itemIds);
 
   function link(first: string, second: string) {
     neighbors.get(first)?.add(second);

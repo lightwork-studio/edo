@@ -1,6 +1,12 @@
 import type { NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
-import { type MealProjectionHistory, openSyncJournal, type StagedMealChange } from "@edo/sync";
+import {
+  type MealProjectionHistory,
+  mealItemIds,
+  openSyncJournal,
+  type StagedMealChange,
+  type StagedMealClaims,
+} from "@edo/sync";
 import { readMealEntries } from "./diary-archive.ts";
 import {
   type DiaryProgressStore,
@@ -173,35 +179,11 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
   return meal?.id === id ? meal : null;
 }
 
-function mealItemIds(content: unknown, id: string): string[] | undefined {
-  if (
-    !content ||
-    typeof content !== "object" ||
-    !("id" in content) ||
-    content.id !== id ||
-    !("items" in content) ||
-    !Array.isArray(content.items)
-  ) {
-    return undefined;
-  }
-  const ids = new Set<string>();
-  for (const item of content.items) {
-    if (!item || typeof item !== "object" || !("id" in item)) return undefined;
-    try {
-      const itemId = diaryId(item.id, "meal item ID");
-      if (ids.has(itemId)) return undefined;
-      ids.add(itemId);
-    } catch {
-      return undefined;
-    }
-  }
-  return [...ids];
-}
-
 function projectMeals(
   db: DiarySqliteConnection,
   changes: readonly StagedMealChange[],
   history: (id: string) => MealProjectionHistory,
+  claims: readonly StagedMealClaims[],
 ): string[] {
   const candidates: MealProjectionCandidate[] = [];
   const owners = new Map<string, string>();
@@ -252,7 +234,7 @@ function projectMeals(
     }
   }
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-  const { groups } = groupMealProjections(candidates, owners);
+  const { groups } = groupMealProjections(candidates, owners, claims);
   for (const group of groups) {
     const replacements = group.flatMap((id) => {
       const candidate = byId.get(id);
@@ -340,7 +322,8 @@ export async function openDiary({
   const applyMeals = (
     changes: readonly StagedMealChange[],
     history: (id: string) => MealProjectionHistory,
-  ) => projectMeals(db, changes, history);
+    claims: readonly StagedMealClaims[],
+  ) => projectMeals(db, changes, history, claims);
   return {
     ...diaryProgress(db),
     ...myFoods(db),
@@ -357,17 +340,23 @@ export async function openDiary({
       saveMeal: (meal, submissionId) => {
         const prepared = prepareMeal(meal);
         journal.commitLocalProjection({ kind: "meal", id: prepared.id }, submissionId, () => {
+          const previous = readMeal(db, prepared.id);
           writeMeal(db, prepared, true);
           const persisted = readMeal(db, prepared.id);
           if (!persisted) throw new Error("Could not read the saved meal for sync");
-          return { op: "put", content: persisted };
+          const retained = new Set(persisted.items.map(({ id }) => id));
+          const formerMealItems = previous?.items
+            .map(({ id }) => id)
+            .filter((id) => !retained.has(id));
+          return { op: "put", content: persisted, formerMealItems };
         });
       },
       deleteMeal: (id, submissionId) => {
         const mealId = diaryId(id, "meal ID");
         journal.commitLocalProjection({ kind: "meal", id: mealId }, submissionId, () => {
+          const previous = readMeal(db, mealId);
           db.run("DELETE FROM diary_meals WHERE id = ?", mealId);
-          return { op: "delete" };
+          return { op: "delete", formerMealItems: previous?.items.map(({ id }) => id) ?? null };
         });
       },
       tryRebaseMeal: (session, id, submissionId) => {
