@@ -232,6 +232,90 @@ function candidateSession(
   }).connect();
 }
 
+test("keeps authenticated meal projection history separate from the released server copy", async () => {
+  using local = diary(":memory:");
+  const key = { kind: "meal", id: "meal-projection" };
+  const content = {
+    id: key.id,
+    localDay: "2026-11-27",
+    occurredAt: Date.parse("2026-11-28T02:30:00Z"),
+    items: [],
+  };
+  const server = { ...content, utcOffsetMinutes: -240 };
+  const scope = { accountBinding: "account", lineage: "fixture", release: "0.1" };
+  let accepted = { status: "accepted", submissionId: "meal-put", revision: 1 };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (url) => {
+      if (String(url).endsWith("/hello")) {
+        return Response.json({
+          ...scope,
+          features: ["write-records"],
+          revision: 0,
+          restoredFrom: null,
+        });
+      }
+      if (String(url).endsWith("/push")) return Response.json({ ...scope, results: [accepted] });
+      return Response.json({
+        ...scope,
+        cursor: 1,
+        hasMore: false,
+        changes: [{ ...key, state: "live", revision: 1, content: server }],
+      });
+    },
+  });
+  const session = await client.connect();
+  const journal = local.journal;
+  journal.bind(session);
+  journal.commitLocal(key, { op: "put", submissionId: "meal-put", content }, () => undefined);
+  const attempt = journal.prepare(session);
+  const receipt = await client.push(session, attempt);
+  local.sqlite.exec(`CREATE TRIGGER stop_evidence BEFORE INSERT ON edo_sync_meal_projections
+    BEGIN SELECT RAISE(ABORT, 'projection unavailable'); END`);
+  expect(() => journal.applyResults(session, receipt, () => undefined)).toThrow(
+    /projection unavailable/,
+  );
+  expect(journal.mealProjection(key.id)).toBeNull();
+  expect(journal.prepare(session)).toEqual(attempt);
+  local.sqlite.exec("DROP TRIGGER stop_evidence");
+
+  journal.applyResults(session, receipt, () => undefined);
+  journal.applyResults(session, receipt, () => undefined);
+  expect(journal.mealProjection(key.id)).toEqual({ revision: 1, origin: "accepted", content });
+  expect(journal.serverCopy(key)).toBeNull();
+  expect(journal.history()).toMatchObject({ cursor: 0, revision: 1 });
+
+  const page = await client.pull(session, 0);
+  journal.applyPage(session, 0, page, (change) => {
+    if (change.state === "live") (change.content as Record<string, JsonValue>).utcOffsetMinutes = 0;
+  });
+  expect(journal.mealProjection(key.id)).toEqual({
+    revision: 1,
+    origin: "pulled",
+    content: server,
+  });
+  expect(local.sqlite.prepare("SELECT content FROM edo_sync_meal_projections").get()).toEqual({
+    content: null,
+  });
+  expect(journal.serverCopy(key)).toMatchObject({ content: server });
+
+  journal.commitLocal(key, { op: "delete", submissionId: "meal-delete" }, () => undefined);
+  expect(journal.mealProjection(key.id)).toBeNull();
+  accepted = { status: "accepted", revision: 2, submissionId: "meal-delete" };
+  journal.applyResults(
+    session,
+    await client.push(session, journal.prepare(session)),
+    () => undefined,
+  );
+  expect(journal.mealProjection(key.id)).toEqual({
+    revision: 2,
+    origin: "accepted",
+    content: null,
+  });
+  expect(journal.serverCopy(key)).toMatchObject({ revision: 1, content: server });
+});
+
 test("an unnegotiated session cannot bind a private diary", async () => {
   using local = diary(":memory:");
   const session = await candidateSession();
