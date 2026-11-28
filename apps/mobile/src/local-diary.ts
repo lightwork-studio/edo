@@ -71,7 +71,7 @@ async function openLocalDiaryConnection() {
       const key = { kind: "weigh-in", id: "native-weigh-in-review" };
       const phone = {
         id: key.id,
-        kg: 80.002,
+        kg: 80.0021,
         localDay: "2026-11-10",
         occurredAt: Date.UTC(2026, 10, 11, 0, 30, 0, 3),
         phoneDetail: "Private phone sentinel",
@@ -82,8 +82,9 @@ async function openLocalDiaryConnection() {
         state: "live",
         content: {
           ...phone,
-          kg: 81.003,
+          kg: 81.0032,
           localDay: "2026-11-11",
+          occurredAt: phone.occurredAt + 1,
           future: "Private account sentinel",
         },
       };
