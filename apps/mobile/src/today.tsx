@@ -5,19 +5,18 @@ import {
   roundNutritionForDisplay,
 } from "@edo/core";
 import type { DiaryMeal } from "@edo/storage";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { DiaryDatePicker } from "./diary-date-picker";
 import { calendarDate, nutritionTargetProgress, showTime, totalNutrition } from "./diary-view";
 import type { Strings } from "./strings";
 import {
   colors,
   displayAmount,
   displayNumber,
-  IconButton,
   macros,
   Notice,
   nutrientValue,
-  PrimaryButton,
   showDay,
   styles,
   TargetRing,
@@ -28,6 +27,8 @@ export type WeekDay = {
   kcal: number | null;
   target: DailyNutritionTarget | null;
 };
+
+const weekdayColumns = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
 export function TodayScreen({
   t,
@@ -41,9 +42,6 @@ export function TodayScreen({
   feedback,
   syncNotice,
   onDay,
-  onWeek,
-  onAdd,
-  onProgress,
   onEdit,
   onSaveMeal,
   onRetry,
@@ -53,44 +51,52 @@ export function TodayScreen({
   today: string;
   lastDay: string;
   day: string;
-  week: WeekDay[];
+  week: (WeekDay | null)[];
   meals: DiaryMeal[] | null;
   target: DailyNutritionTarget | null;
   feedback: string | null;
   syncNotice: ReactNode;
   onDay: (day: string) => void;
-  onWeek: (offset: number) => void;
-  onAdd?: () => void;
-  onProgress: () => void;
   onEdit: (mealId: string, itemId: string) => void;
   onSaveMeal: (meal: DiaryMeal) => void;
   onRetry: () => void;
 }) {
+  const [showPicker, setShowPicker] = useState(false);
   const nutrition = meals && totalNutrition(meals);
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "narrow", timeZone: "UTC" });
-  const includesLastDay = week.some((entry) => entry.day === lastDay);
   const { width } = useWindowDimensions();
   const weekMinWidth = week.length * 44;
   const weekPadding = Math.min(12, Math.max(0, (width - weekMinWidth) / 2));
   return (
     <>
-      <View style={styles.header}>
-        <IconButton label={t.previousWeek} glyph="‹" onPress={() => onWeek(-7)} />
-        <Text accessibilityRole="header" style={[styles.title, styles.stretch, local.date]}>
-          {showDay(day, locale, today)}
-        </Text>
-        {day !== today && (
-          <Pressable accessibilityRole="button" onPress={() => onDay(today)} style={styles.action}>
-            <Text style={styles.actionText}>{t.today}</Text>
-          </Pressable>
-        )}
-        <IconButton
-          label={t.nextWeek}
-          glyph="›"
-          onPress={() => onWeek(7)}
-          disabled={includesLastDay}
-        />
+      <View style={[styles.header, local.dateHeader]}>
+        <Pressable
+          accessibilityLabel={`${showDay(day, locale, today)}. ${t.chooseDiaryDay}`}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showPicker }}
+          onPress={() => setShowPicker(true)}
+          style={local.date}
+        >
+          <Text style={[styles.title, local.dateText]} numberOfLines={1}>
+            {showDay(day, locale, today)}
+          </Text>
+          <View style={local.dateChevron} />
+        </Pressable>
       </View>
+      {showPicker && (
+        <DiaryDatePicker
+          t={t}
+          locale={locale}
+          day={day}
+          today={today}
+          lastDay={lastDay}
+          onClose={() => setShowPicker(false)}
+          onChoose={(date) => {
+            setShowPicker(false);
+            onDay(date);
+          }}
+        />
+      )}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -100,7 +106,12 @@ export function TodayScreen({
           { width: Math.max(width, weekMinWidth), paddingHorizontal: weekPadding },
         ]}
       >
-        {week.map((entry) => {
+        {weekdayColumns.map((column, index) => {
+          const entry = week[index];
+          if (!entry) {
+            // The first and last supported diary weeks can contain blank outer columns.
+            return <View key={column} style={local.day} />;
+          }
           const selected = entry.day === day;
           const isToday = entry.day === today;
           const unavailable = entry.day > lastDay;
@@ -186,14 +197,6 @@ export function TodayScreen({
           </>
         )}
       </ScrollView>
-      <View style={[styles.footer, styles.row]}>
-        <View style={styles.stretch}>
-          {onAdd && <PrimaryButton title={`+  ${t.addFood}`} onPress={onAdd} />}
-        </View>
-        <Pressable accessibilityRole="button" style={styles.action} onPress={onProgress}>
-          <Text style={styles.actionText}>{t.progress}</Text>
-        </Pressable>
-      </View>
     </>
   );
 }
@@ -364,7 +367,17 @@ function MealCard({
 }
 
 const local = StyleSheet.create({
-  date: { textAlign: "center" },
+  dateHeader: { paddingLeft: 20, paddingRight: 12 },
+  date: { minHeight: 44, flexShrink: 1, flexDirection: "row", alignItems: "center", gap: 8 },
+  dateText: { flexShrink: 1 },
+  dateChevron: {
+    width: 7,
+    height: 7,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderColor: colors.muted,
+    transform: [{ translateY: -2 }, { rotate: "45deg" }],
+  },
   weekScroller: { flexGrow: 0, flexShrink: 0 },
   week: { flexDirection: "row", paddingTop: 8, paddingBottom: 4 },
   day: {
