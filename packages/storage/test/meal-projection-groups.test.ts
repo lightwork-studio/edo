@@ -127,3 +127,34 @@ test("keeps ownership changes with opaque claims and permits an unrelated metada
   ).toEqual(expected);
   expect(groupMealProjections([source, independent, opaque], owners)).toEqual(expected);
 });
+
+test("retained observations can defer a move even without a new copy of its former owner", () => {
+  const destination = {
+    id: "new",
+    current: null,
+    prior: undefined,
+    incoming: meal("new", [first]),
+  };
+  const unrelated = {
+    id: mealB.id,
+    current: mealB,
+    prior: mealB,
+    incoming: { ...mealB, occurredAt: mealB.occurredAt + 60_000 },
+  };
+  const candidates = [destination, unrelated];
+  const expected = { groups: [[mealB.id]], deferred: [destination.id] };
+  expect(
+    groupMealProjections(candidates, new Map(), [
+      { id: mealA.id, itemIds: [first.id], unknownPrior: false },
+    ]),
+  ).toEqual(expected);
+  expect(
+    groupMealProjections(candidates, new Map(), [
+      { id: mealA.id, itemIds: [], unknownPrior: true },
+    ]),
+  ).toEqual(expected);
+  expect(groupMealProjections(candidates, new Map())).toEqual({
+    groups: [[destination.id], [mealB.id]],
+    deferred: [],
+  });
+});
