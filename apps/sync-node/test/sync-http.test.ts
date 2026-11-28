@@ -207,9 +207,8 @@ it("preserves newer record fields through a previous client and falls back on an
         { status: "accepted", submissionId: record.submissionId, revision: 1 },
       ]);
 
-      const previousHello = { ...hello, features: next.features };
-      const previousReply = await send("hello", "old", previousHello);
-      const previousPeer = acceptHello(previousHello, await previousReply.json());
+      const previousReply = await send("hello", "old", hello);
+      const previousPeer = acceptHello(hello, await previousReply.json());
       expect(previousPeer).toMatchObject({
         release: syncCandidate.release,
         features: syncCandidate.features,
@@ -265,6 +264,13 @@ it("preserves newer record fields through a previous client and falls back on an
       features: syncCandidate.features,
       revision: 2,
     });
+    const fallbackPull = { ...scope, cursor: 1 };
+    const fallbackPage = await send("pull", "new", fallbackPull);
+    expect(fallbackPage.status).toBe(200);
+    expect(decodePullResponse(await fallbackPage.json(), fallbackPull, fallback)).toMatchObject({
+      cursor: 2,
+      changes: [{ revision: 2, content: { kg: 74.5, fixtureMetadata: opaque } }],
+    });
     const incompatible = await send("hello", "new", { ...nextHello, releases: [next.release] });
     expect(incompatible.status).toBe(426);
     expect(await incompatible.json()).toEqual({
@@ -272,6 +278,18 @@ it("preserves newer record fields through a previous client and falls back on an
       supportedReleases: [syncCandidate.release],
     });
     expect((await send("pull", "new", { ...scope, cursor: 0 })).status).toBe(426);
+    const refused = await send("push", "new", {
+      ...scope,
+      submissions: [
+        {
+          ...record,
+          submissionId: "new-edit-after-incompatible-hello",
+          baseRevision: 2,
+          content: { ...record.content, kg: 76 },
+        },
+      ],
+    });
+    expect(refused.status).toBe(426);
     expect(store.history(scope.accountBinding)?.revision).toBe(2);
   });
 });
