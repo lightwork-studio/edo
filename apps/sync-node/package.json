@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "backup": "node src/backup.ts",
     "start": "node src/index.ts",
     "typecheck": "tsc -p ."
   },

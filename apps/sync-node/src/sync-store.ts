@@ -135,10 +135,16 @@ function transaction<T>(db: DatabaseSync, begin: "BEGIN" | "BEGIN IMMEDIATE", fn
   }
 }
 
+function databaseFormat(db: DatabaseSync) {
+  return {
+    version: db.prepare("PRAGMA user_version").get()?.user_version,
+    id: db.prepare("PRAGMA application_id").get()?.application_id,
+  };
+}
+
 function initialize(db: DatabaseSync) {
   transaction(db, "BEGIN IMMEDIATE", () => {
-    const version = db.prepare("PRAGMA user_version").get()?.user_version;
-    const id = db.prepare("PRAGMA application_id").get()?.application_id;
+    const { id, version } = databaseFormat(db);
     if (id === applicationId && version === schemaVersion) return;
     if (id === applicationId && version === 1) {
       db.exec(mealItemOwnershipSchema);
@@ -157,6 +163,80 @@ function initialize(db: DatabaseSync) {
 function historyFrom(value: unknown): AuthenticatedHistory {
   const { accountBinding, lineage, revision, restoredFrom } = decodeHelloResponse(value);
   return { accountBinding, lineage, revision, restoredFrom };
+}
+
+function storedHistory(row: SqlRow): AuthenticatedHistory {
+  return historyFrom({
+    release: syncCandidate.release,
+    features: [],
+    accountBinding: row.account_binding,
+    lineage: row.lineage,
+    revision: row.revision,
+    restoredFrom:
+      row.restored_lineage === null
+        ? null
+        : { lineage: row.restored_lineage, revision: row.restored_revision },
+  });
+}
+
+export function syncDatabaseVersion(db: DatabaseSync): 1 | typeof schemaVersion {
+  const { id, version } = databaseFormat(db);
+  if (id !== applicationId || (version !== 1 && version !== schemaVersion)) {
+    throw new Error("Unsupported sync database");
+  }
+  return version;
+}
+
+export function inspectSyncSnapshot(db: DatabaseSync) {
+  return transaction(db, "BEGIN", () => {
+    const version = syncDatabaseVersion(db);
+    const integrity = db.prepare("PRAGMA integrity_check(1)").get();
+    if (integrity?.integrity_check !== "ok" || db.prepare("PRAGMA foreign_key_check").get()) {
+      throw new Error("Sync database snapshot failed its integrity check");
+    }
+    using expected = new DatabaseSync(":memory:");
+    expected.exec(schema);
+    if (version === schemaVersion) expected.exec(mealItemOwnershipSchema);
+    const schemaSql = `
+      SELECT type, name, sql FROM sqlite_schema
+      WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name
+    `;
+    const definition = (database: DatabaseSync) =>
+      database
+        .prepare(schemaSql)
+        .all()
+        .map(({ type, name, sql }) => [
+          type,
+          name,
+          typeof sql === "string" ? sql.replace(/\s+/g, " ").trim() : sql,
+        ]);
+    if (JSON.stringify(definition(db)) !== JSON.stringify(definition(expected))) {
+      throw new Error("Sync database snapshot schema does not match its version");
+    }
+    if (
+      db
+        .prepare(`
+        SELECT 1 FROM sync_accounts AS account
+        WHERE EXISTS (
+          SELECT 1 FROM sync_records AS record
+          WHERE record.account_binding = account.account_binding
+            AND record.revision > account.revision
+        )
+        LIMIT 1
+      `)
+        .get()
+    ) {
+      throw new Error("Sync database snapshot contains records ahead of account history");
+    }
+    const accounts = db
+      .prepare(
+        `SELECT account_binding, lineage, revision, restored_lineage, restored_revision
+         FROM sync_accounts ORDER BY account_binding`,
+      )
+      .all()
+      .map(storedHistory);
+    return { schemaVersion: version, accounts };
+  });
 }
 
 function assertAccountBinding(accountBinding: string, session: NegotiatedSync) {
@@ -475,18 +555,7 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
 
     function history(accountBinding: string): AuthenticatedHistory | null {
       const row = readHistory.get(accountBinding);
-      if (!row) return null;
-      return historyFrom({
-        release: syncCandidate.release,
-        features: [],
-        accountBinding: row.account_binding,
-        lineage: row.lineage,
-        revision: row.revision,
-        restoredFrom:
-          row.restored_lineage === null
-            ? null
-            : { lineage: row.restored_lineage, revision: row.restored_revision },
-      });
+      return row ? storedHistory(row) : null;
     }
 
     return {
