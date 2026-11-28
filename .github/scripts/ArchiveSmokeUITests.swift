@@ -60,9 +60,10 @@ final class ArchiveSmokeUITests: XCTestCase {
 
     private func chooseArchive(_ name: String) throws {
         try tap("Choose archive", in: [app])
-        let fileNames = [name, name + ".json"]
+        // Files exposes the tappable item as a cell whose identifier includes the type.
+        let fileNames = [name + ".json, json", name + ", json"]
         if let archive = element(fileNames, in: [app], timeout: 3, hittable: false, picker: true) {
-            tapPickerElement(archive)
+            tapPickerElement(archive, at: 0.28)
             return
         }
         if element(["On My iPhone"], in: [app], timeout: 2, hittable: false, picker: true) == nil {
@@ -73,20 +74,20 @@ final class ArchiveSmokeUITests: XCTestCase {
             try tapPicker("On My iPhone")
         }
         if let archive = element(fileNames, in: [app], timeout: 3, hittable: false, picker: true) {
-            tapPickerElement(archive)
+            tapPickerElement(archive, at: 0.28)
             return
         }
         try tapPicker("Archive Fixtures")
-        tapPickerElement(try locate(fileNames, in: [app], hittable: false, picker: true))
+        tapPickerElement(try locate(fileNames, in: [app], hittable: false, picker: true), at: 0.28)
     }
 
     private func tapPicker(_ label: String) throws {
         tapPickerElement(try locate([label], in: [app], hittable: false, picker: true))
     }
 
-    private func tapPickerElement(_ element: XCUIElement) {
-        // A coordinate anchored to the remote control can tap its rendered center.
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    private func tapPickerElement(_ element: XCUIElement, at verticalOffset: CGFloat = 0.5) {
+        // A coordinate anchored to the remote control can tap its visible content.
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: verticalOffset)).tap()
     }
 
     private func tap(_ label: String, in applications: [XCUIApplication]) throws {
