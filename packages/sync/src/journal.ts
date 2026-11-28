@@ -235,10 +235,14 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     return requireCurrentStorage ? transact(operation, "BEGIN") : operation();
   }
 
-  function checkSession(session: NegotiatedSync) {
+  function requireActiveSession(session: NegotiatedSync) {
     if (activeSession !== session)
       throw new SyncWireError("update-required", "Bind the active connection before syncing");
     serverForSession(session);
+  }
+
+  function checkSession(session: NegotiatedSync) {
+    requireActiveSession(session);
     return verifyScope(savedBinding(db), session);
   }
 
@@ -370,10 +374,10 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       response: PushResponse,
       applyRemote: (change: Change) => undefined,
     ) {
+      requireActiveSession(session);
+      const { results } = authenticatedResponseSnapshot(response, session);
       return transact(() => {
         const binding = checkSession(session);
-        const { results } = authenticatedResponseSnapshot(response, session);
-        serverForSession(session);
         let revision = binding.revision;
         for (const result of results) {
           const row = db.get(
@@ -420,8 +424,8 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           if (result.status === "conflict" && result.current)
             revision = Math.max(revision, result.current.revision);
         }
-        serverForSession(session);
         db.run("UPDATE edo_sync_binding SET observed_revision = ?", revision);
+        requireActiveSession(session);
       });
     },
     applyPage(
@@ -430,6 +434,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       input: PullResponse,
       applyRemote: (change: Change) => undefined,
     ) {
+      requireActiveSession(session);
       const page = authenticatedResponseSnapshot(input, session, requestCursor);
       return transact(() => {
         const binding = checkSession(session);
@@ -458,12 +463,12 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           requireSynchronousWrite(applyRemote(change));
           saveRecord(db, projected);
         }
-        serverForSession(session);
         db.run(
           "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
           page.cursor,
           page.cursor,
         );
+        requireActiveSession(session);
       });
     },
     retryReviewed(

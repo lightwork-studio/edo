@@ -324,7 +324,7 @@ test("the journal refuses a response whose enumerable payload has changed", asyn
   expect(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
 });
 
-test("the journal rolls back if response or projection code replaces its connection", async () => {
+test("the journal runs response code outside writes and rolls back when the connection changes", async () => {
   using local = diary(":memory:");
   const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
   const client = createSyncClient({
@@ -353,7 +353,21 @@ test("the journal rolls back if response or projection code replaces its connect
   const session = await client.connect();
   local.journal.bind(session);
   local.journal.commitLocal(key, edit("local", 75), () => local.set(75));
-  const receipt = await client.push(session, local.journal.prepare(session));
+  const attempt = local.journal.prepare(session);
+  const transactionProbe = await client.push(session, attempt);
+  Object.defineProperty(transactionProbe, "toJSON", {
+    value: () => {
+      local.sqlite.exec("COMMIT");
+      return { ...transactionProbe };
+    },
+  });
+  expect(() => local.journal.applyResults(session, transactionProbe, local.receive)).toThrow(
+    "no transaction is active",
+  );
+  expect(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+  expect(local.journal.prepare(session)).toEqual(attempt);
+
+  const receipt = await client.push(session, attempt);
   let reconnected: ReturnType<typeof client.connect> | undefined;
   Object.defineProperty(receipt, "toJSON", {
     value: () => {
@@ -382,6 +396,26 @@ test("the journal rolls back if response or projection code replaces its connect
         reconnected = client.connect();
       }),
     ).toThrow(expect.objectContaining({ code: "update-required" }));
+  } finally {
+    await reconnected;
+  }
+  expect(peer.get()).toBeNull();
+  expect(peer.journal.serverCopy(key)).toBeNull();
+  expect(peer.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+
+  const nextSession = await client.connect();
+  peer.journal.bind(nextSession);
+  const nextPage = await client.pull(nextSession, 0);
+  peer.sqlite.function("reconnect_fixture", () => {
+    reconnected = client.connect();
+    return null;
+  });
+  peer.sqlite.exec(`CREATE TRIGGER reconnect_on_cursor AFTER UPDATE OF cursor ON edo_sync_binding
+    BEGIN SELECT reconnect_fixture(); END`);
+  try {
+    expect(() => peer.journal.applyPage(nextSession, 0, nextPage, peer.receive)).toThrow(
+      expect.objectContaining({ code: "update-required" }),
+    );
   } finally {
     await reconnected;
   }
