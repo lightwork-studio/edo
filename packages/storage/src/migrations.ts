@@ -1,3 +1,4 @@
+import { installSyncJournal } from "@edo/sync";
 import { type DiarySqliteConnection, rollback } from "./sqlite.ts";
 
 type Migration = (db: DiarySqliteConnection) => void;
@@ -79,6 +80,7 @@ export const diaryMigrations: readonly Migration[] = [
       ) WITHOUT ROWID, STRICT;
     `);
   },
+  installSyncJournal,
 ];
 
 function storageVersion(db: DiarySqliteConnection): number {
@@ -174,6 +176,15 @@ async function verifyBackup(
             "SELECT * FROM diary_recipes ORDER BY id",
             "SELECT * FROM diary_meal_templates ORDER BY id",
             "SELECT * FROM diary_favorites ORDER BY provider, source_id",
+          ]
+        : []),
+      ...(installed >= 5
+        ? [
+            "SELECT * FROM edo_sync_binding ORDER BY singleton",
+            "SELECT * FROM edo_sync_outbox ORDER BY kind, id",
+            "SELECT * FROM edo_sync_receipts ORDER BY submission_id",
+            "SELECT * FROM edo_sync_remote ORDER BY kind, id",
+            "SELECT * FROM edo_sync_submission_ids ORDER BY submission_id",
           ]
         : []),
     ]) {

@@ -46,6 +46,7 @@ interface JournalSqlite {
   get(sql: string, ...parameters: Value[]): Row | undefined;
 }
 
+/** Install the fixed schema used by diary storage version 5. Evolve it in later migrations. */
 export function installSyncJournal(db: JournalSqlite): void {
   db.exec(`
     CREATE TABLE edo_sync_binding (

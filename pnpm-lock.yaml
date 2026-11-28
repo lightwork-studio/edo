@@ -123,6 +123,9 @@ importers:
       '@edo/core':
         specifier: workspace:*
         version: link:../core
+      '@edo/sync':
+        specifier: workspace:*
+        version: link:../sync
 
   packages/sync:
     dependencies:
