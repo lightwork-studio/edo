@@ -71,23 +71,28 @@ async function openLocalDiaryConnection() {
       db.withTransactionSync(() => {
         connection.exec(`INSERT INTO edo_sync_binding
           VALUES (1, 'https://example.test', 'fixture-account', 'fixture-lineage', 2, 1)`);
-        for (const kind of ["meal", "weigh-in"]) {
-          const key = { kind, id: `native-${kind}` };
-          const submissionId = `original-${kind}`;
+        const keys = [
+          { kind: "meal", id: "native-meal" },
+          { kind: "meal", id: "native-meal-damaged" },
+          { kind: "weigh-in", id: "native-weigh-in" },
+        ];
+        for (const key of keys) {
+          const submissionId = `original-${key.id}`;
           const content = { name: "Private fixture content" };
           const record = {
             key,
             baseRevision: null,
             base: null,
-            pending: kind === "meal" ? { op: "delete", submissionId: "latest-meal" } : null,
+            pending:
+              key.kind === "meal" ? { op: "delete", submissionId: `latest-${key.id}` } : null,
             attempt: null,
             blocked: {
               submission: { ...key, submissionId, baseRevision: null, op: "put", content },
               result:
-                kind === "meal"
+                key.kind === "meal"
                   ? {
                       submissionId,
-                      status: "conflict",
+                      status: key.id === "native-meal-damaged" ? "damaged" : "conflict",
                       reason: "exists",
                       current: { ...key, state: "live", revision: 1, content },
                     }
