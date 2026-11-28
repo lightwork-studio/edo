@@ -1,4 +1,15 @@
-import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  linkSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -22,6 +33,7 @@ import {
   type SyncStore,
   type SyncStoreOptions,
 } from "../src/sync-store.ts";
+import { verifySyncSnapshot } from "../src/verify-snapshot.ts";
 
 let directory: string;
 let filename: string;
@@ -96,6 +108,186 @@ function pull(store: SyncStore, session: NegotiatedSync, cursor = 0, limit?: num
 function expectWireError(action: () => unknown, code: SyncWireError["code"]) {
   expect(action).toThrow(expect.objectContaining({ code }));
 }
+
+function writeSnapshotFixture(path: string) {
+  using store = openSyncStore(path);
+  const alpha = sessionFor(store.createAccount("alpha", "history-alpha"));
+  const beta = sessionFor(store.createAccount("beta", "history-beta"));
+  store.createAccount("empty", "history-empty");
+  expect(
+    push(
+      store,
+      alpha,
+      put("lunch", "first", null, mealContent("shared")),
+      put("dinner", "second", null, mealContent("retired")),
+    ).results,
+  ).toMatchObject([{ status: "accepted" }, { status: "accepted" }]);
+  expect(push(store, alpha, remove("dinner", "delete", 2)).results).toMatchObject([
+    { status: "accepted", revision: 3 },
+  ]);
+  expect(
+    push(store, beta, put("lunch", "first", null, mealContent("shared"))).results,
+  ).toMatchObject([{ status: "accepted" }]);
+}
+
+test("verifies a real standalone snapshot with scoped item IDs, gaps and a newest tombstone", async () => {
+  const path = join(directory, "snapshot with # and %25.sqlite");
+  writeSnapshotFixture(path);
+  const before = readFileSync(path);
+  await expect(verifySyncSnapshot(path)).resolves.toBeUndefined();
+  expect(readFileSync(path)).toEqual(before);
+  expect(readdirSync(directory)).toEqual(["snapshot with # and %25.sqlite"]);
+
+  {
+    using legacy = new DatabaseSync(path);
+    candidateV1(legacy);
+  }
+  {
+    using upgraded = openSyncStore(path);
+    expect(upgraded.history("alpha")?.revision).toBe(3);
+  }
+  {
+    using optimized = new DatabaseSync(path);
+    optimized.exec("ANALYZE");
+  }
+  await expect(verifySyncSnapshot(path)).resolves.toBeUndefined();
+});
+
+test.each([
+  [
+    "omitted ownership",
+    "DELETE FROM sync_meal_item_owners WHERE account_binding = 'alpha'",
+    "A meal item ownership claim is missing or wrong",
+  ],
+  [
+    "unreachable history",
+    "DELETE FROM sync_records WHERE account_binding = 'alpha' AND revision = 3",
+    "An account revision is unreachable by pull",
+  ],
+  [
+    "orphaned claim",
+    "INSERT INTO sync_meal_item_owners VALUES ('alpha', 'ghost', 'lunch')",
+    "A meal item ownership claim has no matching record",
+  ],
+  [
+    "unexpected trigger",
+    `CREATE TRIGGER extra BEFORE INSERT ON sync_accounts BEGIN
+     SELECT RAISE(ABORT, 'Unexpected trigger'); END`,
+    "Unexpected sync snapshot schema",
+  ],
+  [
+    "unrelated schema",
+    "CREATE TABLE unrelated (id INTEGER); CREATE VIEW duplicate AS SELECT id FROM unrelated;",
+    "Unexpected sync snapshot schema",
+  ],
+  [
+    "a modified statistics table",
+    `ANALYZE; PRAGMA writable_schema = ON;
+      UPDATE sqlite_schema SET sql = 'CREATE TABLE sqlite_stat1(tbl,idx,stat,unexpected)'
+      WHERE name = 'sqlite_stat1';
+      PRAGMA writable_schema = OFF`,
+    "Unexpected sync snapshot schema",
+  ],
+  [
+    "a trigger using a reserved statistics name",
+    `CREATE TRIGGER extra AFTER INSERT ON sync_accounts BEGIN SELECT 1; END;
+      PRAGMA writable_schema = ON;
+      UPDATE sqlite_schema SET name = 'sqlite_stat4',
+        sql = 'CREATE TRIGGER sqlite_stat4 AFTER INSERT ON sync_accounts BEGIN SELECT 1; END'
+      WHERE name = 'extra';
+      PRAGMA writable_schema = OFF`,
+    "Unexpected sync snapshot schema",
+  ],
+  [
+    "unencodable current record",
+    `UPDATE sync_records SET content = json_object('items', json_array(), 'large', hex(zeroblob(525000)))
+      WHERE account_binding = 'alpha' AND revision = 3`,
+    "A stored record exceeds the pull page limit",
+  ],
+  [
+    "invalid account text",
+    "UPDATE sync_accounts SET account_binding = CAST(X'FF' AS TEXT) WHERE account_binding = 'empty'",
+    "A stored sync value has invalid text",
+  ],
+  [
+    "invalid record text",
+    `UPDATE sync_records SET record_id = CAST(X'FF' AS TEXT)
+      WHERE account_binding = 'alpha' AND revision = 3`,
+    "A stored sync value has invalid text",
+  ],
+])("rejects %s even when SQLite integrity passes", async (_name, edit, diagnostic) => {
+  writeSnapshotFixture(filename);
+  {
+    using copy = new DatabaseSync(filename);
+    if (edit.includes("writable_schema")) copy.enableDefensive?.(false);
+    copy.exec(edit);
+    expect(copy.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    expect(copy.prepare("PRAGMA foreign_key_check").get()).toBeUndefined();
+  }
+  const before = readFileSync(filename);
+  await expect(verifySyncSnapshot(filename)).rejects.toThrow(diagnostic);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test("matches meal ownership against SQLite's exact text identity", async () => {
+  writeSnapshotFixture(filename);
+  {
+    using copy = new DatabaseSync(filename);
+    copy
+      .prepare(
+        "UPDATE sync_records SET record_id = ? WHERE account_binding = 'alpha' AND revision = 1",
+      )
+      .run("\uFFFD");
+    copy.exec(
+      "UPDATE sync_meal_item_owners SET meal_id = CAST(X'FF' AS TEXT) WHERE account_binding = 'alpha'",
+    );
+    expect(copy.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+  }
+  await expect(verifySyncSnapshot(filename)).rejects.toThrow(
+    "A meal item ownership claim is missing or wrong",
+  );
+});
+
+test("rejects a partial account restore point without printing any account data", async () => {
+  writeSnapshotFixture(filename);
+  {
+    using copy = new DatabaseSync(filename);
+    copy.exec(`PRAGMA ignore_check_constraints = ON;
+      UPDATE sync_accounts SET restored_revision = 0 WHERE account_binding = 'alpha'`);
+  }
+  await expect(verifySyncSnapshot(filename)).rejects.toThrow(
+    "An account restore point is incomplete",
+  );
+});
+
+test.skipIf(process.platform === "win32")(
+  "rejects aliases and sidecars before reading a snapshot",
+  async () => {
+    writeSnapshotFixture(filename);
+    const symlink = join(directory, "symlink.sqlite");
+    const hardlink = join(directory, "hardlink.sqlite");
+    symlinkSync(filename, symlink);
+    await expect(verifySyncSnapshot(symlink)).rejects.toThrow("regular sync snapshot");
+    linkSync(filename, hardlink);
+    await expect(verifySyncSnapshot(hardlink)).rejects.toThrow("single link");
+    await expect(verifySyncSnapshot(filename)).rejects.toThrow("single link");
+    rmSync(hardlink);
+    writeFileSync(`${filename}-wal`, "synthetic sidecar");
+    await expect(verifySyncSnapshot(filename)).rejects.toThrow("SQLite sidecar");
+    expect(readFileSync(`${filename}-wal`, "utf8")).toBe("synthetic sidecar");
+  },
+);
+
+test("refuses a WAL-format snapshot even when the sidecars are absent", async () => {
+  writeSnapshotFixture(filename);
+  {
+    using source = new DatabaseSync(filename);
+    source.exec("PRAGMA journal_mode = WAL");
+  }
+  expect(readdirSync(directory)).toEqual(["account-sync.sqlite"]);
+  await expect(verifySyncSnapshot(filename)).rejects.toThrow("rollback-journal SQLite snapshot");
+  expect(readdirSync(directory)).toEqual(["account-sync.sqlite"]);
+});
 
 test("replays canonical receipt outcomes after reopening the store and reserves used IDs", () => {
   let firstResult: unknown;
