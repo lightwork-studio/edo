@@ -47,6 +47,7 @@ import {
   type EntryTime,
   entryTime,
   foodLibraryEntryTime,
+  foodPreviewItems,
   localDay,
   nextMidnight,
   saveFood,
@@ -83,7 +84,7 @@ type SearchContext = EntryTime & {
   fromFoodsTab?: boolean;
   returnToTab?: HomeTab;
 };
-type FoodSelection = SearchContext & { food: Food; fromCustomFoods?: boolean };
+type FoodSelection = SearchContext & { food: Food; mealId: string; fromCustomFoods?: boolean };
 type BarcodeCapture = { state: BarcodeState; fromToday?: true };
 type DeviceContext = { today: string; language: Language; locale: string };
 type SettingsParent = "progress" | "profile";
@@ -272,12 +273,7 @@ function DiaryApp({
 
   function pickFood(context: SearchContext, food: Food, fromCustomFoods?: boolean) {
     Keyboard.dismiss();
-    const selection = {
-      ...context,
-      ...foodLibraryEntryTime(context, context.fromFoodsTab === true, new Date()),
-      food,
-      fromCustomFoods,
-    };
+    const selection = newFoodSelection(context, food, fromCustomFoods);
     const product =
       packagedCatalogOrigin && stalePackagedSelection(food, cachedProducts, Date.now());
     setRoute(
@@ -285,6 +281,20 @@ function DiaryApp({
         ? { ...selection, kind: "revalidate-packaged", product }
         : { ...selection, kind: "add" },
     );
+  }
+
+  function newFoodSelection(
+    context: SearchContext,
+    food: Food,
+    fromCustomFoods?: boolean,
+  ): FoodSelection {
+    return {
+      ...context,
+      ...foodLibraryEntryTime(context, context.fromFoodsTab === true, new Date()),
+      food,
+      fromCustomFoods,
+      mealId: randomUUID().replaceAll("-", ""),
+    };
   }
 
   function goBack() {
@@ -622,9 +632,8 @@ function DiaryApp({
         }
         onPick={(product, result) =>
           setRoute({
-            ...context,
+            ...newFoodSelection(context, foodForPackagedProduct(product)),
             kind: "add",
-            food: foodForPackagedProduct(product),
             barcode: { state: result, fromToday },
           })
         }
@@ -837,12 +846,16 @@ function DiaryApp({
 
   const food = route.kind === "add" ? route.food : route.item.food;
   const selected = favorites?.some((id) => foodKey(id) === foodKey(food.id)) ?? false;
+  const target = readTarget(diary, route.day)?.target;
+  const dayMeals = target ? readMeals(diary, route.day) : null;
+  const inputs = dayMeals ? foodPreviewItems(dayMeals, route) : null;
   return (
     <FoodDetail
       t={t}
       locale={locale}
       date={date}
       food={food}
+      day={target && inputs ? { ...inputs, target } : undefined}
       favorite={
         route.kind === "add"
           ? favorites
