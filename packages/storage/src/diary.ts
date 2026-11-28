@@ -1,6 +1,13 @@
-import type { DiaryItem, DiaryMeal } from "@edo/core";
+import type { DiaryItem, DiaryMeal, WeighIn } from "@edo/core";
 import { openSyncJournal } from "@edo/sync";
-import { type DiaryProgressStore, diaryProgress, verifyDiaryProgress } from "./diary-progress.ts";
+import {
+  type DiaryProgressStore,
+  diaryProgress,
+  prepareWeighIn,
+  readWeighIn,
+  verifyDiaryProgress,
+  writeWeighIn,
+} from "./diary-progress.ts";
 import {
   type DiaryBackup,
   diaryMigrations,
@@ -49,6 +56,13 @@ export interface SyncMealStore {
     readonly journal: ReturnType<typeof openSyncJournal>;
     saveMeal(meal: DiaryMeal, submissionId: string): void;
     deleteMeal(id: string, submissionId: string): void;
+  };
+}
+
+export interface SyncDiaryStore extends SyncMealStore {
+  readonly sync: SyncMealStore["sync"] & {
+    saveWeighIn(entry: WeighIn, submissionId: string): void;
+    deleteWeighIn(id: string, submissionId: string): void;
   };
 }
 
@@ -194,7 +208,7 @@ export async function openDiary({
   connection: db,
   backupBeforeMigration,
 }: OpenDiaryOptions): Promise<
-  DiaryStore & DiaryProgressStore & MyFoodsStore & PrivateArchiveStore & SyncMealStore
+  DiaryStore & DiaryProgressStore & MyFoodsStore & PrivateArchiveStore & SyncDiaryStore
 > {
   await migrateDiary(db, diaryMigrations, backupBeforeMigration, (connection) => {
     readMeals(connection.all(selectMeals));
@@ -228,6 +242,22 @@ export async function openDiary({
         const mealId = diaryId(id, "meal ID");
         journal.commitLocalProjection({ kind: "meal", id: mealId }, submissionId, () => {
           db.run("DELETE FROM diary_meals WHERE id = ?", mealId);
+          return { op: "delete" };
+        });
+      },
+      saveWeighIn: (entry, submissionId) => {
+        const reading = prepareWeighIn(entry);
+        journal.commitLocalProjection({ kind: "weigh-in", id: reading.id }, submissionId, () => {
+          writeWeighIn(db, reading);
+          const row = db.get("SELECT * FROM diary_weigh_ins WHERE id = ?", reading.id);
+          if (!row) throw new Error("Could not read the saved weigh-in for sync");
+          return { op: "put", content: readWeighIn(row) };
+        });
+      },
+      deleteWeighIn: (id, submissionId) => {
+        const readingId = diaryId(id, "weigh-in ID");
+        journal.commitLocalProjection({ kind: "weigh-in", id: readingId }, submissionId, () => {
+          db.run("DELETE FROM diary_weigh_ins WHERE id = ?", readingId);
           return { op: "delete" };
         });
       },
