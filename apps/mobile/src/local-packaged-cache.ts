@@ -10,28 +10,47 @@ export async function openLocalPackagedCache() {
     Paths.cache.uri,
   );
   try {
-    const cache = openPackagedFoodCache(connectionFor(db));
+    const connection = connectionFor(db);
+    let cache = openPackagedFoodCache(connection);
     const barcode = "0000001234567";
     const benchmarkBarcode = "123456789013";
     const now = Date.now();
     const marker = new File(Paths.document, "edo-verified-large-barcode-fixture");
+    const retained = ["old-0"];
     let saveMs: number | null = null;
+    let remainingBeforeUiGroup: number | null = null;
     if (!marker.exists) {
+      const sample = {
+        release: "r",
+        preparation: "as-sold" as const,
+        alternateName: null,
+        nutrition: null,
+      };
       const nearLimit = Array.from({ length: 1559 }, (_, index) => ({
+        ...sample,
         id: {
           provider: "open-food-facts" as const,
           sourceId: String(index).padStart(4, "0"),
         },
-        release: "r",
         barcode: benchmarkBarcode,
         name: "A",
-        alternateName: null,
-        preparation: "as-sold" as const,
-        nutrition: null,
       }));
+      const older = Array.from({ length: 1000 }, (_, index) => ({
+        ...sample,
+        id: { provider: "open-food-facts" as const, sourceId: `old-${index}` },
+        barcode: String(20000000 + index),
+        name: `cache ${"A".repeat(3900)}`,
+      }));
+      cache.save(older, now - 1, retained);
+      cache = openPackagedFoodCache(connection);
       const saveStarted = performance.now();
-      cache.saveBarcodeCandidates(benchmarkBarcode, nearLimit, now, []);
+      cache.saveBarcodeCandidates(benchmarkBarcode, nearLimit, now, retained);
       saveMs = Math.round(performance.now() - saveStarted);
+      const row = connection.get(
+        "SELECT count(*) AS count FROM packaged_food WHERE source_id GLOB 'old-*'",
+      );
+      if (row?.count !== 967) throw new Error("Near-limit native batch changed eviction");
+      remainingBeforeUiGroup = row.count;
       const products = Array.from({ length: 101 }, (_, index) => ({
         id: {
           provider: "open-food-facts" as const,
@@ -53,16 +72,18 @@ export async function openLocalPackagedCache() {
           },
         },
       }));
-      cache.saveBarcodeCandidates(barcode, products, now, []);
+      cache.saveBarcodeCandidates(barcode, products, now, retained);
       marker.create();
     }
     const readStarted = performance.now();
     const bulk = cache.lookupBarcode(benchmarkBarcode, Date.now());
     const readMs = Math.round(performance.now() - readStarted);
-    if (bulk.length !== 1559) throw new Error("Near-limit native barcode group lost candidates");
+    if (bulk.length !== 1559 || cache.findByIds(retained, Date.now()).length !== 1) {
+      throw new Error("Near-limit native barcode group lost candidates or a retained food");
+    }
     console.info(
       "EDO_BULK_BARCODE_METRICS",
-      JSON.stringify({ saveMs, readMs, products: bulk.length }),
+      JSON.stringify({ saveMs, readMs, products: bulk.length, remainingBeforeUiGroup }),
     );
     const checked = cache.lookupBarcode(barcode, now);
     if (
