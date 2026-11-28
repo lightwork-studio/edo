@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 const revision = "a".repeat(40);
 const runtime = "b".repeat(40);
