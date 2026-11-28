@@ -123,6 +123,20 @@ it("finds persisted record blockers offline and exposes only their presentation 
       state: "blocked",
       kind: "weigh-in",
     });
+
+    // An invalid receipt can also defeat an adapter's integer conversion before validation.
+    reopened.exec(`UPDATE edo_sync_outbox SET content =
+      json_set(content, '$.blocked.result.status', 9007199254740992) WHERE kind = 'meal'`);
+    expect(readSyncBlocker(journal, null)).toEqual({ state: "error", next: meal });
+    expect(readSyncBlocker(journal, meal)).toMatchObject({ state: "blocked", kind: "weigh-in" });
+
+    // The marker itself can be damaged while the row still passes the JSON constraint.
+    reopened.exec(`UPDATE edo_sync_outbox SET content =
+      json_set(content, '$.blocked', 'damaged') WHERE kind = 'meal'`);
+    expect(journal.blockedRecords(null, 1).records.map(({ key }) => key)).toEqual([weight]);
+    expect(syncBlockerNotice(journal)).toBe("blocked");
+    expect(readSyncBlocker(journal, null)).toEqual({ state: "error", next: meal });
+    expect(readSyncBlocker(journal, meal)).toMatchObject({ state: "blocked", kind: "weigh-in" });
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

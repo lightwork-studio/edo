@@ -356,11 +356,22 @@ function requireBlockedPageLimit(limit: number): void {
   }
 }
 
-function blockedPage(db: JournalSqlite, after: RecordKey | null, limit: number) {
+function blockedPage(
+  db: JournalSqlite,
+  after: RecordKey | null,
+  limit: number,
+  projection: "records" | "keys",
+) {
+  const keysOnly = projection === "keys";
+  const columns = keysOnly
+    ? "kind, id"
+    : "kind, id, json_extract(content, '$.blocked.result.status') AS status";
+  // A damaged but non-null blocker still occupies a place in the review queue.
+  const blockedType = keysOnly ? "<> 'null'" : "= 'object'";
   const rows = db.all(
-    `SELECT kind, id, json_extract(content, '$.blocked.result.status') AS status
+    `SELECT ${columns}
      FROM edo_sync_outbox
-     WHERE (kind, id) > (?, ?) AND json_type(content, '$.blocked') = 'object'
+     WHERE (kind, id) > (?, ?) AND json_type(content, '$.blocked') ${blockedType}
      ORDER BY kind, id LIMIT ?`,
     after?.kind ?? "",
     after?.id ?? "",
@@ -735,7 +746,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     } {
       requireBlockedPageLimit(limit);
       return inspect(() => {
-        const { entries, next } = blockedPage(db, after, limit);
+        const { entries, next } = blockedPage(db, after, limit, "records");
         const records = entries.map<BlockedSyncRecord>(({ key, status }) => {
           if (!isKnownRecordKind(key.kind) || (status !== "conflict" && status !== "rejected")) {
             throw new Error("Invalid blocked sync record");
@@ -749,7 +760,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     blockedRecordKeys(after: RecordKey | null = null, limit = 50) {
       requireBlockedPageLimit(limit);
       return inspect(() => {
-        const { entries, next } = blockedPage(db, after, limit);
+        const { entries, next } = blockedPage(db, after, limit, "keys");
         return { keys: entries.map(({ key }) => key), next };
       });
     },
