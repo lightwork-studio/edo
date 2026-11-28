@@ -22,19 +22,19 @@ import {
 import { foodKey, resolveFavoriteFoods } from "../src/favorite-foods";
 import { appLocale } from "../src/strings";
 
-test("shows logged progress, remaining amounts, and over-target amounts without inventing missing values", () => {
+test("keeps goal progress bounded and formats the original ratio without double rounding", () => {
   expect(nutritionTargetProgress(1064, 2150)).toEqual({
-    balance: 1086,
     fraction: 1064 / 2150,
-    percent: 49,
+    ratio: 1064 / 2150,
   });
   expect(nutritionTargetProgress(2240, 2150)).toEqual({
-    balance: -90,
     fraction: 1,
-    percent: 104,
+    ratio: 2240 / 2150,
   });
-  expect(nutritionTargetProgress(0, 0)).toEqual({ balance: 0, fraction: 0, percent: null });
-  expect(nutritionTargetProgress(2.75, 0)).toEqual({ balance: -2.75, fraction: 1, percent: null });
+  expect(nutritionTargetProgress(0, 0)).toEqual({ fraction: 0, ratio: null });
+  expect(nutritionTargetProgress(2.75, 0)).toEqual({ fraction: 1, ratio: null });
+  const ratio = nutritionTargetProgress(145, 1000)?.ratio;
+  expect(ratio && new Intl.NumberFormat("en-US", { style: "percent" }).format(ratio)).toBe("15%");
   expect(nutritionTargetProgress(null, 150)).toBeNull();
   expect(nutritionTargetProgress(0, null)).toBeNull();
 });

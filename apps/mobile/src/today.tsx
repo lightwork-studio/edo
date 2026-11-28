@@ -1,4 +1,9 @@
-import { type DailyNutritionTarget, type Nutrients, roundNutritionForDisplay } from "@edo/core";
+import {
+  type DailyNutritionTarget,
+  type Nutrients,
+  roundEnergyKcal,
+  roundNutritionForDisplay,
+} from "@edo/core";
 import type { DiaryMeal } from "@edo/storage";
 import type { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
@@ -64,6 +69,9 @@ export function TodayScreen({
   const nutrition = meals && totalNutrition(meals);
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "narrow", timeZone: "UTC" });
   const includesLastDay = week.some((entry) => entry.day === lastDay);
+  const { width } = useWindowDimensions();
+  const weekMinWidth = week.length * 44;
+  const weekPadding = Math.min(12, Math.max(0, (width - weekMinWidth) / 2));
   return (
     <>
       <View style={styles.header}>
@@ -83,7 +91,15 @@ export function TodayScreen({
           disabled={includesLastDay}
         />
       </View>
-      <View style={local.week}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={local.weekScroller}
+        contentContainerStyle={[
+          local.week,
+          { width: Math.max(width, weekMinWidth), paddingHorizontal: weekPadding },
+        ]}
+      >
         {week.map((entry) => {
           const selected = entry.day === day;
           const isToday = entry.day === today;
@@ -91,18 +107,20 @@ export function TodayScreen({
           const date = calendarDate(entry.day);
           const progress = nutritionTargetProgress(entry.kcal, entry.target?.kcal ?? null);
           const color = selected || isToday ? colors.accent : colors.muted;
-          const kcal = entry.kcal === null ? null : displayNumber(entry.kcal, locale, 0);
-          const over = progress !== null && Math.round(-progress.balance) > 0;
-          const amount = isToday
-            ? t.today.toLocaleLowerCase(locale)
-            : over
-              ? `+${displayNumber(-progress.balance, locale, 0)}`
-              : (kcal ?? "—");
+          const logged = entry.kcal === null ? null : roundEnergyKcal(entry.kcal);
+          const goal = entry.target ? roundEnergyKcal(entry.target.kcal) : null;
+          const kcal = logged === null ? null : displayNumber(logged, locale, 0);
+          const excess =
+            logged !== null && goal !== null && logged > goal
+              ? displayNumber(logged - goal, locale, 0)
+              : null;
+          const dayLabel = showDay(entry.day, locale, today);
+          const energyLabel = kcal === null ? t.unavailable : `${kcal} kcal`;
           return (
             <Pressable
               key={entry.day}
               accessibilityRole="button"
-              accessibilityLabel={`${showDay(entry.day, locale, today)}, ${kcal === null ? t.unavailable : `${kcal} kcal`}`}
+              accessibilityLabel={`${dayLabel}, ${energyLabel}${excess ? `, ${t.caloriesOverTarget(excess)}` : ""}`}
               accessibilityState={{ selected, disabled: unavailable }}
               disabled={unavailable}
               onPress={() => onDay(entry.day)}
@@ -117,16 +135,26 @@ export function TodayScreen({
                 </Text>
               </TargetRing>
               <Text
-                style={[local.dayTotal, isToday && local.activeCaption, over && local.number]}
+                style={[
+                  local.dayTotal,
+                  isToday && local.activeCaption,
+                  !isToday && excess && local.number,
+                ]}
                 numberOfLines={1}
                 adjustsFontSizeToFit
               >
-                {unavailable ? " " : amount}
+                {unavailable
+                  ? " "
+                  : excess
+                    ? `+${excess}`
+                    : isToday
+                      ? t.today.toLocaleLowerCase(locale)
+                      : (kcal ?? "—")}
               </Text>
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
       <ScrollView contentContainerStyle={styles.content}>
         {syncNotice}
         {nutrition && <DayNutrition nutrition={nutrition} target={target} locale={locale} t={t} />}
@@ -185,8 +213,11 @@ function DayNutrition({
   const ringSize = Math.min(150, Math.round(width * 0.385));
   const stack = width < 345 || fontScale >= 1.35;
   const energy = nutritionTargetProgress(nutrition.kcal, target?.kcal ?? null);
-  const energyAmount = energy ? Math.abs(energy.balance) : nutrition.kcal;
-  const energyLabel = energy ? (energy.balance < 0 ? t.kcalOver : t.kcalLeft) : t.kcalLogged;
+  const logged = roundNutritionForDisplay(nutrition);
+  const goals = target ? roundNutritionForDisplay({ ...target, fiberG: null }) : null;
+  const balance = logged.kcal === null || goals?.kcal == null ? null : goals.kcal - logged.kcal;
+  const energyAmount = balance === null ? logged.kcal : Math.abs(balance);
+  const energyLabel = balance === null ? t.kcalLogged : balance < 0 ? t.kcalOver : t.kcalLeft;
   return (
     <View style={[styles.card, local.hero]}>
       <View style={[local.heroContent, stack && local.heroStack]}>
@@ -209,11 +240,15 @@ function DayNutrition({
         </TargetRing>
         <View style={[local.macros, stack && local.stackedMacros]}>
           {macros.map(({ label, nutrient, color }) => {
-            const used = nutrition[nutrient];
-            const goal = target?.[nutrient] ?? null;
-            const progress = nutritionTargetProgress(used, goal);
-            const amount = progress ? Math.abs(progress.balance) : used;
-            const direction = progress ? (progress.balance < 0 ? t.targetOver : t.targetLeft) : "";
+            const progress = nutritionTargetProgress(
+              nutrition[nutrient],
+              target?.[nutrient] ?? null,
+            );
+            const used = logged[nutrient];
+            const goal = goals?.[nutrient] ?? null;
+            const remaining = used === null || goal === null ? null : goal - used;
+            const amount = remaining === null ? used : Math.abs(remaining);
+            const direction = remaining === null ? "" : remaining < 0 ? t.targetOver : t.targetLeft;
             return (
               <View key={label} style={[styles.row, local.macro]}>
                 <TargetRing size={42} color={color} fraction={progress?.fraction}>
@@ -227,7 +262,7 @@ function DayNutrition({
                 </TargetRing>
                 <View style={styles.stretch}>
                   <Text style={[local.macroAmount, styles.numbers]}>
-                    {amount === null ? "—" : `${displayNumber(amount, locale)} g`}
+                    {amount === null ? t.unavailable : `${displayNumber(amount, locale)} g`}
                     {direction && <Text style={local.macroDirection}> {direction}</Text>}
                   </Text>
                   <Text style={styles.meta}>
@@ -241,19 +276,18 @@ function DayNutrition({
           })}
         </View>
       </View>
-      {target && (
+      {goals?.kcal != null && (
         <View style={local.heroFooter}>
           <Text style={[styles.meta, styles.stretch]}>
             <Text style={local.number}>
-              {nutrition.kcal === null ? "—" : displayNumber(nutrition.kcal, locale, 0)}
+              {logged.kcal === null ? "—" : displayNumber(logged.kcal, locale, 0)}
             </Text>{" "}
             {t.targetEaten} ·{" "}
-            <Text style={local.number}>{displayNumber(target.kcal, locale, 0)}</Text>{" "}
-            {t.targetLabel}
+            <Text style={local.number}>{displayNumber(goals.kcal, locale, 0)}</Text> {t.targetLabel}
           </Text>
-          {energy?.percent != null && (
+          {energy?.ratio != null && (
             <Text style={styles.meta}>
-              {new Intl.NumberFormat(locale, { style: "percent" }).format(energy.percent / 100)}
+              {new Intl.NumberFormat(locale, { style: "percent" }).format(energy.ratio)}
             </Text>
           )}
         </View>
@@ -285,7 +319,7 @@ function MealCard({
         </Text>
         <Text style={styles.meta}>
           <Text style={[styles.body, local.number]}>
-            {energy === null ? "—" : displayNumber(energy, locale, 0)}
+            {energy === null ? "—" : displayNumber(roundEnergyKcal(energy), locale, 0)}
           </Text>{" "}
           kcal
         </Text>
@@ -331,7 +365,8 @@ function MealCard({
 
 const local = StyleSheet.create({
   date: { textAlign: "center" },
-  week: { flexDirection: "row", paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 },
+  weekScroller: { flexGrow: 0, flexShrink: 0 },
+  week: { flexDirection: "row", paddingTop: 8, paddingBottom: 4 },
   day: {
     flex: 1,
     minWidth: 0,
