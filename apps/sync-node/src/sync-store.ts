@@ -104,6 +104,8 @@ const mealItemOwnershipSchema = `
 
 export class InvalidSyncContent extends Error {}
 
+export class InvalidSyncSnapshot extends Error {}
+
 export interface SyncStoreOptions {
   applyContent: (input: {
     key: RecordKey;
@@ -157,6 +159,20 @@ function initialize(db: DatabaseSync) {
 function historyFrom(value: unknown): AuthenticatedHistory {
   const { accountBinding, lineage, revision, restoredFrom } = decodeHelloResponse(value);
   return { accountBinding, lineage, revision, restoredFrom };
+}
+
+function storedHistory(row: SqlRow): AuthenticatedHistory {
+  return historyFrom({
+    release: syncCandidate.release,
+    features: [],
+    accountBinding: row.account_binding,
+    lineage: row.lineage,
+    revision: row.revision,
+    restoredFrom:
+      row.restored_lineage === null
+        ? null
+        : { lineage: row.restored_lineage, revision: row.restored_revision },
+  });
 }
 
 function assertAccountBinding(accountBinding: string, session: NegotiatedSync) {
@@ -239,6 +255,77 @@ function backfillMealItemOwners(db: DatabaseSync) {
         throw new Error("A stored meal item ID already belongs to another meal");
       }
     }
+  }
+}
+
+/** Inspect a standalone copy. No rows are changed and diagnostics contain no record values. */
+export function assertSyncSnapshotConsistency(db: DatabaseSync): void {
+  try {
+    transaction(db, "BEGIN", () => {
+      if (
+        db.prepare("PRAGMA main.application_id").get()?.application_id !== applicationId ||
+        db.prepare("PRAGMA main.user_version").get()?.user_version !== schemaVersion
+      ) {
+        throw new InvalidSyncSnapshot("Unsupported sync snapshot format");
+      }
+
+      using canonical = new DatabaseSync(":memory:");
+      initialize(canonical);
+      const schemaObjects = `
+        SELECT type, name, tbl_name, sql FROM main.sqlite_schema
+        WHERE tbl_name IN ('sync_accounts', 'sync_records', 'sync_receipts', 'sync_meal_item_owners')
+        ORDER BY type, name`;
+      if (
+        JSON.stringify(db.prepare(schemaObjects).all()) !==
+        JSON.stringify(canonical.prepare(schemaObjects).all())
+      ) {
+        throw new InvalidSyncSnapshot("Unexpected sync snapshot schema");
+      }
+      if (
+        db.prepare("PRAGMA main.integrity_check(1)").get()?.integrity_check !== "ok" ||
+        db.prepare("PRAGMA main.foreign_key_check").get()
+      ) {
+        throw new InvalidSyncSnapshot("SQLite integrity verification failed");
+      }
+
+      const accounts = db.prepare(`
+        SELECT account.*,
+          COALESCE((SELECT MAX(revision) FROM main.sync_records AS record
+            WHERE record.account_binding = account.account_binding), 0) AS last_revision
+        FROM main.sync_accounts AS account`);
+      for (const account of accounts.iterate()) {
+        if (storedHistory(account).revision !== account.last_revision) {
+          throw new InvalidSyncSnapshot("An account revision is unreachable by pull");
+        }
+      }
+
+      const owner = db.prepare(`
+        SELECT meal_id FROM main.sync_meal_item_owners WHERE account_binding = ? AND item_id = ?`);
+      const records = db.prepare(`
+        SELECT account_binding, revision, kind, record_id, content FROM main.sync_records`);
+      let expectedClaims = 0;
+      for (const row of records.iterate()) {
+        const record = storedChange(row);
+        if (record.kind !== "meal" || record.state !== "live") continue;
+        const accountBinding = row.account_binding;
+        if (typeof accountBinding !== "string") {
+          throw new InvalidSyncSnapshot("A meal has an invalid account binding");
+        }
+        for (const itemId of mealItemIds(record.content)) {
+          if (owner.get(accountBinding, itemId)?.meal_id !== record.id) {
+            throw new InvalidSyncSnapshot("A meal item ownership claim is missing or wrong");
+          }
+          expectedClaims += 1;
+        }
+      }
+      const count = db.prepare("SELECT COUNT(*) AS count FROM main.sync_meal_item_owners").get();
+      if (count?.count !== expectedClaims) {
+        throw new InvalidSyncSnapshot("A meal item ownership claim has no matching record");
+      }
+    });
+  } catch (error) {
+    if (error instanceof InvalidSyncSnapshot) throw error;
+    throw new InvalidSyncSnapshot("Sync snapshot contains invalid or unreadable records");
   }
 }
 
@@ -475,18 +562,7 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
 
     function history(accountBinding: string): AuthenticatedHistory | null {
       const row = readHistory.get(accountBinding);
-      if (!row) return null;
-      return historyFrom({
-        release: syncCandidate.release,
-        features: [],
-        accountBinding: row.account_binding,
-        lineage: row.lineage,
-        revision: row.revision,
-        restoredFrom:
-          row.restored_lineage === null
-            ? null
-            : { lineage: row.restored_lineage, revision: row.restored_revision },
-      });
+      return row ? storedHistory(row) : null;
     }
 
     return {

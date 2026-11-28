@@ -40,3 +40,16 @@ Requests can be up to 768 KiB and replies up to 1 MiB. A conflict can report a r
 and revision with its content marked unavailable if the reply would otherwise exceed
 the limit. The server retains each terminal receipt in its private database. Receipt
 retention remains open for managed rollout.
+
+## Inspect a sync snapshot
+
+Use a closed, standalone copy stored in a private directory.
+
+```sh
+pnpm --filter @edo/sync-node verify-snapshot /path/to/snapshot.sqlite
+```
+
+The command checks the current sync schema, SQLite integrity, account revisions and
+meal item ownership. An account revision must be reachable by pull, and every ownership
+claim must point to a live meal containing that item. The command opens the snapshot read-only
+and prints a status or a diagnostic for the failed check.
