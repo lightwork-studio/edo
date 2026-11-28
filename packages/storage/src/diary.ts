@@ -1,5 +1,7 @@
-import type { DiaryItem, DiaryMeal, WeighIn } from "@edo/core";
+import type { NegotiatedSync } from "@edo/contract";
+import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
 import { openSyncJournal } from "@edo/sync";
+import { readMealEntries } from "./diary-archive.ts";
 import {
   type DiaryProgressStore,
   diaryProgress,
@@ -56,6 +58,7 @@ export interface SyncMealStore {
     readonly journal: ReturnType<typeof openSyncJournal>;
     saveMeal(meal: DiaryMeal, submissionId: string): void;
     deleteMeal(id: string, submissionId: string): void;
+    tryRebaseMeal(session: NegotiatedSync, id: string, submissionId: string): boolean;
   };
 }
 
@@ -155,6 +158,12 @@ function readMeal(db: DiarySqliteConnection, id: string): DiaryMeal | null {
   );
 }
 
+function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
+  // Archive decoding rejects opaque fields at every level. Keep those edits for manual review.
+  const meal = readMealEntries([content]).entries[0]?.meal;
+  return meal?.id === id ? meal : null;
+}
+
 function planPrivateRestore(
   db: DiarySqliteConnection,
   archive: ReturnType<typeof readPrivateArchive>,
@@ -244,6 +253,40 @@ export async function openDiary({
           db.run("DELETE FROM diary_meals WHERE id = ?", mealId);
           return { op: "delete" };
         });
+      },
+      tryRebaseMeal: (session, id, submissionId) => {
+        const mealId = diaryId(id, "meal ID");
+        return journal.tryRebaseStalePut(
+          session,
+          { kind: "meal", id: mealId },
+          submissionId,
+          ({ base, draft, server }) => {
+            const original = readRebaseMeal(base, mealId);
+            const local = readRebaseMeal(draft, mealId);
+            const remote = readRebaseMeal(server, mealId);
+            if (!original || !local || !remote) return null;
+            if (JSON.stringify(readMeal(db, mealId)) !== JSON.stringify(local)) return null;
+            const result = reconcileDiaryMeal(original, local, remote);
+            const merged = result.status === "merged" ? result.meal : null;
+            if (
+              !merged ||
+              merged.items.some(({ id: itemId }) =>
+                db.get("SELECT 1 FROM diary_items WHERE id = ? AND meal_id <> ?", itemId, mealId),
+              )
+            ) {
+              return null;
+            }
+            return merged;
+          },
+          (content) => {
+            const merged = readRebaseMeal(content, mealId);
+            if (!merged) throw new Error("Invalid rebased meal");
+            writeMeal(db, prepareMeal(merged), true);
+            if (JSON.stringify(readMeal(db, mealId)) !== JSON.stringify(merged)) {
+              throw new Error("The rebased meal changed while saving");
+            }
+          },
+        );
       },
       saveWeighIn: (entry, submissionId) => {
         const reading = prepareWeighIn(entry);

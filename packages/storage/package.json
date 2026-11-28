@@ -8,6 +8,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@edo/contract": "workspace:*",
     "@edo/core": "workspace:*",
     "@edo/sync": "workspace:*"
   }
