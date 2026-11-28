@@ -363,7 +363,14 @@ function DiaryApp({
   }
 
   if (route.kind === "sync-blockers") {
-    return <SyncBlockerScreen journal={diary.sync.journal} language={language} onBack={goBack} />;
+    return (
+      <SyncBlockerScreen
+        journal={diary.sync.journal}
+        language={language}
+        locale={locale}
+        onBack={goBack}
+      />
+    );
   }
 
   if (route.kind === "progress") {

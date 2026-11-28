@@ -1,8 +1,17 @@
-import { useState } from "react";
+import { type ComponentRef, useRef, useState } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-native";
 import { type Language, strings } from "./strings";
-import { type BlockerJournal, readSyncBlocker, type syncBlockerNotice } from "./sync-blockers";
+import {
+  type BlockerJournal,
+  formatWeighInKilograms,
+  readSyncBlocker,
+  type syncBlockerNotice,
+  type WeighInReviewSide,
+} from "./sync-blockers";
 import { DetailHeader, Notice, styles } from "./ui";
+
+const gregorianCutoverDay = "1582-10-15";
+const gregorianCutoverTime = Date.parse(`${gregorianCutoverDay}T00:00:00.000Z`);
 
 const copy = {
   en: {
@@ -18,6 +27,15 @@ const copy = {
     record: "Saved record",
     put: "The phone’s latest saved action is an edit.",
     delete: "The phone’s latest saved action is a deletion.",
+    weighIn: {
+      phone: "Pending phone change",
+      account: "Saved account copy",
+      localDay: "Diary day",
+      instant: "Recorded time",
+      deleted: "Deleted",
+      unavailable: "Weigh-in values unavailable",
+      unknown: "Current account value unknown",
+    },
     kinds: {
       meal: "Meal",
       "custom-food": "Custom food",
@@ -50,6 +68,15 @@ const copy = {
     record: "Gespeicherter Eintrag",
     put: "Die zuletzt auf dem Gerät gespeicherte Aktion ist eine Änderung.",
     delete: "Die zuletzt auf dem Gerät gespeicherte Aktion ist eine Löschung.",
+    weighIn: {
+      phone: "Ausstehende Änderung auf dem Gerät",
+      account: "Gespeicherte Kontokopie",
+      localDay: "Tagebuchdatum",
+      instant: "Erfasster Zeitpunkt",
+      deleted: "Gelöscht",
+      unavailable: "Gewichtsdaten nicht verfügbar",
+      unknown: "Aktueller Kontowert unbekannt",
+    },
     kinds: {
       meal: "Mahlzeit",
       "custom-food": "Eigenes Lebensmittel",
@@ -92,32 +119,37 @@ export function SyncBlockerNotice({
 export function SyncBlockerScreen({
   journal,
   language,
+  locale,
   onBack,
 }: {
   journal: BlockerJournal;
   language: Language;
+  locale: string;
   onBack: () => void;
 }) {
   const words = copy[language];
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const [{ issue, position }, setReview] = useState(() => ({
     issue: readSyncBlocker(journal, null),
     position: 1,
   }));
   function restart() {
     const first = readSyncBlocker(journal, null);
+    scroll.current?.scrollTo({ y: 0, animated: false });
     setReview({ issue: first, position: 1 });
     if (first.state !== "empty") AccessibilityInfo.announceForAccessibility(words.position(1));
   }
   function next() {
     if (!issue.next) return;
     const nextPosition = position + 1;
+    scroll.current?.scrollTo({ y: 0, animated: false });
     setReview({ issue: readSyncBlocker(journal, issue.next), position: nextPosition });
     AccessibilityInfo.announceForAccessibility(words.position(nextPosition));
   }
   return (
     <>
       <DetailHeader title={words.title} back={strings[language].back} onBack={onBack} />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} ref={scroll}>
         {issue.state === "blocked" ? (
           <View style={styles.card}>
             <Text style={styles.meta}>{words.position(position)}</Text>
@@ -125,7 +157,24 @@ export function SyncBlockerScreen({
               {(Object.hasOwn(words.kinds, issue.kind) && words.kinds[issue.kind]) || words.record}
             </Text>
             <Text style={styles.body}>{words.reasons[issue.reason]}</Text>
-            <Text style={styles.meta}>{words[issue.operation]}</Text>
+            {issue.weighIn ? (
+              <>
+                <WeighInSide
+                  title={words.weighIn.phone}
+                  side={issue.weighIn.phone}
+                  locale={locale}
+                  words={words.weighIn}
+                />
+                <WeighInSide
+                  title={words.weighIn.account}
+                  side={issue.weighIn.account}
+                  locale={locale}
+                  words={words.weighIn}
+                />
+              </>
+            ) : (
+              <Text style={styles.meta}>{words[issue.operation]}</Text>
+            )}
             <Pressable accessibilityRole="button" onPress={restart} style={styles.action}>
               <Text style={styles.actionText}>{words.restart}</Text>
             </Pressable>
@@ -143,5 +192,59 @@ export function SyncBlockerScreen({
         )}
       </ScrollView>
     </>
+  );
+}
+
+function WeighInSide({
+  title,
+  side,
+  locale,
+  words,
+}: {
+  title: string;
+  side: WeighInReviewSide;
+  locale: string;
+  words: (typeof copy)[Language]["weighIn"];
+}) {
+  const recorded = side.state === "live" ? new Date(side.occurredAt) : null;
+  return (
+    <View>
+      <Text accessibilityRole="header" style={styles.title}>
+        {title}
+      </Text>
+      {side.state === "live" ? (
+        <>
+          <Text style={[styles.body, styles.numbers]}>
+            {formatWeighInKilograms(side.kg, locale)} kg
+          </Text>
+          <Text style={styles.meta}>{words.localDay}</Text>
+          <Text style={styles.body}>
+            {side.localDay < gregorianCutoverDay
+              ? side.localDay
+              : new Intl.DateTimeFormat(locale, {
+                  dateStyle: "medium",
+                  timeZone: "UTC",
+                }).format(new Date(`${side.localDay}T00:00:00.000Z`))}
+          </Text>
+          <Text style={styles.meta}>{words.instant}</Text>
+          <Text style={styles.body}>
+            {recorded && (side.occurredAt < gregorianCutoverTime || side.occurredAt % 1000 !== 0)
+              ? recorded.toISOString()
+              : new Intl.DateTimeFormat(locale, {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                  second: "2-digit",
+                  timeZone: "UTC",
+                  timeZoneName: "short",
+                }).format(side.occurredAt)}
+          </Text>
+        </>
+      ) : (
+        <Text style={styles.meta}>{words[side.state]}</Text>
+      )}
+    </View>
   );
 }

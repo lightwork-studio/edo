@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openDiary, type SqliteConnection } from "@edo/storage";
 import { expect, it } from "vitest";
-import { readSyncBlocker, syncBlockerNotice } from "../src/sync-blockers";
+import { formatWeighInKilograms, readSyncBlocker, syncBlockerNotice } from "../src/sync-blockers";
+
+it("keeps weight precision when the locale uses a different decimal separator or numeral glyph", () => {
+  expect(formatWeighInKilograms(80.0021, "de-DE")).toBe("80,0021");
+  expect(formatWeighInKilograms(80.0022, "de-DE")).toBe("80,0022");
+  expect(formatWeighInKilograms(80.0021, "de-CH")).toBe("80.0021");
+  expect(formatWeighInKilograms(80.0021, "en-US-u-nu-mathbold")).toBe("80.0021");
+});
 
 function connectionFor(db: DatabaseSync): SqliteConnection {
   return {
@@ -96,6 +103,7 @@ it("finds persisted record blockers offline and exposes only their presentation 
       reason: "invalid-content",
       operation: "put",
       next: null,
+      weighIn: { phone: { state: "unavailable" }, account: { state: "unknown" } },
     });
     expect(reopened.prepare("SELECT content FROM edo_sync_outbox ORDER BY kind, id").all()).toEqual(
       rawBefore,
@@ -140,6 +148,99 @@ it("finds persisted record blockers offline and exposes only their presentation 
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
+});
+
+it("shows the latest phone change and account weigh-in without opaque or identity fields", async () => {
+  using db = new DatabaseSync(":memory:");
+  const {
+    sync: { journal },
+  } = await open(db);
+  const key = { kind: "weigh-in", id: "reviewed-weight" };
+  const captured = {
+    id: key.id,
+    kg: 80.002,
+    localDay: "2026-11-10",
+    occurredAt: Date.parse("2026-11-11T00:30:00.003Z"),
+  };
+  const { id: _id, ...visible } = captured;
+  const submitted = { ...captured, kg: 79 };
+  const received = { ...key, state: "live", revision: 2, content: { ...captured, kg: 81 } };
+  const pulled = {
+    ...received,
+    revision: 3,
+    content: { ...captured, kg: 81.003, future: "opaque fixture field" },
+  };
+  db.exec(`INSERT INTO edo_sync_binding
+    VALUES (1, 'https://example.test', 'account', 'lineage', 3, 3)`);
+  db.prepare("INSERT INTO edo_sync_outbox VALUES (?, ?, NULL, NULL, ?)").run(
+    key.kind,
+    key.id,
+    JSON.stringify({
+      key,
+      baseRevision: 1,
+      base: null,
+      pending: { op: "put", submissionId: "latest", content: { ...captured, private: "fixture" } },
+      attempt: null,
+      blocked: {
+        submission: {
+          ...key,
+          baseRevision: 1,
+          submissionId: "prior",
+          op: "put",
+          content: submitted,
+        },
+        result: { submissionId: "prior", status: "conflict", reason: "stale", current: received },
+      },
+    }),
+  );
+  db.prepare("INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)").run(
+    key.kind,
+    key.id,
+    pulled.revision,
+    JSON.stringify(pulled),
+  );
+  const review = readSyncBlocker(journal, null);
+  if (review.state !== "blocked") throw new Error("Expected a tracked weigh-in conflict");
+  expect(review.weighIn).toEqual({
+    phone: { state: "live", ...visible },
+    account: { state: "live", ...visible, kg: 81.003 },
+  });
+
+  const setAccount = db.prepare("UPDATE edo_sync_remote SET revision = ?, content = ?");
+  setAccount.run(2, JSON.stringify({ ...received, content: { ...captured, kg: 83 } }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "unavailable" } },
+  });
+  const setReceipt = db.prepare(
+    "UPDATE edo_sync_outbox SET content = json_set(content, '$.blocked.result.current', json(?))",
+  );
+  setReceipt.run(JSON.stringify({ ...key, revision: 2, state: "unavailable" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "live", ...visible, kg: 83 } },
+  });
+  setAccount.run(2, JSON.stringify({ ...key, revision: 2, state: "deleted" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "unavailable" } },
+  });
+  setReceipt.run(JSON.stringify({ ...received, content: { ...captured, kg: 82 } }));
+  setAccount.run(2, JSON.stringify({ ...key, revision: 2, state: "unavailable" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "live", ...visible, kg: 82 } },
+  });
+  setReceipt.run(JSON.stringify({ ...key, revision: 2, state: "deleted" }));
+  setAccount.run(3, JSON.stringify({ ...received, revision: 3 }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "unavailable" } },
+  });
+  setAccount.run(4, JSON.stringify({ ...key, revision: 4, state: "deleted" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "deleted" } },
+  });
+  db.exec(`UPDATE edo_sync_outbox SET content =
+    json_set(content, '$.pending.content.localDay', '2026-02-29')`);
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { phone: { state: "unavailable" } },
+  });
 });
 
 it("shows a recoverable status when reading the journal fails", async () => {
