@@ -2,9 +2,11 @@ import { type Food, roundNutritionForDisplay } from "@edo/core";
 import type { PackagedFoodCache } from "@edo/storage";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { useEffect, useState } from "react";
-import { FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { foodForPackagedProduct, openFoodFactsLicenseUrl } from "./barcode";
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { openFoodFactsLicenseUrl } from "./barcode";
 import { searchBls } from "./catalog";
+import { SourceLink } from "./catalog-source-link";
+import { searchCachedPackagedFoods } from "./packaged-food-search";
 import type { Language, Strings } from "./strings";
 import { colors, DetailHeader, Notice, nutrientValue, styles } from "./ui";
 
@@ -109,38 +111,11 @@ export function SearchScreen({
   );
 }
 
-function SourceLink({ uri, title }: { uri: string; title: string }) {
-  const [failed, setFailed] = useState(false);
-  return failed ? (
-    <Text selectable style={styles.meta}>
-      {uri}
-    </Text>
-  ) : (
-    <Pressable
-      accessibilityRole="link"
-      style={local.link}
-      onPress={() => void Linking.openURL(uri).catch(() => setFailed(true))}
-    >
-      <Text style={styles.actionText}>{title}</Text>
-    </Pressable>
-  );
-}
-
 const nutritionBasis = {
   "per-100-g": "per100g",
   "per-100-ml": "per100ml",
   "per-portion": "perPortion",
 } as const;
-
-function getCachedFoods(cache: PackagedFoodCache | null, query: string): Food[] {
-  try {
-    return (
-      cache?.search(query, Date.now()).map(({ product }) => foodForPackagedProduct(product)) ?? []
-    );
-  } catch {
-    return [];
-  }
-}
 
 function Results({
   db,
@@ -173,7 +148,7 @@ function Results({
     if (!query) return;
     let current = true;
     const timer = setTimeout(() => {
-      const cached = getCachedFoods(packagedCache, query);
+      const cached = searchCachedPackagedFoods(packagedCache, query);
       const bls = db ? searchBls(db, query, language).catch(() => null) : Promise.resolve([]);
       void bls.then((foods) => {
         if (!current) return;
@@ -270,7 +245,6 @@ const local = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: colors.accentSoft,
   },
-  link: { minHeight: 44, justifyContent: "center" },
   results: { padding: 16, gap: 8 },
   result: { paddingVertical: 12 },
   name: { color: colors.text, fontSize: 16, fontWeight: "600", marginBottom: 4 },

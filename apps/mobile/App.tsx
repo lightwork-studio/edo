@@ -615,6 +615,20 @@ function DiaryApp({
         current={route.current}
         customFoods={customFoods}
         catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
+        packagedCache={cachedProducts ?? null}
+        refreshIngredient={(food, signal) => {
+          const product =
+            packagedCatalogOrigin && stalePackagedSelection(food, cachedProducts, Date.now());
+          return product
+            ? revalidatePackagedSelection(product, {
+                origin: packagedCatalogOrigin,
+                cache: cachedProducts ?? null,
+                keep: () => retainedProducts(diary, today),
+                request: fetch,
+                signal,
+              })
+            : null;
+        }}
         onCatalogRetry={catalog.retry}
         newItemId={randomUUID}
         onBack={goBack}

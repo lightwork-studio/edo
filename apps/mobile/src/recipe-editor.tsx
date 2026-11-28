@@ -1,8 +1,12 @@
 import { type Food, type Portion, type Recipe, roundNutritionForDisplay } from "@edo/core";
+import type { PackagedFoodCache } from "@edo/storage";
 import { useEffect, useRef, useState } from "react";
 import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { openFoodFactsLicenseUrl } from "./barcode";
 import { type CatalogDatabase, searchBls } from "./catalog";
+import { SourceLink } from "./catalog-source-link";
 import { readAmount } from "./diary-view";
+import { searchCachedPackagedFoods } from "./packaged-food-search";
 import {
   type IngredientDraft,
   ingredientUnitChange,
@@ -89,6 +93,8 @@ export function RecipeEditor({
   current,
   customFoods,
   catalog,
+  packagedCache,
+  refreshIngredient,
   onCatalogRetry,
   newItemId,
   onBack,
@@ -99,6 +105,8 @@ export function RecipeEditor({
   current: Recipe | null;
   customFoods: readonly Food[];
   catalog: CatalogDatabase | "error" | null;
+  packagedCache: PackagedFoodCache | null;
+  refreshIngredient: (food: Food, signal: AbortSignal) => Promise<Food | null> | null;
   onCatalogRetry: () => void;
   newItemId: () => string;
   onBack: () => void;
@@ -116,7 +124,10 @@ export function RecipeEditor({
   const [attemptedSave, setAttemptedSave] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const [addFailed, setAddFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const ingredientRefresh = useRef<AbortController | null>(null);
   const submitted = useRef(false);
+  useEffect(() => () => ingredientRefresh.current?.abort(), []);
   const servings = servingsText === undefined ? (current?.servings ?? 1) : readAmount(servingsText);
   const cookedWeightG =
     weightText === undefined
@@ -139,7 +150,7 @@ export function RecipeEditor({
   }
 
   function submit() {
-    if (submitted.current) return;
+    if (submitted.current || ingredientRefresh.current) return;
     setAttemptedSave(true);
     if (!preview?.draft.name) return;
     submitted.current = true;
@@ -152,7 +163,7 @@ export function RecipeEditor({
     }
   }
 
-  function addIngredient(food: Food) {
+  function appendIngredient(food: Food) {
     try {
       const ingredient = newRecipeIngredient(newItemId(), food);
       setIngredients((items) => [...items, ingredient]);
@@ -162,6 +173,27 @@ export function RecipeEditor({
     } catch {
       setAddFailed(true);
     }
+  }
+
+  function addIngredient(food: Food) {
+    if (ingredientRefresh.current) return;
+    const controller = new AbortController();
+    const updated = refreshIngredient(food, controller.signal);
+    if (!updated) {
+      appendIngredient(food);
+      return;
+    }
+    ingredientRefresh.current = controller;
+    setRefreshing(true);
+    setAddFailed(false);
+    void updated
+      .catch(() => null)
+      .then((fresh) => {
+        if (controller.signal.aborted) return;
+        ingredientRefresh.current = null;
+        setRefreshing(false);
+        appendIngredient(fresh ?? food);
+      });
   }
 
   return (
@@ -264,10 +296,17 @@ export function RecipeEditor({
             ))}
           </View>
         )}
+        {!searchOpen &&
+          ingredients.some(({ original }) => original.food.id.provider === "open-food-facts") && (
+            <SourceLink uri={openFoodFactsLicenseUrl} title={t.openFoodFactsLicense} />
+          )}
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded: searchOpen }}
           onPress={() => {
+            ingredientRefresh.current?.abort();
+            ingredientRefresh.current = null;
+            setRefreshing(false);
             setSearchOpen(!searchOpen);
             setAddFailed(false);
           }}
@@ -278,6 +317,8 @@ export function RecipeEditor({
         {searchOpen && (
           <IngredientSearch
             catalog={catalog}
+            packagedCache={packagedCache}
+            refreshing={refreshing}
             onCatalogRetry={onCatalogRetry}
             customFoods={customFoods}
             language={language}
@@ -296,7 +337,7 @@ export function RecipeEditor({
             {error}
           </Text>
         )}
-        <PrimaryButton title={words.save} onPress={submit} />
+        <PrimaryButton title={words.save} onPress={submit} disabled={refreshing} />
       </View>
     </>
   );
@@ -358,14 +399,19 @@ function IngredientRow({
   const [unitOpen, setUnitOpen] = useState(false);
   const { original, unit } = draft;
   const name = original.food.name;
+  const t = strings[language];
   const words = copy[language];
   const units = ingredientUnits(draft);
-  const unitName = (unit: Portion["unit"]) =>
-    unit === "portion" ? strings[language].portion : unit;
+  const unitName = (unit: Portion["unit"]) => (unit === "portion" ? t.portion : unit);
   return (
     <View style={local.ingredient}>
       <View style={local.ingredientLine}>
-        <Text style={[styles.body, styles.stretch]}>{name}</Text>
+        <View style={styles.stretch}>
+          <Text style={styles.body}>{name}</Text>
+          {original.food.id.provider === "open-food-facts" && (
+            <Text style={styles.meta}>{t.openFoodFactsCredit}</Text>
+          )}
+        </View>
         <View style={local.amount}>
           <TextInput
             accessibilityLabel={`${words.ingredientAmount(name)} (${unitName(unit)})`}
@@ -418,12 +464,16 @@ function IngredientRow({
 
 function IngredientSearch({
   catalog,
+  packagedCache,
+  refreshing,
   onCatalogRetry,
   customFoods,
   language,
   onPick,
 }: {
   catalog: CatalogDatabase | "error" | null;
+  packagedCache: PackagedFoodCache | null;
+  refreshing: boolean;
   onCatalogRetry: () => void;
   customFoods: readonly Food[];
   language: Language;
@@ -434,43 +484,56 @@ function IngredientSearch({
   const [query, setQuery] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<{
-    catalog: CatalogDatabase;
+    catalog: CatalogDatabase | "error" | null;
+    packagedCache: PackagedFoodCache | null;
     query: string;
     language: Language;
     attempt: number;
-    foods: Food[] | null;
+    bls: Food[] | null | undefined;
+    cached: Food[];
   }>();
   const term = query.trim();
   useEffect(() => {
-    if (!catalog || catalog === "error" || !term) return;
+    if (!term) return;
     let active = true;
     const timer = setTimeout(() => {
-      void searchBls(catalog, term, language).then(
-        (foods) => {
-          if (active) setResult({ catalog, query: term, language, attempt, foods });
-        },
-        () => {
-          if (active) setResult({ catalog, query: term, language, attempt, foods: null });
-        },
-      );
+      const snapshot = {
+        catalog,
+        packagedCache,
+        query: term,
+        language,
+        attempt,
+        cached: searchCachedPackagedFoods(packagedCache, term),
+      };
+      setResult({ ...snapshot, bls: undefined });
+      if (catalog && catalog !== "error") {
+        void searchBls(catalog, term, language)
+          .catch(() => null)
+          .then((bls) => {
+            if (active) setResult({ ...snapshot, bls });
+          });
+      }
     }, 150);
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [catalog, term, language, attempt]);
+  }, [catalog, packagedCache, term, language, attempt]);
 
   const fold = (value: string) => value.normalize("NFC").toLocaleLowerCase(language);
   const normalized = fold(term);
   const matches = customFoods.filter((food) => fold(food.name).includes(normalized));
-  const bls =
+  const latest =
     term &&
     result?.catalog === catalog &&
+    result.packagedCache === packagedCache &&
     result.query === term &&
     result.language === language &&
     result.attempt === attempt
-      ? result.foods
+      ? result
       : undefined;
+  const bls = latest?.bls;
+  const cached = latest?.cached ?? [];
 
   return (
     <View style={styles.card}>
@@ -481,32 +544,44 @@ function IngredientSearch({
         autoCorrect={false}
         clearButtonMode="while-editing"
         returnKeyType="search"
+        editable={!refreshing}
         value={query}
         maxLength={120}
         onChangeText={setQuery}
         style={local.search}
       />
-      {[...matches, ...(bls ?? [])].map((food) => (
+      {[...matches, ...(bls ?? []), ...cached].map((food) => (
         <Pressable
           key={`${food.id.provider}:${food.id.sourceId}`}
           accessibilityRole="button"
+          accessibilityState={{ disabled: refreshing }}
+          disabled={refreshing}
           onPress={() => onPick(food)}
           style={({ pressed }) => [styles.row, local.result, pressed && styles.pressed]}
         >
           <View style={styles.stretch}>
             <Text style={styles.body}>{food.name}</Text>
-            <Text style={styles.meta}>{food.id.provider === "bls" ? t.bls : words.customFood}</Text>
+            <Text style={styles.meta}>
+              {food.id.provider === "open-food-facts"
+                ? t.openFoodFactsCredit
+                : food.id.provider === "bls"
+                  ? t.bls
+                  : words.customFood}
+            </Text>
           </View>
           <Text style={styles.actionText}>+</Text>
         </Pressable>
       ))}
+      {cached.length > 0 && (
+        <SourceLink uri={openFoodFactsLicenseUrl} title={t.openFoodFactsLicense} />
+      )}
       {term !== "" && catalog === "error" && (
         <Notice
           text={words.catalogUnavailable}
           action={{ label: t.retry, onPress: onCatalogRetry }}
         />
       )}
-      {term !== "" && catalog !== "error" && bls === undefined && (
+      {(refreshing || (term !== "" && catalog !== "error" && bls === undefined)) && (
         <Notice text={t.loading} pending />
       )}
       {bls === null && (
@@ -515,7 +590,7 @@ function IngredientSearch({
           action={{ label: t.retry, onPress: () => setAttempt((value) => value + 1) }}
         />
       )}
-      {term !== "" && matches.length === 0 && bls?.length === 0 && (
+      {term !== "" && matches.length === 0 && bls?.length === 0 && cached.length === 0 && (
         <Text style={styles.meta}>{t.noResults}</Text>
       )}
     </View>

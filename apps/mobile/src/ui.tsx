@@ -118,12 +118,22 @@ export function DetailHeader({
   );
 }
 
-export function PrimaryButton({ title, onPress }: { title: string; onPress: () => void }) {
+export function PrimaryButton({
+  title,
+  onPress,
+  disabled = false,
+}: {
+  title: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.primary, disabled && styles.faded, pressed && styles.pressed]}
     >
       <Text style={styles.primaryText}>{title}</Text>
     </Pressable>
