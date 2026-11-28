@@ -95,8 +95,9 @@ test("upgrades a historical v4 diary and restores the full verified backup", asy
     "edo_sync_remote",
     "edo_sync_staged_meal_claims",
     "edo_sync_submission_ids",
+    "edo_sync_weigh_in_projections",
   ]);
-  expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(7);
+  expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(8);
   const journal = openSyncJournal(source.sqlite);
   expect(journal.history()).toBeNull();
   expect(journal.queued()).toEqual([]);
@@ -362,7 +363,7 @@ test("backs up a bound v6 diary before adding staged ownership storage and retri
 
   const retry = openFile(source.path, source.dir);
   const diary = await retry.open();
-  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 7 });
+  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 8 });
   expect(retry.sqlite.all("SELECT * FROM edo_sync_staged_meal_claims")).toEqual([]);
   expect(JSON.parse(diary.exportPrivateArchive())).toEqual({
     ...v4Archive,
@@ -385,13 +386,57 @@ test("backs up a bound v6 diary before adding staged ownership storage and retri
   await expect(
     migrateDiary(retry.sqlite, v6Migrations, retry.backupBeforeMigration, () => {}),
   ).rejects.toThrow("saved by a newer version of Edo");
-  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 7 });
+  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 8 });
+});
+
+test("preserves staged v7 ownership through an interrupted upgrade for weigh-in evidence", async () => {
+  const source = fixture();
+  const v7 = diaryMigrations.slice(0, 7);
+  await migrateDiary(source.sqlite, v7, source.backupBeforeMigration, () => {});
+  source.sqlite.run(
+    "INSERT INTO edo_sync_staged_meal_claims VALUES (?, ?, 1)",
+    "opaque-meal",
+    '["observed-item"]',
+  );
+  const claims = source.sqlite.all("SELECT * FROM edo_sync_staged_meal_claims");
+  const tablesBefore = journalTables(source.sqlite);
+  const interrupted: DiarySqliteConnection = {
+    ...source.sqlite,
+    exec: (sql) => {
+      source.sqlite.exec(sql);
+      if (sql.includes("CREATE TABLE edo_sync_weigh_in_projections")) {
+        throw new Error("Simulated v8 interruption");
+      }
+    },
+  };
+  await expect(
+    openDiary({ connection: interrupted, backupBeforeMigration: source.backupBeforeMigration }),
+  ).rejects.toThrow("Simulated v8 interruption");
+  expect(source.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 7 });
+  expect(journalTables(source.sqlite)).toEqual(tablesBefore);
+  expect(source.sqlite.all("SELECT * FROM edo_sync_staged_meal_claims")).toEqual(claims);
+
+  source.db.close();
+  const retry = openFile(source.path, source.dir);
+  expect(JSON.parse((await retry.open()).exportPrivateArchive())).toEqual(v4Archive);
+  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 8 });
+  expect(retry.sqlite.all("SELECT * FROM edo_sync_staged_meal_claims")).toEqual(claims);
+  expect(retry.sqlite.all("SELECT * FROM edo_sync_weigh_in_projections")).toEqual([]);
+  using snapshot = new DatabaseSync(join(source.dir, "prior-v7-diary.sqlite"), { readOnly: true });
+  const backup = connection(snapshot);
+  expect(backup.get("PRAGMA user_version")).toEqual({ user_version: 7 });
+  expect(journalTables(backup)).toEqual(tablesBefore);
+  expect(backup.all("SELECT * FROM edo_sync_staged_meal_claims")).toEqual(claims);
+  await expect(
+    migrateDiary(retry.sqlite, v7, retry.backupBeforeMigration, () => {}),
+  ).rejects.toThrow("saved by a newer version of Edo");
 });
 
 test.each([
   "edo_sync_submission_ids",
   "edo_sync_meal_projections",
   "edo_sync_staged_meal_claims",
+  "edo_sync_weigh_in_projections",
 ] as const)(
   "rejects a backup that drops a row from %s before a subsequent migration",
   async (table) => {
@@ -407,6 +452,11 @@ test.each([
       "INSERT INTO edo_sync_staged_meal_claims VALUES (?, ?, 1)",
       "meal",
       '["item"]',
+    );
+    source.sqlite.run(
+      "INSERT INTO edo_sync_weigh_in_projections VALUES (?, 3, ?)",
+      "weight",
+      '{"id":"weight","kg":81}',
     );
 
     await expect(
@@ -427,7 +477,7 @@ test.each([
         () => {},
       ),
     ).rejects.toThrow("Diary backup does not match the current diary");
-    expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(7);
+    expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(8);
     expect(source.sqlite.get(`SELECT count(*) AS count FROM ${table}`)).toEqual({ count: 1 });
   },
 );
