@@ -12,6 +12,7 @@
     "@edo/catalog-import": "workspace:*",
     "@edo/contract": "workspace:*",
     "@edo/core": "workspace:*",
-    "@edo/off-import": "workspace:*"
+    "@edo/off-import": "workspace:*",
+    "@edo/storage": "workspace:*"
   }
 }
