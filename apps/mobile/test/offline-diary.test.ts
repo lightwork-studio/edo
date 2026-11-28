@@ -11,6 +11,7 @@ import { expect, test } from "vitest";
 import {
   diaryDayLimit,
   entryTime,
+  foodLibraryEntryTime,
   localDay,
   mondayOf,
   nextMidnight,
@@ -20,6 +21,19 @@ import {
 } from "../src/diary-view";
 import { foodKey, resolveFavoriteFoods } from "../src/favorite-foods";
 import { appLocale } from "../src/strings";
+
+test("captures primary Foods logging at selection and preserves an existing historical log flow", () => {
+  const before = new Date(2026, 10, 28, 22, 0, 0);
+  const after = new Date(2026, 10, 29, 9, 0, 0);
+  const opened = entryTime(null, before);
+  const historical = entryTime("2026-11-19", before);
+  expect(foodLibraryEntryTime(opened, true, after)).toEqual({
+    day: "2026-11-29",
+    occurredAt: after.getTime(),
+    utcOffsetMinutes: -after.getTimezoneOffset() || 0,
+  });
+  expect(foodLibraryEntryTime(historical, false, after)).toEqual(historical);
+});
 
 function syntheticCatalog() {
   const db = new DatabaseSync(":memory:");
