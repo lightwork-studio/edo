@@ -1223,6 +1223,57 @@ test("fails closed for malformed meal identity without reading another account",
   });
 });
 
+test("rejects changed, malformed or oversized persisted lineage on a continued meal-day read", () => {
+  using store = openSyncStore(filename);
+  const day = "2026-11-04";
+  const alpha = sessionFor(store.createAccount("alpha", "lineage-\uFFFD"));
+  const submissions = Array.from({ length: 9 }, (_, index) => {
+    const id = `meal-${index}`;
+    return put(id, id, null, capturedMealForDay(id));
+  });
+  expect(push(store, alpha, ...submissions).results).toHaveLength(9);
+  const next = store.readMealDay("alpha", day)?.next;
+  if (!next) throw new Error("Expected another page");
+  expect(store.readMealDay("alpha", day, next)?.meals).toHaveLength(1);
+
+  using db = new DatabaseSync(filename);
+  const setLineage = db.prepare(
+    "UPDATE main.sync_accounts SET lineage = CAST(? AS TEXT) WHERE account_binding = 'alpha'",
+  );
+  setLineage.run("restored-lineage");
+  expect(() => store.readMealDay("alpha", day, next)).toThrow(/^Stale meal day cursor$/);
+  setLineage.run(Buffer.from("6c696e656167652dff", "hex"));
+  expect(() => store.readMealDay("alpha", day, next)).toThrow(/^Invalid stored meal day$/);
+  setLineage.run("界".repeat(maxSyncEnvelopeBytes / 4));
+  expect(() => store.readMealDay("alpha", day)).toThrow(/^Invalid stored meal day$/);
+});
+
+test("excludes all coerced account rows before advancing the meal-day cursor", () => {
+  using store = openSyncStore(filename);
+  const day = "2026-11-04";
+  const first = store.createAccount("1", "first-lineage");
+  const second = store.createAccount("01", "second-lineage");
+  using fixture = new DatabaseSync(filename);
+  fixture.prepare("UPDATE sync_accounts SET revision = 34").run();
+  const write = fixture.prepare(
+    "INSERT INTO sync_records (account_binding, revision, kind, record_id) VALUES (?, ?, 'weigh-in', ?)",
+  );
+  for (let revision = 1; revision <= 33; revision++) {
+    write.run(first.accountBinding, revision, `first-${revision}`);
+  }
+  write.run(second.accountBinding, 34, "second");
+  expect(store.readMealDay(second.accountBinding, day)).toEqual({ meals: [], next: null });
+  fixture.exec(`
+    ALTER TABLE main.sync_records RENAME TO original_records;
+    CREATE TABLE main.sync_records (
+      account_binding INTEGER, revision INTEGER, kind TEXT, record_id TEXT, content TEXT
+    ) STRICT;
+    INSERT INTO main.sync_records
+      SELECT CAST(account_binding AS INTEGER), revision, kind, record_id, content FROM main.original_records;
+  `);
+  expect(store.readMealDay(second.accountBinding, day)).toEqual({ meals: [], next: null });
+});
+
 test("reads only a current live meal in the exact account and preserves captured fields", () => {
   const id = "same-meal";
   const alphaMeal = { ...capturedMeal(id, "Alpha baked oats"), utcOffsetMinutes: -240 };
@@ -1383,6 +1434,7 @@ test("keeps SQLite query diagnostics out of meal and weigh-in results", () => {
   expect(() => store.readWeighIn("alpha", "fixture-weight")).toThrowError(
     /^Invalid stored weigh-in$/,
   );
+  expect(() => store.readMealDay("alpha", "2026-11-04")).toThrowError(/^Invalid stored meal day$/);
 });
 
 test.each(["UTF-16le", "UTF-16be"])(
