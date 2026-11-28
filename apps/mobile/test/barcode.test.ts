@@ -774,3 +774,26 @@ it("chooses the latest occurrence when the favorite crosses the date line", asyn
   });
   expect(result.byId.get(foodKey(product.id))).toEqual(honolulu);
 });
+
+it("keeps a cache miss distinct from an unreadable diary day so the favorite can be removed", async () => {
+  const result = await resolveFavoriteFoods({
+    ids: [product.id],
+    localFoods: [],
+    catalog: null,
+    cache: { findByIds: () => [] },
+    language: "en",
+    accessedAt: 100,
+    recentDiary: {
+      today: "2026-11-27",
+      diary: {
+        listMeals(day: string) {
+          if (day === "2026-11-26") throw new Error("Unreadable synthetic diary day");
+          return [];
+        },
+      },
+    },
+  });
+  expect(result.byId.has(foodKey(product.id))).toBe(false);
+  expect(result.packagedCacheFailed).toBe(false);
+  expect(result.failedProviders.has("open-food-facts")).toBe(false);
+});

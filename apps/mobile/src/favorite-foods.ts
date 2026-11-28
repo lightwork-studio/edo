@@ -15,12 +15,11 @@ function addRecentPackagedFavorites(
   sourceIds: readonly string[],
   byId: Map<string, Food>,
   fromDiary: Set<string>,
-): boolean {
+): void {
   const missing = new Set(
     sourceIds.filter((id) => !byId.has(foodKey({ provider: "open-food-facts", sourceId: id }))),
   );
-  if (!missing.size) return false;
-  let unreadableDay = false;
+  if (!missing.size) return;
   const latest = new Map<string, { food: Food; occurredAt: number }>();
   // A later local date can precede an older one in real time after travel.
   for (const day of recentPackagedDays(today)) {
@@ -35,7 +34,7 @@ function addRecentPackagedFavorites(
         }
       }
     } catch {
-      unreadableDay = true;
+      // An unreadable day leaves the other saved days and the catalog cache available.
     }
   }
   for (const { food } of latest.values()) {
@@ -43,7 +42,6 @@ function addRecentPackagedFavorites(
     byId.set(key, food);
     fromDiary.add(key);
   }
-  return unreadableDay && latest.size < missing.size;
 }
 
 export async function resolveFavoriteFoods({
@@ -85,9 +83,7 @@ export async function resolveFavoriteFoods({
     packagedCacheFailed = true;
     failedProviders.add("open-food-facts");
   }
-  if (recentDiary && addRecentPackagedFavorites(recentDiary, offIds, byId, fromDiary)) {
-    failedProviders.add("open-food-facts");
-  }
+  if (recentDiary) addRecentPackagedFavorites(recentDiary, offIds, byId, fromDiary);
   if (catalog) {
     const blsIds = ids.filter(({ provider }) => provider === "bls").map(({ sourceId }) => sourceId);
     try {
