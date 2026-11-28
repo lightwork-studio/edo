@@ -20,8 +20,10 @@ separately while a local attempt is pending. The final acknowledgement applies t
 with the diary update when the last local edit clears.
 
 A stale or rejected mutation remains queued with its server evidence. A caller pulls the current
-copy before offering review. `retryReviewed` verifies both the reviewed server revision
-and the reviewed local draft before assigning a fresh submission ID. The journal reserves
+copy before offering review. Pass the immutable snapshot from `blockedReview` back to
+`retryReviewed` on the same journal. It rechecks the binding and all displayed evidence before
+assigning a fresh submission ID.
+If the evidence changed, open a fresh review. The journal reserves
 previous draft IDs so later edits cannot reuse them. The app can re-add a favourite
 after the user reviews its deletion. Other deleted records need a new ID. The app needs
 the attached-account flow and grouped conflict review before it can offer this candidate to users.

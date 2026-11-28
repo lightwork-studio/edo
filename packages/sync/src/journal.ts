@@ -274,7 +274,7 @@ export interface BlockedSyncReview {
   readonly pulled: Change | null;
 }
 
-function orderedJson(content: JsonObject): string {
+function orderedJson(content: unknown): string {
   return JSON.stringify(content, (_key, value: unknown) => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
     const fields = value as Record<string, unknown>;
@@ -284,6 +284,32 @@ function orderedJson(content: JsonObject): string {
         .map((name) => [name, fields[name]]),
     );
   });
+}
+
+function readBlockedReview(db: JournalSqlite, key: RecordKey) {
+  const binding = savedBinding(db);
+  if (!binding) return null;
+  const row = db.get("SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?", key.kind, key.id);
+  if (!row) return null;
+  const { record, release } = storedRecord(row);
+  if (!record.blocked) return null;
+  const pulled = remoteRecord(db, record.key);
+  const review: BlockedSyncReview = {
+    baseRevision: record.baseRevision,
+    original: record.base,
+    device: record.pending ?? record.blocked.submission,
+    blocked: record.blocked,
+    pulled,
+  };
+  const { server, accountBinding, lineage } = binding;
+  const state = orderedJson([server, accountBinding, lineage, release, record, pulled]);
+  return { record, review, state };
+}
+
+function freezeReview(value: unknown): void {
+  if (!value || typeof value !== "object") return;
+  for (const field of Object.values(value)) freezeReview(field);
+  Object.freeze(value);
 }
 
 function hasLocalWork(record: OutboxRecord): boolean {
@@ -297,6 +323,7 @@ function requireSynchronousWrite(result: undefined): void {
 /** Candidate on-device persistence. Schema installation belongs to the diary migration. */
 export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () => void) {
   let activeSession: NegotiatedSync | null = null;
+  const reviews = new WeakMap<BlockedSyncReview, { key: RecordKey; state: string }>();
 
   function transact<T>(
     operation: () => T,
@@ -565,41 +592,24 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     /** Read the values for a review together, including edits queued after the refusal. */
     blockedReview(key: RecordKey): BlockedSyncReview | null {
       return transact(() => {
-        const row = db.get(
-          "SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?",
-          key.kind,
-          key.id,
-        );
-        if (!row) return null;
-        const { record } = storedRecord(row);
-        if (!record.blocked) return null;
-        return {
-          baseRevision: record.baseRevision,
-          original: record.base,
-          device: record.pending ?? record.blocked.submission,
-          blocked: record.blocked,
-          pulled: remoteRecord(db, record.key),
-        };
+        const current = readBlockedReview(db, key);
+        if (!current) return null;
+        freezeReview(current.review);
+        reviews.set(current.review, { key: current.record.key, state: current.state });
+        return current.review;
       }, "BEGIN");
     },
-    retryReviewed(
-      key: RecordKey,
-      seenRevision: number | null,
-      seenSubmissionId: string,
-      submissionId: string,
-    ) {
+    retryReviewed(review: BlockedSyncReview, submissionId: string) {
+      const shown = reviews.get(review);
+      if (!shown) throw new Error("Open the blocked edit in this diary before retrying");
       return transact(() => {
-        const { record } = localRecord(db, key);
-        const server = remoteRecord(db, key);
-        if ((server?.revision ?? null) !== seenRevision) {
-          throw new Error("The server record changed during review");
-        }
-        const draft = record.pending ?? record.blocked?.submission;
-        if (draft?.submissionId !== seenSubmissionId) {
-          throw new Error("The local edit changed during review");
+        const { key } = shown;
+        const current = readBlockedReview(db, key);
+        if (!current || current.state !== shown.state) {
+          throw new Error("The blocked edit changed during review");
         }
         requireUnusedId(db, submissionId);
-        const retried = retryBlockedOutbox(record, server, submissionId);
+        const retried = retryBlockedOutbox(current.record, current.review.pulled, submissionId);
         decodeSubmission({ ...retried.pending, ...key, baseRevision: retried.baseRevision });
         saveRecord(db, retried);
       });

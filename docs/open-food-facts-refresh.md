@@ -95,6 +95,9 @@ repository inactivity. Re-enable the workflow and dispatch it on the current `ma
 Each new Open Food Facts publication also records the SHA-256 of its barcode lookup index in
 the same publication state. The Worker checks registered index bytes before reading barcode
 shards. Existing releases created before this metadata remain readable.
+Use the current publisher for data rollbacks. An earlier publisher writes legacy state and
+removes existing index registrations. Republish the verified release with the current
+publisher and the existing conditional state update to restore its registration.
 
 The Worker serves the current manifests, immutable artifacts, and barcode lookups under
 `/catalog-preview/` at `edo.timweb.app`. Deploy the staging Worker with
