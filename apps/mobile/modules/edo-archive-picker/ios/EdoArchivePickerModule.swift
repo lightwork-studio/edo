@@ -1,3 +1,4 @@
+import Darwin
 import ExpoModulesCore
 import Foundation
 import UIKit
@@ -148,7 +149,11 @@ private func readSelection(
     coordinatedURL in
     result = Result {
       try cancellation.check()
-      let handle = try FileHandle(forReadingFrom: coordinatedURL)
+      let descriptor = coordinatedURL.withUnsafeFileSystemRepresentation { path in
+        path.map { open($0, O_RDONLY | O_NONBLOCK | O_CLOEXEC) } ?? -1
+      }
+      guard descriptor >= 0 else { throw ArchiveReadError.unreadable }
+      let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
       defer { try? handle.close() }
       return try readArchive(from: handle, checkCancellation: cancellation.check)
     }

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.content.res.AssetFileDescriptor
 import android.net.Uri
 import android.os.CancellationSignal
 import android.provider.OpenableColumns
@@ -13,7 +14,6 @@ import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.SynchronousQueue
@@ -131,30 +131,27 @@ private fun readSelection(resolver: ContentResolver, uri: Uri, signal: Cancellat
   }
   signal.throwIfCanceled()
   val descriptor = requireNotNull(resolver.openAssetFileDescriptor(uri, "r", signal))
-  val input = try {
-    descriptor.createInputStream()
-  } catch (error: Exception) {
-    runCatching { descriptor.close() }
-    throw error
-  }
-  val source = readCancellableArchive(input, signal)
+  val source = readCancellableArchive(descriptor, signal)
   return if (source == null) mapOf("status" to "too-large")
   else mapOf("status" to "selected", "source" to source)
 }
 
-internal fun readCancellableArchive(input: InputStream, signal: CancellationSignal): String? {
+internal fun readCancellableArchive(
+  descriptor: AssetFileDescriptor,
+  signal: CancellationSignal,
+): String? {
   val closed = AtomicBoolean()
-  fun closeInput() {
-    if (closed.compareAndSet(false, true)) input.close()
+  fun closeDescriptor() {
+    if (closed.compareAndSet(false, true)) descriptor.close()
   }
   // After openAssetFileDescriptor returns, the provider no longer handles its cancellation
-  // signal. Closing the owned stream releases its descriptor and interrupts Android pipe reads.
-  signal.setOnCancelListener { runCatching { closeInput() } }
+  // signal. Take ownership before stream construction, which can also touch the descriptor.
+  signal.setOnCancelListener { runCatching { closeDescriptor() } }
   try {
     signal.throwIfCanceled()
-    return readArchive(input, checkCancellation = signal::throwIfCanceled)
+    return readArchive(descriptor.createInputStream(), checkCancellation = signal::throwIfCanceled)
   } finally {
     signal.setOnCancelListener(null)
-    closeInput()
+    closeDescriptor()
   }
 }
