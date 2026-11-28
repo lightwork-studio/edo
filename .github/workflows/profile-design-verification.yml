@@ -45,8 +45,8 @@ jobs:
         working-directory: apps/mobile/android
         run: |
           export JAVA_HOME="$JAVA_HOME_17_X64"
-          ./gradlew :app:assembleRelease \
-            --console=plain -PreactNativeArchitectures=x86_64
+          ./gradlew :app:assembleRelease --console=plain -PreactNativeArchitectures=x86_64 ||
+            ./gradlew :app:assembleRelease --console=plain -PreactNativeArchitectures=x86_64
       - name: Verify Profile before and after saving a target
         run: |
           set -o pipefail
