@@ -29,3 +29,8 @@ If the evidence changed, open a fresh review. The journal reserves
 previous draft IDs so later edits cannot reuse them. The app can re-add a favourite
 after the user reviews its deletion. Other deleted records need a new ID. The app needs
 the attached-account flow and grouped conflict review before it can offer this candidate to users.
+
+Call `reviewHistory` to detect a changed endpoint locally. For the saved endpoint, it can
+report a same-account restore, lineage change or regressed revision from an authenticated
+read-only hello. Reviewing invalidates the client session.
+The later recovery flow can use the result to decide whether to reconnect or show a prompt.

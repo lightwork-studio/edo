@@ -31,6 +31,14 @@ interface SyncClientOptions {
 type SavedHistory = Pick<AuthenticatedHistory, "accountBinding" | "lineage" | "revision"> & {
   readonly server: string;
 };
+
+type HistoryReview =
+  | { readonly status: "server-moved" | "account-changed"; readonly server: string }
+  | {
+      readonly status: "same-history" | "lineage-changed" | "cursor-reset";
+      readonly server: string;
+      readonly observed: Pick<AuthenticatedHistory, "lineage" | "revision" | "restoredFrom">;
+    };
 export const maxSyncRequestBytes = (maxSyncEnvelopeBytes * 3) / 4;
 const serversBySession = new WeakMap<NegotiatedSync, string>();
 const responseOrigin = new WeakMap<
@@ -220,26 +228,58 @@ export function createSyncClient({
     };
   }
 
+  function beginConnection() {
+    const attempt = ++generation;
+    if (active) serversBySession.delete(active.session);
+    active = null;
+    return () => generation === attempt;
+  }
+
+  async function requestHello(isCurrent: () => boolean, signal?: AbortSignal, request = hello) {
+    const header = await authorization();
+    const reply = await post("hello", request, { authorization: header, isCurrent, signal });
+    return { header, reply };
+  }
+
   return {
     server: base,
     async connect(previous?: SavedHistory, signal?: AbortSignal) {
-      const attempt = ++generation;
-      if (active) serversBySession.delete(active.session);
-      active = null;
+      const isCurrent = beginConnection();
       if (previous && previous.server !== base) {
         throw new SyncWireError(
           "account-changed",
           "The saved diary belongs to a different sync server",
         );
       }
-      const header = await authorization();
-      const options = { authorization: header, isCurrent: () => generation === attempt, signal };
-      const reply = await post("hello", hello, options);
-      assertCurrent(options.isCurrent);
+      const { header, reply } = await requestHello(isCurrent, signal);
+      assertCurrent(isCurrent);
       const session = acceptHello(hello, reply, previous, releases);
       serversBySession.set(session, base);
       active = { session, authorization: header };
       return session;
+    },
+    /** Read a recovery decision for the saved binding without enabling push or pull. */
+    async reviewHistory(previous: SavedHistory, signal?: AbortSignal): Promise<HistoryReview> {
+      const isCurrent = beginConnection();
+      if (previous.server !== base) return { status: "server-moved", server: base };
+      if (!Number.isSafeInteger(previous.revision) || previous.revision < 0) {
+        throw new SyncWireError("invalid-request", "Invalid saved account revision");
+      }
+      const request: HelloRequest = { releases: hello.releases, features: [] };
+      const { reply } = await requestHello(isCurrent, signal, request);
+      assertCurrent(isCurrent);
+      const observed = acceptHello(request, reply, undefined, releases);
+      if (observed.accountBinding !== previous.accountBinding) {
+        return { status: "account-changed", server: base };
+      }
+      const { lineage, revision, restoredFrom } = observed;
+      const status =
+        lineage !== previous.lineage
+          ? "lineage-changed"
+          : revision < previous.revision
+            ? "cursor-reset"
+            : "same-history";
+      return { status, server: base, observed: { lineage, revision, restoredFrom } };
     },
     async push(session: NegotiatedSync, submissions: readonly Submission[], signal?: AbortSignal) {
       const current = scope(session, signal);
