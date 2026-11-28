@@ -1274,6 +1274,30 @@ test("excludes all coerced account rows before advancing the meal-day cursor", (
   expect(store.readMealDay(second.accountBinding, day)).toEqual({ meals: [], next: null });
 });
 
+test("does not decode a malformed BLOB ID as another current meal", () => {
+  using store = openSyncStore(filename);
+  const alpha = sessionFor(store.createAccount("alpha", "lineage-alpha"));
+  const meal = capturedMealForDay("meal-1");
+  const latest = { ...meal, utcOffsetMinutes: -300 };
+  expect(push(store, alpha, put(meal.id, "create", null, meal)).results).toMatchObject([
+    { status: "accepted", revision: 1 },
+  ]);
+  expect(push(store, alpha, put(meal.id, "edit", 1, latest)).results).toMatchObject([
+    { status: "accepted", revision: 2 },
+  ]);
+  using fixture = new DatabaseSync(filename);
+  fixture.exec(`
+    ALTER TABLE main.sync_records RENAME TO original_records;
+    CREATE TABLE main.sync_records (
+      account_binding TEXT, revision INTEGER, kind TEXT, record_id ANY, content TEXT
+    ) STRICT;
+    INSERT INTO main.sync_records SELECT * FROM main.original_records;
+    INSERT INTO main.sync_records VALUES ('alpha', 1, 'meal', X'6D65616C2D31', NULL);
+  `);
+  expect(store.readMeal("alpha", meal.id)).toEqual({ ...latest, revision: 2 });
+  expect(() => store.readMealDay("alpha", meal.localDay)).toThrow(/^Invalid stored meal day$/);
+});
+
 test("reads only a current live meal in the exact account and preserves captured fields", () => {
   const id = "same-meal";
   const alphaMeal = { ...capturedMeal(id, "Alpha baked oats"), utcOffsetMinutes: -240 };

@@ -634,7 +634,8 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
     const privateRecordPage = db.prepare(`
       SELECT revision,
         CASE WHEN typeof(kind) = 'text' THEN kind COLLATE BINARY = 'meal' END AS is_meal,
-        CASE WHEN kind COLLATE BINARY = 'meal' AND octet_length(record_id) <= ?
+        CASE WHEN kind COLLATE BINARY = 'meal' AND typeof(record_id) = 'text'
+          AND octet_length(record_id) <= ?
           THEN CAST(record_id AS BLOB) END AS meal_id
       FROM main.sync_records
       WHERE account_binding COLLATE BINARY = ? AND revision > ?
@@ -674,7 +675,12 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       return row ? storedHistory(row) : null;
     }
 
-    function readCurrentRecord(kind: CurrentReadKind, accountBinding: string, id: string) {
+    function readCurrentRecord(
+      kind: CurrentReadKind,
+      accountBinding: string,
+      id: string,
+      expectedRevision?: number,
+    ) {
       if (
         !isRecordId(accountBinding) ||
         accountBinding.length > maxHistoryIdentityLength ||
@@ -690,7 +696,10 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
           kind,
           id,
         );
-        if (!row) return null;
+        if (!row) {
+          if (expectedRevision !== undefined) throw new TypeError("Missing scanned record");
+          return null;
+        }
         const { content, content_type, revision, account_revision } = row;
         if (
           duplicate ||
@@ -700,6 +709,7 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
           row.record_id !== id ||
           typeof revision !== "bigint" ||
           revision < 1n ||
+          (expectedRevision !== undefined && revision !== BigInt(expectedRevision)) ||
           typeof account_revision !== "bigint" ||
           account_revision < revision ||
           !Number.isSafeInteger(Number(account_revision))
@@ -728,8 +738,12 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       }
     }
 
-    function readMeal(accountBinding: string, id: string): CurrentMeal | null {
-      const change = readCurrentRecord("meal", accountBinding, id);
+    function readMeal(
+      accountBinding: string,
+      id: string,
+      expectedRevision?: number,
+    ): CurrentMeal | null {
+      const change = readCurrentRecord("meal", accountBinding, id, expectedRevision);
       if (!change) return null;
       try {
         const meal = readMealSnapshot(change.content);
@@ -807,7 +821,7 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
         if (!isRecordId(id) || id.length > maxSyncEnvelopeBytes) {
           throw new Error("Invalid stored meal day");
         }
-        const meal = readMeal(accountBinding, id);
+        const meal = readMeal(accountBinding, id, afterRevision);
         if (meal?.localDay === localDay) meals.push(meal);
       }
       return { meals, next: null };
