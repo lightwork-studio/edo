@@ -80,7 +80,8 @@ export function FddbImportScreen({
     }
   }
 
-  const canImport = preview && preview.storage.newRecords > 0 && !preview.storage.issues.length;
+  const canImport =
+    preview?.archive && preview.storage.newRecords > 0 && !preview.storage.issues.length;
   return (
     <>
       <DetailHeader title={t.fddbImport} back={t.back} onBack={onBack} />
@@ -154,6 +155,11 @@ export function FddbImportScreen({
         )}
         {preview && (
           <View style={styles.card}>
+            {preview.incompleteAtLine !== null && (
+              <Text style={styles.error} accessibilityRole="alert">
+                {t.fddbIncomplete(preview.incompleteAtLine)}
+              </Text>
+            )}
             <Text style={styles.body} accessibilityLiveRegion="polite">
               {t.fddbPreviewCounts(preview.storage.newRecords, preview.storage.alreadyPresent)}
             </Text>
@@ -187,7 +193,7 @@ export function FddbImportScreen({
                 await new Promise<void>((resolve) => {
                   requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
                 });
-                if (!active.current) return;
+                if (!active.current || preview.archive === null) return;
                 const saved = diary.restorePrivateArchive(preview.archive);
                 if (saved.status === "rejected") {
                   setPreview({ ...preview, storage: saved.preview });

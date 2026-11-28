@@ -11,6 +11,7 @@ const germanHeader = [
   "kh_g",
   "protein_g",
 ];
+const maxBoundedFieldLength = 8_192;
 
 export interface FddbDiaryRow {
   readonly line: number;
@@ -27,6 +28,7 @@ type FddbIssueCode =
   | "unsupported-header"
   | "malformed-csv"
   | "wrong-column-count"
+  | "field-too-long"
   | "invalid-timestamp"
   | "missing-food-name"
   | "invalid-nutrition"
@@ -40,54 +42,85 @@ export interface FddbDiaryPreview {
 
 export class FddbCsvRecordLimitError extends RangeError {}
 
-function readQuotedField(source: string, start: number) {
+function quotedFieldEnd(source: string, start: number): number {
   let end = source.indexOf('"', start + 1);
   while (end !== -1 && source[end + 1] === '"') {
     end = source.indexOf('"', end + 2);
   }
-  return end === -1
-    ? null
-    : {
-        value: source.slice(start + 1, end).replaceAll('""', '"'),
-        end: end + 1,
-      };
+  return end;
 }
 
-function* records(source: string): Generator<{ line: number; fields: string[] | null }> {
-  const bareField = /[^";\r\n]*/y;
+function bareFieldEnd(source: string, start: number): number {
+  let end = start;
+  while (end < source.length) {
+    const char = source[end];
+    if (char === '"' || char === ";" || char === "\r" || char === "\n") break;
+    end++;
+  }
+  return end;
+}
+
+function countLineBreaks(source: string, start: number, end: number): number {
+  let count = 0;
+  for (let index = start; index < end; index++) {
+    if (source[index] === "\r") {
+      count++;
+      if (source[index + 1] === "\n") index++;
+    } else if (source[index] === "\n") {
+      count++;
+    }
+  }
+  return count;
+}
+
+function* records(
+  source: string,
+  maxFieldLength?: number,
+): Generator<{ line: number; fields: string[] | null; oversizedField: boolean }> {
   let cursor = 0;
   let line = 1;
   let rowLine = 1;
   let fields: string[] = [];
+  let oversizedField = false;
   while (cursor <= source.length) {
     const quoted = source[cursor] === '"';
-    bareField.lastIndex = cursor;
-    const bare = quoted ? undefined : bareField.exec(source)?.[0];
-    const field =
-      bare === undefined
-        ? readQuotedField(source, cursor)
-        : { value: bare, end: cursor + bare.length };
-    const boundary = field ? source[field.end] : undefined;
+    const end = quoted ? quotedFieldEnd(source, cursor) : bareFieldEnd(source, cursor);
+    const next = quoted ? end + 1 : end;
+    const boundary = source[next];
     if (
-      !field ||
+      end === -1 ||
       (boundary !== undefined && boundary !== ";" && boundary !== "\r" && boundary !== "\n")
     ) {
       // A broken quoted field can change the location of subsequent record boundaries.
-      yield { line: rowLine, fields: null };
+      yield { line: rowLine, fields: null, oversizedField };
       return;
     }
-    fields.push(field.value);
-    if (quoted) line += field.value.match(/\r\n|[\r\n]/g)?.length ?? 0;
-    cursor = field.end;
+    if (fields.length < germanHeader.length) {
+      const start = quoted ? cursor + 1 : cursor;
+      if (maxFieldLength !== undefined && end - start > maxFieldLength) {
+        oversizedField = true;
+        fields.push("");
+      } else {
+        const value = source.slice(start, end);
+        fields.push(quoted ? value.replaceAll('""', '"') : value);
+      }
+    } else if (fields.length === germanHeader.length) {
+      // One extra slot flags an over-wide row. Scan its remainder without retaining any values.
+      fields.push("");
+    }
+    if (quoted) line += countLineBreaks(source, cursor + 1, end);
+    cursor = next;
     if (source[cursor] === ";") {
       cursor++;
       continue;
     }
-    yield { line: rowLine, fields };
+    yield { line: rowLine, fields, oversizedField };
     if (cursor === source.length) return;
     cursor += source.startsWith("\r\n", cursor) ? 2 : 1;
+    if (cursor === source.length) return;
     rowLine = ++line;
     fields = [];
+    oversizedField = false;
   }
 }
 
@@ -109,12 +142,15 @@ function timestamp(field: string | undefined): { localDay: string; localTime: st
   return { localDay, localTime };
 }
 
-/** Read the supported FDDB web export without rewriting dates or inserting records. */
+/** Read FDDB rows without writing. A record limit also bounds field length before decoding. */
 export function previewFddbDiaryCsv(source: string, maxRecords?: number): FddbDiaryPreview {
   if (maxRecords !== undefined && (!Number.isSafeInteger(maxRecords) || maxRecords < 1)) {
     throw new RangeError("Invalid FDDB record limit");
   }
-  const csv = records(source.replace(/^\uFEFF/, ""));
+  const csv = records(
+    source.replace(/^\uFEFF/, ""),
+    maxRecords === undefined ? undefined : maxBoundedFieldLength,
+  );
   const header = csv.next().value?.fields;
   if (
     !header ||
@@ -128,8 +164,7 @@ export function previewFddbDiaryCsv(source: string, maxRecords?: number): FddbDi
   const issues: { line: number; code: FddbIssueCode }[] = [];
   let activityRows = 0;
   let recordCount = 0;
-  for (const { line, fields } of csv) {
-    if (fields?.length === 1 && !fields[0]?.trim()) continue;
+  for (const { line, fields, oversizedField } of csv) {
     if (maxRecords !== undefined && ++recordCount > maxRecords) {
       throw new FddbCsvRecordLimitError("The FDDB export has too many records");
     }
@@ -137,6 +172,11 @@ export function previewFddbDiaryCsv(source: string, maxRecords?: number): FddbDi
       issues.push({ line, code: "malformed-csv" });
       break;
     }
+    if (oversizedField) {
+      issues.push({ line, code: "field-too-long" });
+      continue;
+    }
+    if (fields.length === 1 && !fields[0]?.trim()) continue;
     if (fields.length !== germanHeader.length) {
       issues.push({ line, code: "wrong-column-count" });
       continue;
