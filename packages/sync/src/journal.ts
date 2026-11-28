@@ -350,6 +350,8 @@ function availableMealProjection(db: JournalSqlite, id: string): MealProjection 
 export interface MealProjectionHistory {
   /** Prior locally applied evidence, including for a meal whose current work blocks projection. */
   readonly projection: MealProjection | null;
+  /** Authenticated account evidence can establish positive claims independently of projection. */
+  readonly accountBase: Change | null;
   readonly hadPriorBase: boolean;
 }
 
@@ -394,6 +396,7 @@ function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
       change: projected?.base ?? remote,
       history: {
         projection: mealProjectionAtBase(db, remote.id, record),
+        accountBase: record.base,
         hadPriorBase: record.baseRevision !== null,
       },
     });
@@ -401,7 +404,8 @@ function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
   const applied = new Set(
     apply(
       [...staged.values()].map(({ change, record }) => ({ change, blocked: record === null })),
-      (id) => staged.get(id)?.history ?? { projection: null, hadPriorBase: false },
+      (id) =>
+        staged.get(id)?.history ?? { projection: null, accountBase: null, hadPriorBase: false },
     ),
   );
   for (const id of applied) {

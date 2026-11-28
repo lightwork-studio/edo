@@ -100,6 +100,22 @@ test("waits for a current owner and declines inconsistent duplicate latest claim
   });
 });
 
+test("does not adopt a matching tombstone after an unjournaled item removal", () => {
+  const result = groupMealProjections(
+    [
+      { id: "a", current: null, prior: mealA, incoming: null },
+      {
+        id: "destination",
+        current: null,
+        prior: undefined,
+        incoming: meal("destination", [first]),
+      },
+    ],
+    new Map(),
+  );
+  expect(result).toEqual({ groups: [], deferred: ["a", "destination"] });
+});
+
 test("keeps ownership changes with opaque claims and permits an unrelated metadata edit", () => {
   const cleanMetadata = { ...mealB, occurredAt: mealB.occurredAt + 60_000 };
   const source = { id: mealA.id, current: mealA, prior: mealA, incoming: meal("a", []) };

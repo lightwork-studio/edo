@@ -7,6 +7,9 @@ export interface MealProjectionCandidate {
   readonly prior: DiaryMeal | null | undefined;
   /** A v5 journal may know the revision without retaining its effective local contents. */
   readonly hadPriorBase?: boolean;
+  /** Positive ownership evidence may exist even when the complete prior meal is unavailable. */
+  readonly priorClaims?: readonly string[];
+  readonly unknownPrior?: boolean;
   /** Undefined means the account copy is opaque or unavailable. */
   readonly incoming: DiaryMeal | null | undefined;
   readonly opaqueClaims?: readonly string[];
@@ -17,16 +20,25 @@ function sameMeal(left: DiaryMeal | null, right: DiaryMeal | null | undefined): 
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function canProject({
-  current,
-  prior,
-  incoming,
-  hadPriorBase,
-  blocked,
-}: MealProjectionCandidate): boolean {
-  if (blocked || incoming === undefined) return false;
+function hasUnknownPrior({ unknownPrior, hadPriorBase, prior }: MealProjectionCandidate) {
+  return unknownPrior ?? (hadPriorBase === true && prior === undefined);
+}
+
+function sameItemIds(current: DiaryMeal | null, prior: DiaryMeal | null) {
+  const currentIds = new Set(current?.items.map(({ id }) => id));
+  return (
+    currentIds.size === (prior?.items.length ?? 0) &&
+    (prior?.items.every(({ id }) => currentIds.has(id)) ?? true)
+  );
+}
+
+function canProject(candidate: MealProjectionCandidate): boolean {
+  const { current, prior, incoming, hadPriorBase, blocked } = candidate;
+  if (blocked || incoming === undefined || hasUnknownPrior(candidate)) return false;
   if (prior === null && incoming !== null) return false;
-  if (sameMeal(current, incoming)) return true;
+  if (sameMeal(current, incoming)) {
+    return prior === undefined ? !hadPriorBase : sameItemIds(current, prior);
+  }
   return prior === undefined ? !hadPriorBase && current === null : sameMeal(current, prior);
 }
 
@@ -49,15 +61,12 @@ export function groupMealProjections(
   const unknownClaims = candidates.some(
     ({ incoming, opaqueClaims }) => incoming === undefined && opaqueClaims === undefined,
   );
-  const unknownHistory = candidates.some(
-    ({ current, incoming, prior, hadPriorBase }) =>
-      hadPriorBase && prior === undefined && !sameMeal(current, incoming),
-  );
-  for (const { id, prior } of candidates) {
-    for (const item of prior?.items ?? []) {
-      const itemOwners = priorOwners.get(item.id) ?? new Set<string>();
+  const unknownHistory = candidates.some(hasUnknownPrior);
+  for (const { id, prior, priorClaims } of candidates) {
+    for (const itemId of priorClaims ?? prior?.items.map((item) => item.id) ?? []) {
+      const itemOwners = priorOwners.get(itemId) ?? new Set<string>();
       itemOwners.add(id);
-      priorOwners.set(item.id, itemOwners);
+      priorOwners.set(itemId, itemOwners);
     }
   }
 

@@ -1,4 +1,4 @@
-import type { Change, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
+import type { NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
 import { type MealProjectionHistory, openSyncJournal, type StagedMealChange } from "@edo/sync";
 import { readMealEntries } from "./diary-archive.ts";
@@ -173,13 +173,24 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
   return meal?.id === id ? meal : null;
 }
 
-function opaqueMealItemIds(change: Change): string[] | undefined {
-  if (change.state !== "live" || !Array.isArray(change.content.items)) return undefined;
+function mealItemIds(content: unknown, id: string): string[] | undefined {
+  if (
+    !content ||
+    typeof content !== "object" ||
+    !("id" in content) ||
+    content.id !== id ||
+    !("items" in content) ||
+    !Array.isArray(content.items)
+  ) {
+    return undefined;
+  }
   const ids = new Set<string>();
-  for (const item of change.content.items) {
+  for (const item of content.items) {
     if (!item || typeof item !== "object" || !("id" in item)) return undefined;
     try {
-      ids.add(diaryId(item.id, "meal item ID"));
+      const itemId = diaryId(item.id, "meal item ID");
+      if (ids.has(itemId)) return undefined;
+      ids.add(itemId);
     } catch {
       return undefined;
     }
@@ -197,7 +208,10 @@ function projectMeals(
   for (const { change, blocked } of changes) {
     const parsed = change.state === "live" ? readRebaseMeal(change.content, change.id) : null;
     const incoming = change.state === "deleted" ? null : (parsed ?? undefined);
-    const opaqueClaims = incoming === undefined ? opaqueMealItemIds(change) : undefined;
+    const opaqueClaims =
+      incoming === undefined && change.state === "live"
+        ? mealItemIds(change.content, change.id)
+        : undefined;
     const current = readMeal(db, change.id);
     // The existing writer would keep a known offset for an unchanged event. Keep this
     // unsynchronized until a projection can remember the exact effective local value.
@@ -209,18 +223,24 @@ function projectMeals(
         current.localDay === incoming.localDay &&
         current.occurredAt === incoming.occurredAt,
     );
-    const { projection, hadPriorBase } = history(change.id);
+    const { projection, accountBase, hadPriorBase } = history(change.id);
     const prior = projection
       ? projection.content === null
         ? null
         : (readRebaseMeal(projection.content, change.id) ?? undefined)
       : undefined;
+    const priorClaims =
+      projection?.content === null ? [] : mealItemIds(projection?.content, change.id);
+    const accountClaims =
+      accountBase?.state === "live" ? mealItemIds(accountBase.content, change.id) : undefined;
     candidates.push({
       id: change.id,
       current,
       prior,
       incoming,
       hadPriorBase,
+      priorClaims: [...new Set([...(priorClaims ?? []), ...(accountClaims ?? [])])],
+      unknownPrior: hadPriorBase && priorClaims === undefined,
       blocked: blocked || wouldKeepOffset,
       ...(opaqueClaims && { opaqueClaims }),
     });
