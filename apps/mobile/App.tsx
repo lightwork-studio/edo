@@ -45,6 +45,7 @@ import {
   diaryDayLimit,
   type EntryTime,
   entryTime,
+  foodPreviewItems,
   localDay,
   mondayOf,
   nextMidnight,
@@ -740,16 +741,14 @@ function DiaryApp({
   const selected = favorites?.some((id) => foodKey(id) === foodKey(food.id)) ?? false;
   const target = readTarget(diary, route.day)?.target;
   const dayMeals = target ? readMeals(diary, route.day) : null;
-  const before = dayMeals
-    ? totalNutrition(dayMeals, route.kind === "edit" ? route : undefined)
-    : null;
+  const inputs = dayMeals ? foodPreviewItems(dayMeals, route) : null;
   return (
     <FoodDetail
       t={t}
       locale={locale}
       date={date}
       food={food}
-      day={target && before ? { before, target } : undefined}
+      day={target && inputs ? { ...inputs, target } : undefined}
       favorite={
         route.kind === "add"
           ? favorites

@@ -202,7 +202,7 @@ export function TargetRing({
   size,
   color,
   fraction,
-  baseline = 0,
+  baseline,
   children,
 }: {
   size: number;
@@ -211,10 +211,11 @@ export function TargetRing({
   baseline?: number;
   children: ReactNode;
 }) {
-  const rim = size >= 100 ? 13 : size >= 40 ? 4 : 3;
+  const segmented = baseline !== undefined;
+  const rim = segmented ? 6 : size >= 100 ? 13 : size >= 40 ? 4 : 3;
   const circle = { width: size, height: size, borderRadius: size / 2, borderWidth: rim };
   const amount = fraction ?? 0;
-  const start = Math.min(baseline, amount);
+  const start = Math.min(baseline ?? 0, amount);
   return (
     <View style={[ringStyles.shell, { width: size, height: size }]}>
       <View
@@ -225,7 +226,14 @@ export function TargetRing({
         <View style={[circle, ringStyles.paint, { borderColor: colors.field }]} />
         {start > 0 && <TargetArc size={size} rim={rim} color={color} amount={start} dim />}
         {amount > start && (
-          <TargetArc size={size} rim={rim} color={color} amount={amount - start} start={start} />
+          <TargetArc
+            size={size}
+            rim={rim}
+            color={color}
+            amount={amount - start}
+            start={start}
+            rounded={!segmented}
+          />
         )}
       </View>
       {children}
@@ -240,6 +248,7 @@ function TargetArc({
   amount,
   start = 0,
   dim = false,
+  rounded = false,
 }: {
   size: number;
   rim: number;
@@ -247,6 +256,7 @@ function TargetArc({
   amount: number;
   start?: number;
   dim?: boolean;
+  rounded?: boolean;
 }) {
   const circle = { width: size, height: size, borderRadius: size / 2, borderWidth: rim };
   const opacity = dim ? 0.35 : 1;
@@ -280,17 +290,21 @@ function TargetArc({
           />
         </View>
       ))}
-      <View style={[ringStyles.cap, cap, { left: radius }]} />
-      <View
-        style={[
-          ringStyles.cap,
-          cap,
-          {
-            left: radius + Math.sin(radians) * radius,
-            top: radius - Math.cos(radians) * radius,
-          },
-        ]}
-      />
+      {rounded && (
+        <>
+          <View style={[ringStyles.cap, cap, { left: radius }]} />
+          <View
+            style={[
+              ringStyles.cap,
+              cap,
+              {
+                left: radius + Math.sin(radians) * radius,
+                top: radius - Math.cos(radians) * radius,
+              },
+            ]}
+          />
+        </>
+      )}
     </View>
   );
 }
