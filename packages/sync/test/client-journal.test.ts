@@ -196,6 +196,12 @@ test("two file-backed devices survive a lost response and preserve stale edits a
       blocked: { submission: { submissionId: "a-2" } },
       pulled: { revision: 2, content: { kg: 81 } },
     });
+    if (current.device.op !== "put" || current.pulled?.state !== "live") {
+      throw new Error("Expected a review of two live weigh-in values");
+    }
+    expect(Reflect.set(current, "device", current.blocked.submission)).toBe(false);
+    expect(Reflect.set(current.device.content, "kg", 79)).toBe(false);
+    expect(Reflect.set(current.pulled.content, "kg", 84)).toBe(false);
     expect(() => a.journal.commitLocal(key, edit("new-draft", 78), () => a.set(78))).toThrow(
       /cannot reuse/,
     );

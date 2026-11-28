@@ -306,6 +306,12 @@ function readBlockedReview(db: JournalSqlite, key: RecordKey) {
   return { record, review, state };
 }
 
+function freezeReview(value: unknown): void {
+  if (!value || typeof value !== "object") return;
+  for (const field of Object.values(value)) freezeReview(field);
+  Object.freeze(value);
+}
+
 function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
 }
@@ -588,6 +594,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       return transact(() => {
         const current = readBlockedReview(db, key);
         if (!current) return null;
+        freezeReview(current.review);
         reviews.set(current.review, { key: current.record.key, state: current.state });
         return current.review;
       }, "BEGIN");
