@@ -87,7 +87,14 @@ async function openLocalDiaryConnection() {
         localDay: "2026-11-10",
         occurredAt: Date.UTC(2026, 10, 11, 0, 30, 0, 3),
         utcOffsetMinutes: -240,
-        items: [item],
+        items: [
+          item,
+          ...Array.from({ length: 20 }, (_, index) => ({
+            ...item,
+            id: `paged-oats-${index + 2}`,
+            food: { ...item.food, name: `Paged oats ${index + 2}` },
+          })),
+        ],
         phoneDetail: "Private phone sentinel",
       };
       const account = {
@@ -99,7 +106,13 @@ async function openLocalDiaryConnection() {
           localDay: "2026-11-11",
           occurredAt: phone.occurredAt + 1,
           utcOffsetMinutes: 60,
-          items: [{ ...item, portion: { amount: 50, unit: "g" }, nutrients: { ...nutrients, kcal: null } }],
+          items: [
+            {
+              ...item,
+              portion: { amount: 50, unit: "g" },
+              nutrients: { ...nutrients, kcal: null, proteinG: 2.125 },
+            },
+          ],
           future: "Private account sentinel",
         },
       };
