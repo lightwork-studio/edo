@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +8,19 @@ import { expect, test } from "vitest";
 import { publishOpenFoodFactsCatalog } from "../../packages/off-import/src/index.ts";
 import { publishCatalogToR2 } from "./publish.ts";
 import worker from "./worker.ts";
+
+test("loads the catalog publisher with Node's default TypeScript support", () => {
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      "await import(process.argv[1])",
+      new URL("./publish.ts", import.meta.url).href,
+    ],
+    { env: { NODE_OPTIONS: "" }, timeout: 10_000 },
+  );
+});
 
 test("publishes and verifies catalog objects before the conditional active write", async () => {
   const root = await mkdtemp(join(tmpdir(), "edo-r2-publish-test-"));

@@ -11,7 +11,13 @@
       "name": "edo-catalog-staging",
       "workers_dev": true,
       "routes": [],
-      "r2_buckets": [{ "binding": "CATALOGS", "bucket_name": "edo-catalogs" }]
+      "r2_buckets": [{ "binding": "CATALOGS", "bucket_name": "edo-catalogs" }],
+      "durable_objects": {
+        "bindings": [{ "name": "OFF_LIVE", "class_name": "OpenFoodFactsLive" }]
+      },
+      "exports": {
+        "OpenFoodFactsLive": { "type": "durable-object", "storage": "sqlite" }
+      }
     }
   }
 }

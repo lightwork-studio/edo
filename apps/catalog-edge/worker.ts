@@ -7,6 +7,13 @@ import {
   type PackagedFood,
 } from "../../packages/core/src/packaged-food.ts";
 import {
+  createOpenFoodFactsLiveLookup,
+  type LiveBarcodeResult,
+  type LiveLookupQuota,
+  liveLookupRequestsPerWindow,
+  liveLookupWindowMs,
+} from "../../packages/off-import/src/live-lookup.ts";
+import {
   checksum,
   maxBlsManifestBytes,
   maxManifestBytes,
@@ -23,6 +30,7 @@ type StoredProduct = Omit<PackagedFood, "release">;
 
 export interface CatalogEnvironment {
   CATALOGS: { get(key: string): Promise<StoredObject | null> };
+  OFF_LIVE?: { getByName(name: string): { fetch(url: string): Promise<Response> } };
 }
 
 const root = "/catalog-preview";
@@ -72,7 +80,80 @@ function json(body: unknown, status: number) {
   });
 }
 
-async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
+interface Budget {
+  requests: number[];
+  pausedUntil: number;
+}
+
+interface BudgetStorage {
+  kv: { get(key: string): Budget | undefined; put(key: string, value: Budget): void };
+  sync(): Promise<void>;
+}
+
+const quotaKey = "quota";
+const dispatchGraceMs = 1000;
+const liveStatus: Record<Exclude<LiveBarcodeResult["status"], "found">, number> = {
+  invalid: 400,
+  "not-found": 404,
+  "rate-limited": 429,
+  unavailable: 503,
+};
+
+export class OpenFoodFactsLive {
+  private readonly state: { storage: BudgetStorage };
+
+  constructor(state: { storage: BudgetStorage }) {
+    this.state = state;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const code = new URL(request.url).pathname.slice(1);
+    if (request.method !== "GET" || code.length > 64 || !normalizeOpenFoodFactsBarcode(code))
+      return json({ status: "invalid" }, 400);
+    const { storage } = this.state;
+    const readBudget = (): Budget => storage.kv.get(quotaKey) ?? { requests: [], pausedUntil: 0 };
+    // Admission runs on one named object. Commit its reservation before sending the request.
+    const quota: LiveLookupQuota = {
+      async reserve(at) {
+        const budget = readBudget();
+        const requests = budget.requests.filter((time) => at - time < liveLookupWindowMs);
+        if (at < budget.pausedUntil || requests.length >= liveLookupRequestsPerWindow) return null;
+        // Charge the latest possible dispatch time. A slow flush cannot move a call past it.
+        const dispatchBy = at + dispatchGraceMs;
+        storage.kv.put(quotaKey, { ...budget, requests: [...requests, dispatchBy] });
+        await storage.sync();
+        return dispatchBy;
+      },
+      canDispatch(at) {
+        return at >= readBudget().pausedUntil;
+      },
+      async pause(until) {
+        const budget = readBudget();
+        storage.kv.put(quotaKey, { ...budget, pausedUntil: Math.max(budget.pausedUntil, until) });
+        await storage.sync();
+      },
+    };
+    const lookup = createOpenFoodFactsLiveLookup(fetch, Date.now, { quota, timeoutMs: 3500 });
+    const result = await lookup(code);
+    if (result.status !== "found") return json(result, liveStatus[result.status]);
+    return json(
+      {
+        status: "found",
+        source: "live",
+        products: [result.product],
+        checkedAt: result.checkedAt,
+        attribution: { name: "Open Food Facts contributors", ...providers["open-food-facts"] },
+      },
+      200,
+    );
+  }
+}
+
+async function lookup(
+  bucket: CatalogEnvironment["CATALOGS"],
+  code: string,
+  live: CatalogEnvironment["OFF_LIVE"],
+) {
   const key = code.length <= 64 ? normalizeOpenFoodFactsBarcode(code) : null;
   if (!key) return json({ status: "invalid" }, 400);
   const prefix = "open-food-facts";
@@ -108,8 +189,12 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
   ) {
     throw new Error("Invalid barcode index");
   }
+  const missing = () =>
+    expectedIndex !== undefined && live
+      ? live.getByName("open-food-facts").fetch(`https://off-live.internal/${key}`)
+      : json({ status: "not-found" }, 404);
   const shardDigest = (index as Record<string, string>)[shardFor(key)];
-  if (shardDigest === undefined) return json({ status: "not-found" }, 404);
+  if (shardDigest === undefined) return missing();
 
   const shard = await readJson(bucket, `${prefix}/shards/${shardDigest}.json`, 8 * 1024 * 1024);
   if (
@@ -121,7 +206,7 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
     throw new Error("Invalid barcode shard");
   }
   const candidates = (shard.value as Record<string, StoredProduct[] | undefined>)[key];
-  if (!candidates?.length) return json({ status: "not-found" }, 404);
+  if (!candidates?.length) return missing();
   const products = candidates
     .map((product) => ({ ...product, release: manifest.source.release }))
     .sort((left, right) => Number(right.barcode === code) - Number(left.barcode === code));
@@ -201,7 +286,7 @@ async function asset(
 }
 
 export default {
-  async fetch(request: Request, { CATALOGS }: CatalogEnvironment): Promise<Response> {
+  async fetch(request: Request, { CATALOGS, OFF_LIVE }: CatalogEnvironment): Promise<Response> {
     if (request.method !== "GET" && request.method !== "HEAD")
       return new Response(null, { status: 405 });
     const url = new URL(request.url);
@@ -216,7 +301,7 @@ export default {
         route.startsWith("barcodes/") &&
         request.method === "GET"
       ) {
-        return await lookup(CATALOGS, route.slice("barcodes/".length));
+        return await lookup(CATALOGS, route.slice("barcodes/".length), OFF_LIVE);
       }
       return await asset(request, CATALOGS, provider, route);
     } catch {

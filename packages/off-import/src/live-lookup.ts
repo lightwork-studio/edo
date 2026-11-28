@@ -17,10 +17,36 @@ const fields = [
   "nutrition",
   "last_modified_t",
 ].join(",");
-const minute = 60_000;
 const maxResponseBytes = 256 * 1024;
 // One shared client stays below the provider's 15 per minute/IP allowance for product reads.
-const requestsPerMinute = 10;
+export const liveLookupWindowMs = 60_000;
+export const liveLookupRequestsPerWindow = 10;
+
+export interface LiveLookupQuota {
+  /** The latest time this lookup may dispatch, or null when the quota is exhausted. */
+  reserve(at: number): number | null | Promise<number | null>;
+  canDispatch(at: number): boolean;
+  pause(until: number): void | Promise<void>;
+}
+
+function memoryQuota(): LiveLookupQuota {
+  let requests: number[] = [];
+  let pausedUntil = 0;
+  return {
+    reserve(at) {
+      requests = requests.filter((request) => at - request < liveLookupWindowMs);
+      if (at < pausedUntil || requests.length >= liveLookupRequestsPerWindow) return null;
+      requests.push(at);
+      return Number.POSITIVE_INFINITY;
+    },
+    canDispatch(at) {
+      return at >= pausedUntil;
+    },
+    pause(until) {
+      pausedUntil = Math.max(pausedUntil, until);
+    },
+  };
+}
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -30,9 +56,10 @@ function object(value: unknown): Record<string, unknown> | undefined {
 
 function retryUntil(response: Response, at: number): number {
   const delay = response.headers.get("retry-after")?.trim();
-  if (delay === undefined) return at + minute;
+  if (delay === undefined) return at + liveLookupWindowMs;
   const retry = /^\d+$/.test(delay) ? at + Number(delay) * 1000 : Date.parse(delay);
-  return Number.isFinite(retry) ? Math.max(retry, at + minute) : at + minute;
+  const earliest = at + liveLookupWindowMs;
+  return Number.isFinite(retry) ? Math.max(retry, earliest) : earliest;
 }
 
 async function readProduct(response: Response): Promise<Record<string, unknown> | undefined> {
@@ -72,31 +99,39 @@ async function readProduct(response: Response): Promise<Record<string, unknown> 
 export function createOpenFoodFactsLiveLookup(
   fetchProduct: typeof fetch = fetch,
   now: () => number = Date.now,
+  { quota = memoryQuota(), timeoutMs = 5000 }: { quota?: LiveLookupQuota; timeoutMs?: number } = {},
 ): (barcode: string) => Promise<LiveBarcodeResult> {
   const inFlight = new Map<string, Promise<LiveBarcodeResult>>();
-  let requests: number[] = [];
-  let pausedUntil = 0;
 
-  async function load(key: string, checkedAt: number): Promise<LiveBarcodeResult> {
+  async function load(
+    key: string,
+    checkedAt: number,
+    dispatchBy: number,
+  ): Promise<LiveBarcodeResult> {
     // The v3.0 alias does not return the structured nutrition that Edo imports.
     const url = new URL(`/api/v3.6/product/${key}`, origin);
     url.searchParams.set("product_type", "food");
     url.searchParams.set("fields", fields);
     try {
+      const dispatchAt = now();
+      if (dispatchAt > dispatchBy || !quota.canDispatch(dispatchAt))
+        return { status: "rate-limited" };
       const response = await fetchProduct(url, {
         headers: { "User-Agent": "Edo/1 (https://github.com/lightwork-studio/edo)" },
         credentials: "omit",
-        redirect: "error",
-        signal: AbortSignal.timeout(5000),
+        redirect: "manual",
+        signal: AbortSignal.timeout(timeoutMs),
       });
-      if (!response.ok) {
+      if (!response.ok || response.redirected) {
         if (response.status === 429) {
-          pausedUntil = Math.max(pausedUntil, retryUntil(response, now()));
+          await quota.pause(retryUntil(response, now()));
           await response.body?.cancel().catch(() => undefined);
           return { status: "rate-limited" };
         }
         await response.body?.cancel().catch(() => undefined);
-        return { status: response.status === 404 ? "not-found" : "unavailable" };
+        return {
+          status: !response.redirected && response.status === 404 ? "not-found" : "unavailable",
+        };
       }
 
       const product = await readProduct(response);
@@ -123,18 +158,17 @@ export function createOpenFoodFactsLiveLookup(
     }
   }
 
+  async function admit(key: string, at: number): Promise<LiveBarcodeResult> {
+    const dispatchBy = await quota.reserve(at);
+    return dispatchBy === null ? { status: "rate-limited" } : load(key, at, dispatchBy);
+  }
+
   return async (barcode) => {
     const key = normalizeLookupCode(barcode.trim());
     if (!key) return { status: "invalid" };
     const pending = inFlight.get(key);
     if (pending) return pending;
-    const current = now();
-    requests = requests.filter((at) => current - at < minute);
-    if (current < pausedUntil || requests.length >= requestsPerMinute) {
-      return { status: "rate-limited" };
-    }
-    requests.push(current);
-    const request = load(key, current).finally(() => inFlight.delete(key));
+    const request = admit(key, now()).finally(() => inFlight.delete(key));
     inFlight.set(key, request);
     return request;
   };
