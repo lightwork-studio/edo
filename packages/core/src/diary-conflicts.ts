@@ -1,5 +1,6 @@
 import type { DiaryItem, DiaryMeal } from "./diary.ts";
 import type { Nutrients } from "./nutrition.ts";
+import { foodForRecipe, type Recipe } from "./recipe.ts";
 
 export type DiaryMealConflict =
   | { readonly kind: "record" | "time" | "item-order" }
@@ -13,6 +14,27 @@ export type DiaryMealReconciliation =
       readonly base: DiaryMeal | null;
       readonly local: DiaryMeal | null;
       readonly server: DiaryMeal | null;
+    };
+
+export type DiaryRecipeConflict =
+  | {
+      readonly kind:
+        | "record"
+        | "name"
+        | "servings-and-weight"
+        | "ingredient-order"
+        | "invalid-recipe";
+    }
+  | { readonly kind: "ingredient"; readonly id: string };
+
+export type DiaryRecipeReconciliation =
+  | { readonly status: "merged"; readonly recipe: Recipe | null }
+  | {
+      readonly status: "conflict";
+      readonly conflicts: readonly DiaryRecipeConflict[];
+      readonly base: Recipe | null;
+      readonly local: Recipe | null;
+      readonly server: Recipe | null;
     };
 
 type Choice<T> = { readonly value: T } | { readonly conflict: true };
@@ -45,6 +67,10 @@ function sameItem(a: DiaryItem | undefined, b: DiaryItem | undefined): boolean {
   return a === b || (a !== undefined && b !== undefined && snapshotKey(a) === snapshotKey(b));
 }
 
+function sameItems(a: readonly DiaryItem[], b: readonly DiaryItem[]): boolean {
+  return a.length === b.length && a.every((item, index) => sameItem(item, b[index]));
+}
+
 function sameEvent(a: DiaryMeal, b: DiaryMeal): boolean {
   return a.localDay === b.localDay && a.occurredAt === b.occurredAt;
 }
@@ -66,20 +92,13 @@ function retainKnownOffset(meal: DiaryMeal | null, known: DiaryMeal | null): Dia
 }
 
 function sameMeal(a: DiaryMeal | null, b: DiaryMeal | null): boolean {
-  return (
-    a === b ||
-    (a !== null &&
-      b !== null &&
-      sameTime(a, b) &&
-      a.items.length === b.items.length &&
-      a.items.every((item, index) => sameItem(item, b.items[index])))
-  );
+  return a === b || (a !== null && b !== null && sameTime(a, b) && sameItems(a.items, b.items));
 }
 
-function indexedItems(meal: DiaryMeal) {
-  const items = new Map(meal.items.map((item) => [item.id, item]));
-  if (items.size !== meal.items.length) throw new TypeError("Duplicate item IDs in diary meal");
-  return items;
+function indexedItems(items: readonly DiaryItem[]) {
+  const index = new Map(items.map((item) => [item.id, item]));
+  if (index.size !== items.length) throw new TypeError("Duplicate captured item IDs");
+  return index;
 }
 
 function relativeOrder(index: ReadonlyMap<string, number>, a: string, b: string) {
@@ -88,8 +107,8 @@ function relativeOrder(index: ReadonlyMap<string, number>, a: string, b: string)
   return first === undefined || second === undefined ? 0 : Math.sign(first - second);
 }
 
-function itemPositions(meal: DiaryMeal): ReadonlyMap<string, number> {
-  return new Map(meal.items.map(({ id }, position) => [id, position]));
+function itemPositions(items: readonly DiaryItem[]): ReadonlyMap<string, number> {
+  return new Map(items.map(({ id }, position) => [id, position]));
 }
 
 function placementChanged(
@@ -156,6 +175,38 @@ function mergeOrder(
   return sorted;
 }
 
+function reconcileItems(
+  base: readonly DiaryItem[],
+  local: readonly DiaryItem[],
+  server: readonly DiaryItem[],
+) {
+  const baseItems = indexedItems(base);
+  const localItems = indexedItems(local);
+  const serverItems = indexedItems(server);
+  const baseOrder = itemPositions(base);
+  const localOrder = itemPositions(local);
+  const serverOrder = itemPositions(server);
+  const ids = new Set([...baseItems.keys(), ...localItems.keys(), ...serverItems.keys()]);
+  const items = new Map<string, DiaryItem>();
+  const conflictingIds: string[] = [];
+  for (const itemId of [...ids].sort()) {
+    const before = baseItems.get(itemId);
+    const here = localItems.get(itemId);
+    const there = serverItems.get(itemId);
+    const item = choose(before, here, there, sameItem);
+    const deleteAgainstReorder =
+      before &&
+      ((!here && there && placementChanged(baseOrder, serverOrder, itemId)) ||
+        (!there && here && placementChanged(baseOrder, localOrder, itemId)));
+    if ("conflict" in item || deleteAgainstReorder) {
+      conflictingIds.push(itemId);
+      // Its position can still be compared when both versions retain the item.
+      if (here && there) items.set(itemId, here);
+    } else if (item.value) items.set(itemId, item.value);
+  }
+  return { items: mergeOrder(items, baseOrder, localOrder, serverOrder), conflictingIds };
+}
+
 /** Classify already decoded meals from the current domain model before any revision is applied. */
 export function reconcileDiaryMeal(
   base: DiaryMeal | null,
@@ -165,7 +216,7 @@ export function reconcileDiaryMeal(
   const id = base?.id ?? local?.id ?? server?.id;
   for (const meal of [base, local, server]) {
     if (meal && meal.id !== id) throw new TypeError("Diary reconciliation needs one meal ID");
-    if (meal) indexedItems(meal);
+    if (meal) indexedItems(meal.items);
   }
   const conflict = (conflicts: readonly DiaryMealConflict[]): DiaryMealReconciliation => ({
     status: "conflict",
@@ -181,33 +232,15 @@ export function reconcileDiaryMeal(
   if ("value" in whole) return { status: "merged", meal: whole.value };
   if (!base || !localWithOffset || !serverWithOffset) return conflict([{ kind: "record" }]);
 
-  const conflicts: DiaryMealConflict[] = [];
+  const { items: sorted, conflictingIds } = reconcileItems(
+    base.items,
+    localWithOffset.items,
+    serverWithOffset.items,
+  );
   const time = choose(base, localWithOffset, serverWithOffset, sameTime);
-  const baseItems = indexedItems(base);
-  const localItems = indexedItems(localWithOffset);
-  const serverItems = indexedItems(serverWithOffset);
-  const baseOrder = itemPositions(base);
-  const localOrder = itemPositions(localWithOffset);
-  const serverOrder = itemPositions(serverWithOffset);
-  const ids = new Set([...baseItems.keys(), ...localItems.keys(), ...serverItems.keys()]);
-  const items = new Map<string, DiaryItem>();
+  const conflicts: DiaryMealConflict[] = [];
   if ("conflict" in time) conflicts.push({ kind: "time" });
-  for (const itemId of [...ids].sort()) {
-    const before = baseItems.get(itemId);
-    const here = localItems.get(itemId);
-    const there = serverItems.get(itemId);
-    const item = choose(before, here, there, sameItem);
-    const deleteAgainstReorder =
-      before &&
-      ((!here && there && placementChanged(baseOrder, serverOrder, itemId)) ||
-        (!there && here && placementChanged(baseOrder, localOrder, itemId)));
-    if ("conflict" in item || deleteAgainstReorder) {
-      conflicts.push({ kind: "item", id: itemId });
-      // Its position can still be compared when both versions retain the item.
-      if (here && there) items.set(itemId, here);
-    } else if (item.value) items.set(itemId, item.value);
-  }
-  const sorted = mergeOrder(items, baseOrder, localOrder, serverOrder);
+  for (const id of conflictingIds) conflicts.push({ kind: "item", id });
   if (!sorted) conflicts.push({ kind: "item-order" });
   if ("conflict" in time || !sorted || conflicts.length > 0) return conflict(conflicts);
   const { localDay, occurredAt, utcOffsetMinutes } = time.value;
@@ -221,4 +254,76 @@ export function reconcileDiaryMeal(
       items: sorted,
     },
   };
+}
+
+function sameRecipeYield(a: Recipe, b: Recipe): boolean {
+  return a.servings === b.servings && a.cookedWeightG === b.cookedWeightG;
+}
+
+function sameRecipe(a: Recipe | null, b: Recipe | null): boolean {
+  return (
+    a === b ||
+    (a !== null &&
+      b !== null &&
+      a.name === b.name &&
+      sameRecipeYield(a, b) &&
+      sameItems(a.ingredients, b.ingredients))
+  );
+}
+
+/** Classify already decoded recipe edits before any revision is applied. */
+export function reconcileDiaryRecipe(
+  base: Recipe | null,
+  local: Recipe | null,
+  server: Recipe | null,
+): DiaryRecipeReconciliation {
+  const id = base?.id ?? local?.id ?? server?.id;
+  for (const recipe of [base, local, server]) {
+    if (recipe && recipe.id !== id) throw new TypeError("Diary reconciliation needs one recipe ID");
+    if (recipe) indexedItems(recipe.ingredients);
+  }
+  const conflict = (conflicts: readonly DiaryRecipeConflict[]): DiaryRecipeReconciliation => ({
+    status: "conflict",
+    conflicts,
+    base,
+    local,
+    server,
+  });
+  const whole = choose(base, local, server, sameRecipe);
+  if ("value" in whole) return { status: "merged", recipe: whole.value };
+  if (!base || !local || !server) return conflict([{ kind: "record" }]);
+
+  const name = choose(base.name, local.name, server.name, Object.is);
+  // Servings and cooked weight define a single serving's measured weight together.
+  const recipeYield = choose(base, local, server, sameRecipeYield);
+  const { items: ingredients, conflictingIds } = reconcileItems(
+    base.ingredients,
+    local.ingredients,
+    server.ingredients,
+  );
+  const conflicts: DiaryRecipeConflict[] = [];
+  if ("conflict" in name) conflicts.push({ kind: "name" });
+  if ("conflict" in recipeYield) conflicts.push({ kind: "servings-and-weight" });
+  for (const id of conflictingIds) conflicts.push({ kind: "ingredient", id });
+  if (!ingredients) conflicts.push({ kind: "ingredient-order" });
+  if ("conflict" in name || "conflict" in recipeYield || !ingredients || conflicts.length > 0) {
+    return conflict(conflicts);
+  }
+  const { servings, cookedWeightG } = recipeYield.value;
+  const recipe = {
+    id: base.id,
+    name: name.value,
+    ingredients,
+    servings,
+    ...(cookedWeightG !== undefined && { cookedWeightG }),
+  };
+  try {
+    foodForRecipe(recipe);
+  } catch (error) {
+    if (error instanceof TypeError || error instanceof RangeError) {
+      return conflict([{ kind: "invalid-recipe" }]);
+    }
+    throw error;
+  }
+  return { status: "merged", recipe };
 }

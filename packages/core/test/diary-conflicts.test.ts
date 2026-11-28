@@ -3,7 +3,9 @@ import {
   createDiaryItem,
   type DiaryMeal,
   type Food,
+  foodForRecipe,
   reconcileDiaryMeal,
+  reconcileDiaryRecipe,
   updateDiaryPortion,
 } from "../src/index.ts";
 
@@ -165,4 +167,70 @@ it("uses a known offset for a legacy copy of the same event", () => {
 it("rejects mixed meal IDs and duplicate item IDs before choosing either version", () => {
   expect(() => reconcileDiaryMeal(base, base, { ...base, id: "different" })).toThrow(/meal ID/);
   expect(() => reconcileDiaryMeal(base, { ...base, items: [a, a] }, base)).toThrow(/Duplicate/);
+});
+
+const recipe = {
+  id: "recipe",
+  name: "Original",
+  ingredients: [a, b],
+  servings: 2,
+  cookedWeightG: 400,
+};
+
+it("combines unrelated recipe edits by ingredient ID and recomputes a valid serving", () => {
+  const smaller = updateDiaryPortion(a, { amount: 50, unit: "g" });
+  const larger = updateDiaryPortion(b, { amount: 250, unit: "g" });
+  const local = { ...recipe, name: "Updated name", ingredients: [smaller, b] };
+  const server = { ...recipe, ingredients: [a, larger], servings: 3, cookedWeightG: 450 };
+  const resolved = reconcileDiaryRecipe(recipe, local, server);
+  expect(resolved).toEqual({
+    status: "merged",
+    recipe: { ...server, name: local.name, ingredients: [smaller, larger] },
+  });
+  if (resolved.status !== "merged" || !resolved.recipe) throw new Error("Expected merged recipe");
+  expect(foodForRecipe(resolved.recipe).nutrition).toMatchObject({
+    nutrients: { kcal: 60 },
+    portionSize: { amount: 150, unit: "g" },
+  });
+});
+
+it("keeps competing yield changes and ingredient edits against deletion for review", () => {
+  const local = { ...recipe, servings: 3, ingredients: [b] };
+  const server = {
+    ...recipe,
+    cookedWeightG: 450,
+    ingredients: [updateDiaryPortion(a, { amount: 50, unit: "g" }), b],
+  };
+  expect(reconcileDiaryRecipe(recipe, local, server)).toEqual({
+    status: "conflict",
+    conflicts: [{ kind: "servings-and-weight" }, { kind: "ingredient", id: a.id }],
+    base: recipe,
+    local,
+    server,
+  });
+  expect(reconcileDiaryRecipe(recipe, local, null)).toMatchObject({
+    status: "conflict",
+    conflicts: [{ kind: "record" }],
+    local,
+    server: null,
+  });
+  expect(reconcileDiaryRecipe(recipe, recipe, null)).toEqual({ status: "merged", recipe: null });
+});
+
+it("leaves incompatible ingredient order and an empty combined recipe for review", () => {
+  const original = { ...recipe, ingredients: [a, b, c] };
+  const first = { ...original, ingredients: [b, a, c] };
+  const second = { ...original, ingredients: [a, c, b] };
+  expect(reconcileDiaryRecipe(original, first, second)).toMatchObject({
+    status: "conflict",
+    conflicts: [{ kind: "ingredient-order" }],
+    local: first,
+    server: second,
+  });
+  expect(
+    reconcileDiaryRecipe(recipe, { ...recipe, ingredients: [a] }, { ...recipe, ingredients: [b] }),
+  ).toMatchObject({ status: "conflict", conflicts: [{ kind: "invalid-recipe" }] });
+  expect(() => reconcileDiaryRecipe(recipe, { ...recipe, ingredients: [a, a] }, recipe)).toThrow(
+    /Duplicate/,
+  );
 });
