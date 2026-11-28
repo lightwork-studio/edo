@@ -1113,6 +1113,191 @@ function capturedMeal(id: string, name: string) {
   };
 }
 
+function capturedMealForDay(id: string, localDay = "2026-11-04") {
+  const meal = capturedMeal(id, `Meal ${id}`);
+  return {
+    ...meal,
+    localDay,
+    occurredAt: Date.parse(`${localDay}T00:30:00.003Z`) + 24 * 60 * 60 * 1000,
+    utcOffsetMinutes: -240,
+    items: meal.items.map((item) => ({ ...item, id: `${id}-item` })),
+  };
+}
+
+test("pages only live meals for the captured day and keeps the exact account scope", () => {
+  using store = openSyncStore(filename);
+  const day = "2026-11-04";
+  const account = "alpha";
+  const alpha = sessionFor(store.createAccount(account, "shared-lineage"));
+  const upper = sessionFor(store.createAccount("ALPHA", "shared-lineage"));
+  const meals = Array.from({ length: 10 }, (_, index) => capturedMealForDay(`meal-${index}`));
+  expect(
+    push(store, alpha, ...meals.map((meal) => put(meal.id, meal.id, null, meal))).results,
+  ).toHaveLength(10);
+  expect(
+    push(
+      store,
+      alpha,
+      put("other-day", "other-day", null, capturedMealForDay("other-day", "2026-11-05")),
+      remove("meal-1", "delete-meal-1", 2),
+    ).results,
+  ).toMatchObject([{ status: "accepted" }, { status: "accepted" }]);
+  expect(
+    push(store, upper, put("meal-0", "upper-meal-0", null, capturedMealForDay("meal-0"))).results,
+  ).toMatchObject([{ status: "accepted" }]);
+  const before = readFileSync(filename);
+
+  const first = store.readMealDay(account, day);
+  expect(first?.meals).toEqual(
+    meals
+      .slice(0, 9)
+      .flatMap((meal, index) => (index === 1 ? [] : [{ ...meal, revision: index + 1 }])),
+  );
+  const next = first?.next;
+  if (!next) throw new Error("Expected another page");
+  expect(store.readMealDay(account, day, next)).toEqual({
+    meals: [{ ...meals[9], revision: 10 }],
+    next: null,
+  });
+  expect(store.readMealDay("ALPHA", day)?.meals).toHaveLength(1);
+  expect(store.readMealDay("Alpha", day)).toBeNull();
+  expect(() => store.readMealDay("ALPHA", day, next)).toThrow("Stale meal day cursor");
+  expect(() => store.readMealDay(account, "2026-11-05", next)).toThrow("Stale meal day cursor");
+  expect(() => store.readMealDay(account, "2026-11-31")).toThrow("Invalid captured meal day");
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test("continues after an empty bounded scan and invalidates continuation after an account edit", () => {
+  using store = openSyncStore(filename);
+  const day = "2026-11-04";
+  const alpha = sessionFor(store.createAccount("alpha", "lineage-alpha"));
+  const beta = sessionFor(store.createAccount("beta", "lineage-beta"));
+  const staleDay = Array.from({ length: 33 }, (_, index) => {
+    const id = `earlier-${index}`;
+    return put(id, id, null, capturedMealForDay(id, "2026-11-03"));
+  });
+  const included = capturedMealForDay("included");
+  expect(
+    push(store, alpha, ...staleDay, put(included.id, "included", null, included)).results,
+  ).toHaveLength(34);
+
+  const first = store.readMealDay("alpha", day);
+  expect(first?.meals).toEqual([]);
+  const next = first?.next;
+  if (!next) throw new Error("Expected an empty page with a continuation");
+  const betaMeal = capturedMealForDay("beta-only");
+  expect(
+    push(store, beta, put(betaMeal.id, "other-account", null, betaMeal)).results,
+  ).toMatchObject([{ status: "accepted" }]);
+  expect(store.readMealDay("alpha", day, next)).toEqual({
+    meals: [{ ...included, revision: 34 }],
+    next: null,
+  });
+  expect(push(store, alpha, remove("earlier-0", "delete-earlier", 1)).results).toMatchObject([
+    { status: "accepted" },
+  ]);
+  expect(() => store.readMealDay("alpha", day, next)).toThrow("Stale meal day cursor");
+  expect(store.readMealDay("alpha", day)?.next?.revision).toBe(35);
+});
+
+test("fails closed for malformed meal identity without reading another account", () => {
+  using store = openSyncStore(filename);
+  const meal = capturedMealForDay("valid-meal");
+  const alpha = sessionFor(store.createAccount("alpha", "lineage-alpha"));
+  const beta = sessionFor(store.createAccount("beta", "lineage-beta"));
+  expect(push(store, alpha, put(meal.id, "alpha-meal", null, meal)).results).toMatchObject([
+    { status: "accepted" },
+  ]);
+  expect(push(store, beta, put(meal.id, "beta-meal", null, meal)).results).toMatchObject([
+    { status: "accepted" },
+  ]);
+  using db = new DatabaseSync(filename);
+  db.prepare(
+    "UPDATE sync_records SET record_id = CAST(X'FF' AS TEXT) WHERE account_binding = ?",
+  ).run("alpha");
+
+  expect(() => store.readMealDay("alpha", meal.localDay)).toThrow("Invalid stored meal day");
+  expect(store.readMealDay("beta", meal.localDay)).toEqual({
+    meals: [{ ...meal, revision: 1 }],
+    next: null,
+  });
+});
+
+test("rejects changed, malformed or oversized persisted lineage on a continued meal-day read", () => {
+  using store = openSyncStore(filename);
+  const day = "2026-11-04";
+  const alpha = sessionFor(store.createAccount("alpha", "lineage-\uFFFD"));
+  const submissions = Array.from({ length: 9 }, (_, index) => {
+    const id = `meal-${index}`;
+    return put(id, id, null, capturedMealForDay(id));
+  });
+  expect(push(store, alpha, ...submissions).results).toHaveLength(9);
+  const next = store.readMealDay("alpha", day)?.next;
+  if (!next) throw new Error("Expected another page");
+  expect(store.readMealDay("alpha", day, next)?.meals).toHaveLength(1);
+
+  using db = new DatabaseSync(filename);
+  const setLineage = db.prepare(
+    "UPDATE main.sync_accounts SET lineage = CAST(? AS TEXT) WHERE account_binding = 'alpha'",
+  );
+  setLineage.run("restored-lineage");
+  expect(() => store.readMealDay("alpha", day, next)).toThrow(/^Stale meal day cursor$/);
+  setLineage.run(Buffer.from("6c696e656167652dff", "hex"));
+  expect(() => store.readMealDay("alpha", day, next)).toThrow(/^Invalid stored meal day$/);
+  setLineage.run("界".repeat(maxSyncEnvelopeBytes / 4));
+  expect(() => store.readMealDay("alpha", day)).toThrow(/^Invalid stored meal day$/);
+});
+
+test("excludes all coerced account rows before advancing the meal-day cursor", () => {
+  using store = openSyncStore(filename);
+  const day = "2026-11-04";
+  const first = store.createAccount("1", "first-lineage");
+  const second = store.createAccount("01", "second-lineage");
+  using fixture = new DatabaseSync(filename);
+  fixture.prepare("UPDATE sync_accounts SET revision = 34").run();
+  const write = fixture.prepare(
+    "INSERT INTO sync_records (account_binding, revision, kind, record_id) VALUES (?, ?, 'weigh-in', ?)",
+  );
+  for (let revision = 1; revision <= 33; revision++) {
+    write.run(first.accountBinding, revision, `first-${revision}`);
+  }
+  write.run(second.accountBinding, 34, "second");
+  expect(store.readMealDay(second.accountBinding, day)).toEqual({ meals: [], next: null });
+  fixture.exec(`
+    ALTER TABLE main.sync_records RENAME TO original_records;
+    CREATE TABLE main.sync_records (
+      account_binding INTEGER, revision INTEGER, kind TEXT, record_id TEXT, content TEXT
+    ) STRICT;
+    INSERT INTO main.sync_records
+      SELECT CAST(account_binding AS INTEGER), revision, kind, record_id, content FROM main.original_records;
+  `);
+  expect(store.readMealDay(second.accountBinding, day)).toEqual({ meals: [], next: null });
+});
+
+test("does not decode a malformed BLOB ID as another current meal", () => {
+  using store = openSyncStore(filename);
+  const alpha = sessionFor(store.createAccount("alpha", "lineage-alpha"));
+  const meal = capturedMealForDay("meal-1");
+  const latest = { ...meal, utcOffsetMinutes: -300 };
+  expect(push(store, alpha, put(meal.id, "create", null, meal)).results).toMatchObject([
+    { status: "accepted", revision: 1 },
+  ]);
+  expect(push(store, alpha, put(meal.id, "edit", 1, latest)).results).toMatchObject([
+    { status: "accepted", revision: 2 },
+  ]);
+  using fixture = new DatabaseSync(filename);
+  fixture.exec(`
+    ALTER TABLE main.sync_records RENAME TO original_records;
+    CREATE TABLE main.sync_records (
+      account_binding TEXT, revision INTEGER, kind TEXT, record_id ANY, content TEXT
+    ) STRICT;
+    INSERT INTO main.sync_records SELECT * FROM main.original_records;
+    INSERT INTO main.sync_records VALUES ('alpha', 1, 'meal', X'6D65616C2D31', NULL);
+  `);
+  expect(store.readMeal("alpha", meal.id)).toEqual({ ...latest, revision: 2 });
+  expect(() => store.readMealDay("alpha", meal.localDay)).toThrow(/^Invalid stored meal day$/);
+});
+
 test("reads only a current live meal in the exact account and preserves captured fields", () => {
   const id = "same-meal";
   const alphaMeal = { ...capturedMeal(id, "Alpha baked oats"), utcOffsetMinutes: -240 };
@@ -1273,6 +1458,7 @@ test("keeps SQLite query diagnostics out of meal and weigh-in results", () => {
   expect(() => store.readWeighIn("alpha", "fixture-weight")).toThrowError(
     /^Invalid stored weigh-in$/,
   );
+  expect(() => store.readMealDay("alpha", "2026-11-04")).toThrowError(/^Invalid stored meal day$/);
 });
 
 test.each(["UTF-16le", "UTF-16be"])(
