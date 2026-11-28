@@ -51,8 +51,12 @@ interface Binding extends Pick<AuthenticatedHistory, "accountBinding" | "lineage
   readonly server: string;
 }
 
-function inTransaction<T>(db: JournalSqlite, operation: () => T): T {
-  db.exec("BEGIN IMMEDIATE");
+function inTransaction<T>(
+  db: JournalSqlite,
+  begin: "BEGIN" | "BEGIN IMMEDIATE",
+  operation: () => T,
+): T {
+  db.exec(begin);
   try {
     const result = operation();
     db.exec("COMMIT");
@@ -200,11 +204,18 @@ function requireSynchronousWrite(result: undefined): void {
 export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () => void) {
   let activeSession: NegotiatedSync | null = null;
 
-  function transact<T>(operation: () => T): T {
-    return inTransaction(db, () => {
+  function transact<T>(
+    operation: () => T,
+    begin: "BEGIN" | "BEGIN IMMEDIATE" = "BEGIN IMMEDIATE",
+  ): T {
+    return inTransaction(db, begin, () => {
       requireCurrentStorage?.();
       return operation();
     });
+  }
+
+  function inspect<T>(operation: () => T): T {
+    return requireCurrentStorage ? transact(operation, "BEGIN") : operation();
   }
 
   function checkSession(session: NegotiatedSync) {
@@ -215,8 +226,8 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
   }
 
   return {
-    history: () => savedBinding(db),
-    requiredRelease: () => pinnedRelease(db),
+    history: () => inspect(() => savedBinding(db)),
+    requiredRelease: () => inspect(() => pinnedRelease(db)),
     bind(session: NegotiatedSync) {
       assertSession(session);
       const endpoint = serverForSession(session);
@@ -462,10 +473,12 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       });
     },
     queued: () =>
-      db
-        .all("SELECT * FROM edo_sync_outbox ORDER BY kind, id")
-        .map((row) => storedRecord(row).record)
-        .filter(hasLocalWork),
-    serverCopy: (key: RecordKey) => remoteRecord(db, key),
+      inspect(() =>
+        db
+          .all("SELECT * FROM edo_sync_outbox ORDER BY kind, id")
+          .map((row) => storedRecord(row).record)
+          .filter(hasLocalWork),
+      ),
+    serverCopy: (key: RecordKey) => inspect(() => remoteRecord(db, key)),
   };
 }

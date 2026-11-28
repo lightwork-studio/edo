@@ -947,6 +947,12 @@ test("blocks reads and writes on an open handle after another connection upgrade
   expect(() => legacy.listMeals(meal.localDay)).toThrow(/version has changed/);
   expect(() => legacy.saveMeal({ ...meal, localDay: "2026-11-01" })).toThrow(/version has changed/);
   expect(() => legacy.deleteMeal(meal.id)).toThrow(/version has changed/);
+  expect(() => legacy.sync.journal.history()).toThrow(/version has changed/);
+  expect(() => legacy.sync.journal.requiredRelease()).toThrow(/version has changed/);
+  expect(() => legacy.sync.journal.queued()).toThrow(/version has changed/);
+  expect(() => legacy.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toThrow(
+    /version has changed/,
+  );
   expect(() => legacy.listWeighIns(weighIn.localDay, weighIn.localDay)).toThrow(
     /version has changed/,
   );
