@@ -1,4 +1,5 @@
 import {
+  type DailyNutritionTarget,
   type DiaryItem,
   type Food,
   type Nutrients,
@@ -8,7 +9,12 @@ import {
 } from "@edo/core";
 import { useRef, useState } from "react";
 import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { defaultFoodPortion, readAmount } from "./diary-view";
+import {
+  defaultFoodPortion,
+  nutritionSum,
+  nutritionTargetProgress,
+  readAmount,
+} from "./diary-view";
 import type { Strings } from "./strings";
 import {
   colors,
@@ -21,6 +27,7 @@ import {
   PrimaryButton,
   Ring,
   styles,
+  TargetRing,
 } from "./ui";
 
 const reference = {
@@ -36,7 +43,7 @@ function previewNutrition(
 ): Nutrients | null {
   if (amount === null) return null;
   try {
-    return roundNutritionForDisplay(nutritionForPortion(food.nutrition, { amount, unit }));
+    return nutritionForPortion(food.nutrition, { amount, unit });
   } catch {
     return null;
   }
@@ -47,6 +54,7 @@ export function FoodDetail({
   locale,
   date,
   food,
+  day,
   originalItem,
   favorite,
   onBack,
@@ -56,6 +64,7 @@ export function FoodDetail({
   locale: string;
   date: string;
   food: Food;
+  day?: { items: readonly Nutrients[]; index: number; target: DailyNutritionTarget };
   originalItem?: DiaryItem;
   favorite?: { selected: boolean; toggle: () => void } | { retry: () => void };
   onBack: () => void;
@@ -71,10 +80,21 @@ export function FoodDetail({
   const star = favorite && "toggle" in favorite ? favorite : undefined;
   const submitted = useRef(false);
   const amount = unit === initialUnit && value === initialText ? initial : readAmount(value);
-  const preview =
+  const proposed =
     originalItem && unit === initialUnit && amount === originalItem.portion.amount
-      ? roundNutritionForDisplay(originalItem.nutrients)
+      ? originalItem.nutrients
       : previewNutrition(food, amount, unit);
+  const preview = proposed && roundNutritionForDisplay(proposed);
+  const before = day && nutritionSum(day.items);
+  const beforeDisplay = before && roundNutritionForDisplay(before);
+  const daily =
+    proposed && day && before
+      ? nutritionSum([...day.items.slice(0, day.index), proposed, ...day.items.slice(day.index)])
+      : null;
+  const dailyDisplay = daily && roundNutritionForDisplay(daily);
+  const goals = day && roundNutritionForDisplay({ ...day.target, fiberG: null });
+  const energyBalance =
+    dailyDisplay?.kcal == null || goals?.kcal == null ? null : goals.kcal - dailyDisplay.kcal;
   const values = [{ label: "energy", nutrient: "kcal", color: colors.accent } as const, ...macros];
   const base = roundNutritionForDisplay(food.nutrition.nutrients);
   const source = {
@@ -228,31 +248,84 @@ export function FoodDetail({
         </View>
         {preview && (
           <View style={styles.card}>
-            <Text accessibilityRole="header" style={styles.meta}>
-              {t.selectedPortion}
-            </Text>
+            <View style={styles.row}>
+              <Text accessibilityRole="header" style={[styles.meta, styles.stretch]}>
+                {daily ? t.dayWithFood : t.selectedPortion}
+              </Text>
+              {energyBalance !== null && (
+                <Text style={[styles.meta, local.impactBalance]}>
+                  <Text style={[styles.body, styles.numbers]}>
+                    {displayNumber(Math.abs(energyBalance), locale, 0)}
+                  </Text>{" "}
+                  {energyBalance < 0 ? t.kcalOverAfterFood : t.kcalLeftAfterFood}
+                </Text>
+              )}
+            </View>
             <View style={local.rings}>
               {values.map(({ label, nutrient, color }) => {
                 const value = preview[nutrient];
                 const isKcal = nutrient === "kcal";
+                const unit = isKcal ? "kcal" : "g";
+                const target = day?.target[nutrient] ?? null;
+                const prior = nutritionTargetProgress(before?.[nutrient] ?? null, target);
+                const after = nutritionTargetProgress(daily?.[nutrient] ?? null, target);
+                const afterValue = dailyDisplay?.[nutrient] ?? null;
+                const goal = goals?.[nutrient] ?? null;
+                const comparison =
+                  daily && goal !== null
+                    ? `${afterValue === null ? t.unavailable : displayNumber(afterValue, locale, isKcal ? 0 : 1)} / ${displayNumber(goal, locale, isKcal ? 0 : 1)}${isKcal ? "" : " g"}`
+                    : null;
+                const describe = (amount: number | null | undefined) =>
+                  amount == null ? t.unavailable : nutrientValue(amount, locale, unit);
+                const numeric = (
+                  <Text
+                    style={[styles.body, styles.numbers, { color, maxWidth: 42 }]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                  >
+                    {value === null
+                      ? "—"
+                      : `${daily ? "+" : ""}${displayNumber(value, locale, isKcal ? 0 : 1)}`}
+                  </Text>
+                );
                 return (
                   <View
                     key={nutrient}
                     accessible
-                    accessibilityLabel={`${t[label]}, ${value === null ? t.unavailable : nutrientValue(value, locale, isKcal ? "kcal" : "g")}`}
+                    accessibilityLabel={
+                      comparison
+                        ? t.dayImpactValue(
+                            t[label],
+                            describe(beforeDisplay?.[nutrient]),
+                            describe(value),
+                            describe(afterValue),
+                            describe(goal),
+                            originalItem !== undefined,
+                          )
+                        : `${t[label]}, ${describe(value)}`
+                    }
                     style={local.metric}
                   >
-                    <Ring size={54} color={color}>
-                      <Text
-                        style={[styles.body, styles.numbers, { color, maxWidth: 42 }]}
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
+                    {daily ? (
+                      <TargetRing
+                        size={60}
+                        color={color}
+                        fraction={after?.fraction ?? prior?.fraction}
+                        baseline={prior?.fraction ?? 0}
                       >
-                        {value === null ? "—" : displayNumber(value, locale, isKcal ? 0 : 1)}
-                      </Text>
-                    </Ring>
+                        {numeric}
+                      </TargetRing>
+                    ) : (
+                      <Ring size={54} color={color}>
+                        {numeric}
+                      </Ring>
+                    )}
                     <Text style={[styles.meta, local.metricName]}>{t[label]}</Text>
-                    {value !== null && <Text style={styles.meta}>{isKcal ? "kcal" : "g"}</Text>}
+                    {comparison ? (
+                      <Text style={[styles.meta, local.metricName]}>{comparison}</Text>
+                    ) : (
+                      value !== null && <Text style={styles.meta}>{unit}</Text>
+                    )}
                   </View>
                 );
               })}
@@ -329,6 +402,7 @@ const local = StyleSheet.create({
   rings: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-around", rowGap: 12 },
   metric: { flex: 1, minWidth: 60, alignItems: "center", gap: 3 },
   metricName: { textAlign: "center", fontSize: 11 },
+  impactBalance: { maxWidth: "48%", flexShrink: 1, textAlign: "right" },
   nutritionRow: {
     paddingTop: 9,
     borderTopWidth: StyleSheet.hairlineWidth,

@@ -45,6 +45,7 @@ import {
   diaryDayLimit,
   type EntryTime,
   entryTime,
+  foodPreviewItems,
   localDay,
   mondayOf,
   nextMidnight,
@@ -76,7 +77,7 @@ import { WeighInScreen } from "./src/weigh-in";
 
 type LocalDiary = Awaited<ReturnType<typeof openLocalDiary>>;
 type SearchContext = EntryTime & { query: string };
-type FoodSelection = SearchContext & { food: Food; fromCustomFoods?: boolean };
+type FoodSelection = SearchContext & { food: Food; mealId: string; fromCustomFoods?: boolean };
 type DeviceContext = { today: string; language: Language; locale: string };
 type Route =
   | { kind: "diary" }
@@ -262,7 +263,7 @@ function DiaryApp({
 
   function pickFood(context: SearchContext, food: Food, fromCustomFoods?: boolean) {
     Keyboard.dismiss();
-    const selection = { ...context, food, fromCustomFoods };
+    const selection = newFoodSelection(context, food, fromCustomFoods);
     const product =
       packagedCatalogOrigin && stalePackagedSelection(food, cachedProducts, Date.now());
     setRoute(
@@ -270,6 +271,10 @@ function DiaryApp({
         ? { ...selection, kind: "revalidate-packaged", product }
         : { ...selection, kind: "add" },
     );
+  }
+
+  function newFoodSelection(context: SearchContext, food: Food, fromCustomFoods?: boolean) {
+    return { ...context, food, fromCustomFoods, mealId: randomUUID().replaceAll("-", "") };
   }
 
   function goBack() {
@@ -526,7 +531,11 @@ function DiaryApp({
         initial={route.state}
         onBack={goBack}
         onPick={(product, barcode) =>
-          setRoute({ ...route, kind: "add", food: foodForPackagedProduct(product), barcode })
+          setRoute({
+            ...newFoodSelection(route, foodForPackagedProduct(product)),
+            kind: "add",
+            barcode,
+          })
         }
       />
     );
@@ -622,10 +631,8 @@ function DiaryApp({
             onRetry={() => setRefresh((revision) => revision + 1)}
             onPick={(recipe) =>
               setRoute({
-                ...route,
+                ...newFoodSelection(route, foodForRecipe(recipe), true),
                 kind: "add",
-                food: foodForRecipe(recipe),
-                fromCustomFoods: true,
               })
             }
           />
@@ -637,7 +644,7 @@ function DiaryApp({
         onEdit={(current) =>
           setRoute({ ...route, kind: "custom-food", current, sourceId: current.id.sourceId })
         }
-        onPick={(food) => setRoute({ ...route, kind: "add", food, fromCustomFoods: true })}
+        onPick={(food) => setRoute({ ...newFoodSelection(route, food, true), kind: "add" })}
         onRetry={() => setRefresh((revision) => revision + 1)}
       />
     );
@@ -738,12 +745,16 @@ function DiaryApp({
 
   const food = route.kind === "add" ? route.food : route.item.food;
   const selected = favorites?.some((id) => foodKey(id) === foodKey(food.id)) ?? false;
+  const target = readTarget(diary, route.day)?.target;
+  const dayMeals = target ? readMeals(diary, route.day) : null;
+  const inputs = dayMeals ? foodPreviewItems(dayMeals, route) : null;
   return (
     <FoodDetail
       t={t}
       locale={locale}
       date={date}
       food={food}
+      day={target && inputs ? { ...inputs, target } : undefined}
       favorite={
         route.kind === "add"
           ? favorites

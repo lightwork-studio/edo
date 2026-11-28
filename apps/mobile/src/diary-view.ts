@@ -102,13 +102,49 @@ export function defaultFoodPortion(food: Food): Portion {
   }
 }
 
-export function totalNutrition(meals: readonly DiaryMeal[]): Nutrients | null {
+export function nutritionSum(items: readonly Nutrients[]): Nutrients | null {
   try {
-    return sumNutrition(meals.flatMap((meal) => meal.items.map((item) => item.nutrients)));
+    return sumNutrition(items);
   } catch (error) {
     if (error instanceof RangeError) return null;
     throw error;
   }
+}
+
+export function totalNutrition(meals: readonly DiaryMeal[]): Nutrients | null {
+  return nutritionSum(meals.flatMap((meal) => meal.items.map((item) => item.nutrients)));
+}
+
+/** Keep the same meal and item order as the diary's SQLite query. */
+export function foodPreviewItems(
+  meals: readonly DiaryMeal[],
+  entry:
+    | { readonly kind: "add"; readonly occurredAt: number; readonly mealId: string }
+    | { readonly kind: "edit"; readonly mealId: string; readonly itemId: string },
+) {
+  const items: Nutrients[] = [];
+  let index = -1;
+  for (const meal of meals) {
+    if (
+      entry.kind === "add" &&
+      index < 0 &&
+      (meal.occurredAt > entry.occurredAt ||
+        // The proposed ID is ASCII, so this comparison matches SQLite's binary ordering.
+        (meal.occurredAt === entry.occurredAt && meal.id > entry.mealId))
+    ) {
+      index = items.length;
+    }
+    for (const item of meal.items) {
+      if (entry.kind === "edit" && meal.id === entry.mealId && item.id === entry.itemId) {
+        index = items.length;
+      } else {
+        items.push(item.nutrients);
+      }
+    }
+  }
+  return index < 0 && entry.kind === "edit"
+    ? null
+    : { items, index: index < 0 ? items.length : index };
 }
 
 export function nutritionTargetProgress(logged: number | null, target: number | null) {
@@ -124,6 +160,7 @@ export type FoodEntry =
   | ({
       kind: "add";
       food: Food;
+      mealId?: string;
     } & EntryTime)
   | {
       kind: "edit";
@@ -141,7 +178,7 @@ export function saveFood(
   if (entry.kind === "add") {
     const item = createDiaryItem(newId(), entry.food, portion);
     diary.saveMeal({
-      id: newId(),
+      id: entry.mealId ?? newId(),
       localDay: entry.day,
       occurredAt: entry.occurredAt,
       utcOffsetMinutes: entry.utcOffsetMinutes,
