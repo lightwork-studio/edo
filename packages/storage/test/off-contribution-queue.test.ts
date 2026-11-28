@@ -93,3 +93,31 @@ test("rejects other database files and leaves a failed enqueue retryable", () =>
     queued_at: 6,
   });
 });
+
+test("keeps writes in the main queue and refuses a missing table even with other schemas attached", () => {
+  using database = new DatabaseSync(":memory:");
+  const queue = openOffContributionQueue(connection(database));
+  database.exec(`
+    CREATE TEMP TABLE off_contributions AS SELECT * FROM main.off_contributions WHERE 0;
+    ATTACH DATABASE ':memory:' AS other;
+    CREATE TABLE other.off_contributions AS SELECT * FROM main.off_contributions WHERE 0;
+  `);
+  const reviewed = queue.preview(sample);
+  expect(queue.enqueue(reviewed, 2)).toMatchObject({ status: "queued" });
+  expect(database.prepare("SELECT count(*) AS count FROM temp.off_contributions").get()).toEqual({
+    count: 0,
+  });
+  expect(queue.pending()).toEqual([{ product: reviewed, queuedAt: 2 }]);
+  expect(openOffContributionQueue(connection(database)).pending()).toEqual(queue.pending());
+
+  database.exec("DROP TABLE main.off_contributions");
+  expect(() => queue.enqueue(reviewed, 3)).toThrow(/Missing Open Food Facts/);
+  expect(() => queue.pending()).toThrow(/Missing Open Food Facts/);
+  expect(() => openOffContributionQueue(connection(database))).toThrow(/Missing Open Food Facts/);
+  expect(database.prepare("SELECT count(*) AS count FROM temp.off_contributions").get()).toEqual({
+    count: 0,
+  });
+  expect(database.prepare("SELECT count(*) AS count FROM other.off_contributions").get()).toEqual({
+    count: 0,
+  });
+});

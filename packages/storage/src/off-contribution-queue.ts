@@ -3,6 +3,7 @@ import { rollback, type SqliteConnection, type SqlRow } from "./sqlite.ts";
 
 const applicationId = 0x45444f51; // EDOQ
 const schemaVersion = 1;
+const productColumns = "barcode, language, name, brand, package_quantity, queued_at";
 
 export interface OffContributionDraft {
   readonly barcode: string;
@@ -42,8 +43,8 @@ function transaction<T>(
 
 function format(db: SqliteConnection) {
   return {
-    application: db.get("PRAGMA application_id")?.application_id,
-    version: db.get("PRAGMA user_version")?.user_version,
+    application: db.get("PRAGMA main.application_id")?.application_id,
+    version: db.get("PRAGMA main.user_version")?.user_version,
   };
 }
 
@@ -51,12 +52,19 @@ function initialize(db: SqliteConnection) {
   db.exec("PRAGMA busy_timeout = 1000");
   transaction(db, "BEGIN IMMEDIATE", () => {
     const { application, version } = format(db);
-    if (application === applicationId && version === schemaVersion) return;
-    if (application !== 0 || version !== 0 || db.get("SELECT name FROM sqlite_schema LIMIT 1")) {
+    if (application === applicationId && version === schemaVersion) {
+      requireMainQueueTable(db);
+      return;
+    }
+    if (
+      application !== 0 ||
+      version !== 0 ||
+      db.get("SELECT name FROM main.sqlite_schema LIMIT 1")
+    ) {
       throw new Error("Unsupported Open Food Facts contribution queue");
     }
     db.exec(`
-      CREATE TABLE off_contributions (
+      CREATE TABLE main.off_contributions (
         barcode TEXT PRIMARY KEY NOT NULL,
         language TEXT NOT NULL,
         name TEXT NOT NULL,
@@ -64,10 +72,21 @@ function initialize(db: SqliteConnection) {
         package_quantity TEXT,
         queued_at INTEGER NOT NULL CHECK (queued_at >= 0)
       ) WITHOUT ROWID, STRICT;
-      PRAGMA application_id = ${applicationId};
-      PRAGMA user_version = ${schemaVersion};
+      PRAGMA main.application_id = ${applicationId};
+      PRAGMA main.user_version = ${schemaVersion};
     `);
   });
+}
+
+function requireMainQueueTable(db: SqliteConnection) {
+  if (
+    !db.get(
+      "SELECT name FROM main.sqlite_schema WHERE type = 'table' AND name = 'off_contributions'",
+    )
+  ) {
+    throw new Error("Missing Open Food Facts contribution queue table");
+  }
+  db.get(`SELECT ${productColumns} FROM main.off_contributions LIMIT 0`);
 }
 
 function requireCurrentFormat(db: SqliteConnection) {
@@ -75,6 +94,7 @@ function requireCurrentFormat(db: SqliteConnection) {
   if (application !== applicationId || version !== schemaVersion) {
     throw new Error("Unsupported Open Food Facts contribution queue");
   }
+  requireMainQueueTable(db);
 }
 
 function productText(value: unknown, limit: number, field: string): string {
@@ -149,7 +169,7 @@ export function openOffContributionQueue(db: SqliteConnection) {
       return transaction(db, "BEGIN IMMEDIATE", () => {
         requireCurrentFormat(db);
         const previous = db.get(
-          "SELECT * FROM off_contributions WHERE barcode = ?",
+          `SELECT ${productColumns} FROM main.off_contributions WHERE barcode = ?`,
           reviewed.barcode,
         );
         if (previous) {
@@ -158,7 +178,7 @@ export function openOffContributionQueue(db: SqliteConnection) {
           return { status: repeated ? "already-queued" : "different-draft", entry };
         }
         db.run(
-          "INSERT INTO off_contributions VALUES (?, ?, ?, ?, ?, ?)",
+          `INSERT INTO main.off_contributions (${productColumns}) VALUES (?, ?, ?, ?, ?, ?)`,
           reviewed.barcode,
           reviewed.language,
           reviewed.name,
@@ -173,7 +193,7 @@ export function openOffContributionQueue(db: SqliteConnection) {
       return transaction(db, "BEGIN", () => {
         requireCurrentFormat(db);
         return db
-          .all("SELECT * FROM off_contributions ORDER BY queued_at, barcode")
+          .all(`SELECT ${productColumns} FROM main.off_contributions ORDER BY queued_at, barcode`)
           .map(readQueued);
       });
     },
