@@ -74,6 +74,7 @@ async function openLocalDiaryConnection() {
         const keys = [
           { kind: "meal", id: "native-meal" },
           { kind: "meal", id: "native-meal-damaged" },
+          { kind: "meal", id: "native-meal-numeric" },
           { kind: "weigh-in", id: "native-weigh-in" },
         ];
         for (const key of keys) {
@@ -86,23 +87,27 @@ async function openLocalDiaryConnection() {
             pending:
               key.kind === "meal" ? { op: "delete", submissionId: `latest-${key.id}` } : null,
             attempt: null,
-            blocked: {
-              submission: { ...key, submissionId, baseRevision: null, op: "put", content },
-              result:
-                key.kind === "meal"
-                  ? {
-                      submissionId,
-                      status: key.id === "native-meal-damaged" ? "damaged" : "conflict",
-                      reason: "exists",
-                      current: { ...key, state: "live", revision: 1, content },
-                    }
-                  : {
-                      submissionId,
-                      status: "rejected",
-                      code: "invalid-content",
-                      message: "Fixture",
-                    },
-            },
+            blocked:
+              key.id === "native-meal-damaged"
+                ? "damaged"
+                : {
+                    submission: { ...key, submissionId, baseRevision: null, op: "put", content },
+                    result:
+                      key.kind === "meal"
+                        ? {
+                            submissionId,
+                            status:
+                              key.id === "native-meal-numeric" ? 9007199254740992 : "conflict",
+                            reason: "exists",
+                            current: { ...key, state: "live", revision: 1, content },
+                          }
+                        : {
+                            submissionId,
+                            status: "rejected",
+                            code: "invalid-content",
+                            message: "Fixture",
+                          },
+                  },
           };
           connection.run(
             "INSERT INTO edo_sync_outbox VALUES (?, ?, NULL, NULL, ?)",
