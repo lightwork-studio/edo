@@ -350,6 +350,42 @@ interface BlockedSyncRecord {
   readonly status: NonNullable<OutboxRecord["blocked"]>["result"]["status"];
 }
 
+function requireBlockedPageLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    throw new RangeError("Invalid blocked record page size");
+  }
+}
+
+function blockedPage(
+  db: JournalSqlite,
+  after: RecordKey | null,
+  limit: number,
+  projection: "records" | "keys",
+) {
+  const keysOnly = projection === "keys";
+  const columns = keysOnly
+    ? "kind, id"
+    : "kind, id, json_extract(content, '$.blocked.result.status') AS status";
+  // A damaged but non-null blocker still occupies a place in the review queue.
+  const blockedType = keysOnly ? "<> 'null'" : "= 'object'";
+  const rows = db.all(
+    `SELECT ${columns}
+     FROM edo_sync_outbox
+     WHERE (kind, id) > (?, ?) AND json_type(content, '$.blocked') ${blockedType}
+     ORDER BY kind, id LIMIT ?`,
+    after?.kind ?? "",
+    after?.id ?? "",
+    limit + 1,
+  );
+  const entries = rows.slice(0, limit).map(({ kind, id, status }) => {
+    if (typeof kind !== "string" || typeof id !== "string") {
+      throw new Error("Invalid blocked sync record");
+    }
+    return { key: { kind, id }, status };
+  });
+  return { entries, next: rows.length > limit ? (entries.at(-1)?.key ?? null) : null };
+}
+
 function orderedJson(content: unknown): string {
   return JSON.stringify(content, (_key, value: unknown) => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
@@ -708,31 +744,24 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       readonly records: readonly BlockedSyncRecord[];
       readonly next: RecordKey | null;
     } {
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-        throw new RangeError("Invalid blocked record page size");
-      }
+      requireBlockedPageLimit(limit);
       return inspect(() => {
-        const rows = db.all(
-          `SELECT kind, id, json_extract(content, '$.blocked.result.status') AS status
-           FROM edo_sync_outbox
-           WHERE (kind, id) > (?, ?) AND json_type(content, '$.blocked') = 'object'
-           ORDER BY kind, id LIMIT ?`,
-          after?.kind ?? "",
-          after?.id ?? "",
-          limit + 1,
-        );
-        const records = rows.slice(0, limit).map<BlockedSyncRecord>(({ kind, id, status }) => {
-          if (
-            typeof kind !== "string" ||
-            !isKnownRecordKind(kind) ||
-            typeof id !== "string" ||
-            (status !== "conflict" && status !== "rejected")
-          ) {
+        const { entries, next } = blockedPage(db, after, limit, "records");
+        const records = entries.map<BlockedSyncRecord>(({ key, status }) => {
+          if (!isKnownRecordKind(key.kind) || (status !== "conflict" && status !== "rejected")) {
             throw new Error("Invalid blocked sync record");
           }
-          return { key: { kind, id }, status };
+          return { key, status };
         });
-        return { records, next: rows.length > limit ? (records.at(-1)?.key ?? null) : null };
+        return { records, next };
+      });
+    },
+    /** Page through record keys even when one blocked result needs a separate read error. */
+    blockedRecordKeys(after: RecordKey | null = null, limit = 50) {
+      requireBlockedPageLimit(limit);
+      return inspect(() => {
+        const { entries, next } = blockedPage(db, after, limit, "keys");
+        return { keys: entries.map(({ key }) => key), next };
       });
     },
     /** Read the values for a review together, including edits queued after the refusal. */
