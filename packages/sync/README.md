@@ -20,7 +20,9 @@ separately while a local attempt is pending. The final acknowledgement applies t
 with the diary update when the last local edit clears.
 
 A stale or rejected mutation remains queued with its server evidence. A caller pulls the current
-copy before offering review. Pass the immutable snapshot from `blockedReview` back to
+copy before offering review. List refusals through `blockedRecords`, which returns record keys
+and statuses in pages. Open the selected record with `blockedReview` to read its current values.
+Pass the immutable snapshot from `blockedReview` back to
 `retryReviewed` on the same journal. It rechecks the binding and all displayed evidence before
 assigning a fresh submission ID.
 If the evidence changed, open a fresh review. The journal reserves
