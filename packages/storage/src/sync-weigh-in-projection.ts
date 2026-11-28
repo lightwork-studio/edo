@@ -8,7 +8,8 @@ import type { DiarySqliteConnection } from "./sqlite.ts";
 export function projectSyncedWeighIn(db: DiarySqliteConnection): WeighInProjector {
   return (change, expected) => {
     const id = diaryId(change.id, "weigh-in ID");
-    if (JSON.stringify(readSavedWeighIn(db, id)) !== JSON.stringify(expected)) {
+    const saved = JSON.stringify(readSavedWeighIn(db, id));
+    if (saved !== JSON.stringify(expected)) {
       throw new Error("The saved weigh-in needs review before applying the account update");
     }
     let projected: WeighIn | null = null;
@@ -17,9 +18,9 @@ export function projectSyncedWeighIn(db: DiarySqliteConnection): WeighInProjecto
       if (contentId !== id)
         throw new Error("The account weigh-in identity differs from the envelope");
       projected = readWeighIn({ id, local_day: localDay, occurred_at: occurredAt, kg });
-      writeWeighIn(db, projected);
+      if (JSON.stringify(projected) !== saved) writeWeighIn(db, projected);
     } else if (change.state === "deleted") {
-      db.run("DELETE FROM main.diary_weigh_ins WHERE id = ?", id);
+      if (expected !== null) db.run("DELETE FROM main.diary_weigh_ins WHERE id = ?", id);
     } else {
       throw new Error("This account weigh-in is unavailable");
     }

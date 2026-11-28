@@ -519,6 +519,23 @@ test("recovers a v9 diary and its accepted weigh-in when the applied projection 
     JSON.stringify(reading),
   );
   const before = journalTables(source.sqlite);
+  source.db.exec(`CREATE TEMP TABLE edo_sync_weigh_in_projections
+    AS SELECT * FROM main.edo_sync_weigh_in_projections WHERE 0`);
+  await expect(
+    openDiary({
+      connection: source.sqlite,
+      backupBeforeMigration: async (_version, verify) => {
+        const path = join(source.dir, "incomplete-v9.sqlite");
+        await copyDatabase(source.path, path);
+        using incomplete = new DatabaseSync(path);
+        incomplete.exec("DELETE FROM main.edo_sync_weigh_in_projections");
+        verify(connection(incomplete));
+      },
+    }),
+  ).rejects.toThrow("Diary backup does not match the current diary");
+  expect(source.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 9 });
+  expect(journalTables(source.sqlite)).toEqual(before);
+  source.db.exec("DROP TABLE temp.edo_sync_weigh_in_projections");
   const interrupted: DiarySqliteConnection = {
     ...source.sqlite,
     exec(sql) {
