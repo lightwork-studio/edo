@@ -1,6 +1,8 @@
 export const strings = {
   en: {
     today: "Today",
+    foods: "Foods",
+    profile: "Profile",
     previousWeek: "Previous week",
     nextWeek: "Next week",
     logged: "Logged",
@@ -21,6 +23,8 @@ export const strings = {
     editPortion: "Edit portion",
     search: "Search foods by name",
     searchPlaceholder: "Search by food name",
+    clearSearch: "Clear search",
+    databaseFoods: "Database",
     scanBarcode: "Scan barcode",
     productBarcode: "Product barcode",
     openBarcodeCamera: "Open camera",
@@ -199,6 +203,8 @@ export const strings = {
   },
   de: {
     today: "Heute",
+    foods: "Lebensmittel",
+    profile: "Profil",
     previousWeek: "Vorherige Woche",
     nextWeek: "Nächste Woche",
     logged: "Erfasst",
@@ -219,6 +225,8 @@ export const strings = {
     editPortion: "Menge bearbeiten",
     search: "Lebensmittel nach Name suchen",
     searchPlaceholder: "Lebensmittel suchen",
+    clearSearch: "Suche leeren",
+    databaseFoods: "Datenbank",
     scanBarcode: "Barcode scannen",
     productBarcode: "Produktbarcode",
     openBarcodeCamera: "Kamera öffnen",
