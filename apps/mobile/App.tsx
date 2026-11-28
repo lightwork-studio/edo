@@ -66,6 +66,8 @@ import { RecipeList } from "./src/recipe-list";
 import { SavedMealEditor, SavedMealList } from "./src/saved-meals";
 import { SearchScreen } from "./src/search";
 import { appLocale, type Language, strings } from "./src/strings";
+import { SyncBlockerNotice, SyncBlockerScreen } from "./src/sync-blocker-screen";
+import { syncBlockerNotice } from "./src/sync-blockers";
 import { TargetsScreen } from "./src/targets-screen";
 import { TodayScreen } from "./src/today";
 import { DetailHeader, Notice, showDay, styles } from "./src/ui";
@@ -78,6 +80,7 @@ type FoodSelection = SearchContext & { food: Food; fromCustomFoods?: boolean };
 type DeviceContext = { today: string; language: Language; locale: string };
 type Route =
   | { kind: "diary" }
+  | { kind: "sync-blockers" }
   | { kind: "progress" }
   | { kind: "weigh-in" }
   | { kind: "targets" }
@@ -193,6 +196,10 @@ function DiaryApp({
   const t = strings[language];
   const { diary } = connection;
   const cachedProducts = packagedCache.value === "error" ? null : packagedCache.value?.cache;
+  const syncNotice = useMemo(
+    () => (route.kind === "diary" ? syncBlockerNotice(diary.sync.journal) : "clear"),
+    [diary, route.kind],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: Favorite writes invalidate the SQLite read.
   const favorites = useMemo(() => {
     if (route.kind !== "my-foods" && route.kind !== "add") return null;
@@ -307,6 +314,13 @@ function DiaryApp({
         meals={meals}
         kcalTarget={readTarget(diary, day)?.target.kcal ?? null}
         feedback={feedback?.day === day ? t[feedback.kind] : null}
+        syncNotice={
+          <SyncBlockerNotice
+            state={syncNotice}
+            language={language}
+            onOpen={() => setRoute({ kind: "sync-blockers" })}
+          />
+        }
         onDay={chooseDay}
         onWeek={(offset) => {
           const next = addDays(day, offset);
@@ -346,6 +360,10 @@ function DiaryApp({
         onRetry={() => setRefresh((revision) => revision + 1)}
       />
     );
+  }
+
+  if (route.kind === "sync-blockers") {
+    return <SyncBlockerScreen journal={diary.sync.journal} language={language} onBack={goBack} />;
   }
 
   if (route.kind === "progress") {
