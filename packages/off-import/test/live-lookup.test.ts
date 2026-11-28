@@ -145,6 +145,16 @@ it("rejects non-JSON and declared oversized successful responses", async () => {
   await expect(lookup(product.code)).resolves.toEqual({ status: "unavailable" });
 });
 
+it("accepts a valid JSON product at the exact response limit", async () => {
+  const json = JSON.stringify({ product }).padEnd(256 * 1024);
+  const lookup = createOpenFoodFactsLiveLookup(
+    async () =>
+      new Response(json, { headers: { "Content-Type": "application/json; charset=utf-8" } }),
+    () => start,
+  );
+  await expect(lookup(product.code)).resolves.toMatchObject({ status: "found" });
+});
+
 it("cancels a chunked upstream body when the accumulated bytes exceed the limit", async () => {
   const cancel = vi.fn();
   const body = new ReadableStream({
