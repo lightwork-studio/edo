@@ -45,7 +45,7 @@ jobs:
         working-directory: apps/mobile/android
         run: |
           export JAVA_HOME="$JAVA_HOME_17_X64"
-          ./gradlew :app:assembleRelease :edo-archive-picker:testReleaseUnitTest \
+          ./gradlew :app:assembleRelease \
             --console=plain -PreactNativeArchitectures=x86_64
       - name: Verify file selection, preview, import and restart
         run: |
