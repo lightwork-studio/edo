@@ -16,7 +16,28 @@
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
         }
-      ]
+      ],
+      [
+        "expo-font",
+        {
+          "ios": { "fonts": ["./assets/fonts/InterVariable.ttf"] },
+          "android": {
+            "fonts": [
+              {
+                "fontFamily": "Inter Variable",
+                "path": "./assets/fonts/InterVariable.ttf",
+                "fontDefinitions": [
+                  { "weight": 400, "axes": { "wght": 400 } },
+                  { "weight": 500, "axes": { "wght": 500 } },
+                  { "weight": 600, "axes": { "wght": 600 } },
+                  { "weight": 700, "axes": { "wght": 700 } }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      ["expo-asset", { "assets": ["./assets/fonts/inter_license.json"] }]
     ],
     "ios": {
       "bundleIdentifier": "studio.lightwork.edo"

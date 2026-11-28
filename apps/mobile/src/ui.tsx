@@ -17,6 +17,8 @@ export const colors = {
   fat: "#FF7D8A",
 };
 
+const textFamily = "Inter Variable";
+
 export const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   header: {
@@ -27,17 +29,23 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  title: { color: colors.text, fontSize: 17, fontWeight: "700" },
-  heading: { color: colors.text, fontSize: 26, fontWeight: "700", letterSpacing: -0.5 },
-  body: { color: colors.text, fontSize: 15 },
-  meta: { color: colors.muted, fontSize: 13 },
-  error: { color: colors.fat, fontSize: 13 },
+  title: { fontFamily: textFamily, color: colors.text, fontSize: 17, fontWeight: "700" },
+  heading: {
+    fontFamily: textFamily,
+    color: colors.text,
+    fontSize: 26,
+    fontWeight: "700",
+    letterSpacing: -0.5,
+  },
+  body: { fontFamily: textFamily, color: colors.text, fontSize: 15 },
+  meta: { fontFamily: textFamily, color: colors.muted, fontSize: 13 },
+  error: { fontFamily: textFamily, color: colors.fat, fontSize: 13 },
   card: { backgroundColor: colors.surface, borderRadius: 20, padding: 16, gap: 12 },
   content: { padding: 16, gap: 12 },
   footer: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 },
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
   stretch: { flex: 1 },
-  numbers: { fontVariant: ["tabular-nums"], fontWeight: "700" },
+  numbers: { fontFamily: textFamily, fontVariant: ["tabular-nums"], fontWeight: "700" },
   primary: {
     minHeight: 56,
     borderRadius: 18,
@@ -47,7 +55,13 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  primaryText: { color: colors.accentText, fontSize: 16, fontWeight: "700", textAlign: "center" },
+  primaryText: {
+    fontFamily: textFamily,
+    color: colors.accentText,
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+  },
   iconButton: {
     width: 44,
     height: 44,
@@ -61,7 +75,7 @@ export const styles = StyleSheet.create({
   pressed: { opacity: 0.7 },
   notice: { padding: 24, alignItems: "center", gap: 12 },
   noticeText: { textAlign: "center" },
-  actionText: { color: colors.accent, fontSize: 14, fontWeight: "700" },
+  actionText: { fontFamily: textFamily, color: colors.accent, fontSize: 14, fontWeight: "700" },
   action: { minHeight: 44, paddingHorizontal: 8, justifyContent: "center", alignItems: "center" },
 });
 
