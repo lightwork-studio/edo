@@ -33,6 +33,8 @@ interface CatalogImportMetadata
   extends Pick<CatalogManifest, "provider" | "schemaVersion" | "importerVersion" | "attribution"> {
   root: string;
   source: Omit<CatalogManifest["source"], "sha256">;
+  /** Reject a derived release if the active manifest changed since its baseline was selected. */
+  expectedActiveSha256?: string;
 }
 
 export interface CatalogImportInput extends CatalogImportMetadata {
@@ -309,6 +311,13 @@ export async function publishCatalog(
     await requireCatalogDirectory(directory);
   }
   using _lock = lockPublisher(root);
+  if (input.expectedActiveSha256 !== undefined) {
+    const active = join(root, "active.json");
+    const entry = await lstat(active);
+    if (!entry.isFile() || (await fileDigest(active)).sha256 !== input.expectedActiveSha256) {
+      throw new Error("Active catalog changed before publication");
+    }
+  }
   await ensureCatalogReceiptDirectory(root);
   const stage = await mkdtemp(join(root, ".stage-"));
   const managed = !("inputPath" in input);

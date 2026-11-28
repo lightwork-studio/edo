@@ -9,10 +9,8 @@ import {
   retainedProducts,
 } from "./barcode";
 import { BarcodeScreen } from "./barcode-screen";
-import { httpsOrigin } from "./catalog-origin";
+import { packagedCatalogOrigin } from "./catalog-origin";
 import type { Strings } from "./strings";
-
-const origin = httpsOrigin(process.env.EXPO_PUBLIC_EDO_CATALOG_ORIGIN);
 
 export interface BarcodeState {
   code: string;
@@ -51,7 +49,7 @@ export function BarcodeEntry({
     const controller = new AbortController();
     void lookupPackagedFood({
       ...barcodeLookupOrder(submitted.code, submitted.cameraUpcE),
-      origin,
+      origin: packagedCatalogOrigin,
       cache,
       keep: () => retainedProducts(diary, today),
       signal: controller.signal,

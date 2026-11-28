@@ -10,7 +10,7 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r typecheck && tsc -p apps/catalog-edge",
     "test": "vitest run",
     "check:builds": "pnpm --filter @edo/mobile export:ios && pnpm --filter @edo/mobile export:android",
     "dev:app": "pnpm --filter @edo/mobile start",

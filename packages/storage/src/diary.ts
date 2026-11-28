@@ -1,7 +1,14 @@
 import type { DiaryItem, DiaryMeal } from "@edo/core";
+import { openSyncJournal } from "@edo/sync";
 import { archiveBatches, archivePlaceholders, insertArchiveRows } from "./archive-sql.ts";
 import { type DiaryProgressStore, diaryProgress, verifyDiaryProgress } from "./diary-progress.ts";
-import { type DiaryBackup, diaryMigrations, inCurrentDiary, migrateDiary } from "./migrations.ts";
+import {
+  type DiaryBackup,
+  diaryMigrations,
+  inCurrentDiary,
+  migrateDiary,
+  requireCurrentDiaryVersion,
+} from "./migrations.ts";
 import { type MyFoodsStore, myFoods, verifyMyFoods } from "./my-foods.ts";
 import {
   ArchiveIssueLimitError,
@@ -39,6 +46,14 @@ export interface PrivateArchiveStore {
   /** Optional limits bound interactive preview and restore work. */
   previewPrivateArchive(source: string, limits?: PrivateArchiveLimits): PrivateArchivePreview;
   restorePrivateArchive(source: string, limits?: PrivateArchiveLimits): PrivateArchiveResult;
+}
+
+export interface SyncMealStore {
+  readonly sync: {
+    readonly journal: ReturnType<typeof openSyncJournal>;
+    saveMeal(meal: DiaryMeal, submissionId: string): void;
+    deleteMeal(id: string, submissionId: string): void;
+  };
 }
 
 export interface OpenDiaryOptions {
@@ -251,13 +266,14 @@ export async function openDiary({
   connection: db,
   backupBeforeMigration,
 }: OpenDiaryOptions): Promise<
-  DiaryStore & DiaryProgressStore & MyFoodsStore & PrivateArchiveStore
+  DiaryStore & DiaryProgressStore & MyFoodsStore & PrivateArchiveStore & SyncMealStore
 > {
   await migrateDiary(db, diaryMigrations, backupBeforeMigration, (connection) => {
     readMeals(connection.all(selectMeals));
     verifyDiaryProgress(connection);
     verifyMyFoods(connection);
   });
+  const journal = openSyncJournal(db, () => requireCurrentDiaryVersion(db));
   return {
     ...diaryProgress(db),
     ...myFoods(db),
@@ -269,6 +285,25 @@ export async function openDiary({
       inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
         db.run("DELETE FROM diary_meals WHERE id = ?", diaryId(id, "meal ID"));
       }),
+    sync: {
+      journal,
+      saveMeal: (meal, submissionId) => {
+        const prepared = prepareMeal(meal);
+        journal.commitLocalProjection({ kind: "meal", id: prepared.id }, submissionId, () => {
+          writeMeal(db, prepared, true);
+          const persisted = readMeal(db, prepared.id);
+          if (!persisted) throw new Error("Could not read the saved meal for sync");
+          return { op: "put", content: persisted };
+        });
+      },
+      deleteMeal: (id, submissionId) => {
+        const mealId = diaryId(id, "meal ID");
+        journal.commitLocalProjection({ kind: "meal", id: mealId }, submissionId, () => {
+          db.run("DELETE FROM diary_meals WHERE id = ?", mealId);
+          return { op: "delete" };
+        });
+      },
+    },
     getMeal: (id) => inCurrentDiary(db, "BEGIN", () => readMeal(db, diaryId(id, "meal ID"))),
     listMeals: (localDay) =>
       inCurrentDiary(db, "BEGIN", () =>

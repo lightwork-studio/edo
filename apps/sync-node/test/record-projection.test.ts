@@ -1,0 +1,140 @@
+import { type JsonObject, syncCandidate } from "@edo/contract";
+import { expect, it } from "vitest";
+import { applyRecordContent } from "../src/record-projection.ts";
+import { InvalidSyncContent } from "../src/sync-store.ts";
+
+const nutrients = {
+  kcal: 120,
+  proteinG: null,
+  availableCarbohydratesG: 0,
+  fatG: 6.1,
+  fiberG: null,
+};
+const food = {
+  id: { provider: "open-food-facts", sourceId: "00123" },
+  name: "Synthetic food",
+  release: "fixture-release",
+  preparation: "as-sold",
+  nutrition: { basis: "per-100-g", nutrients },
+};
+const item = {
+  id: "item-1",
+  food,
+  portion: { amount: 100, unit: "g" },
+  nutrients,
+};
+const meal = {
+  id: "meal-1",
+  localDay: "2026-11-27",
+  occurredAt: 1_795_780_800_000,
+  items: [item],
+};
+const args = { key: { kind: "meal", id: "meal-1" }, release: syncCandidate.release };
+
+it("merges known fields and retains unknown parts attached to the same nested item ID", () => {
+  const olderEdit = {
+    ...meal,
+    items: [
+      {
+        ...item,
+        portion: { amount: 50, unit: "g" },
+        nutrients: { ...nutrients, kcal: 60, fatG: 3.05 },
+      },
+    ],
+  };
+  const current = {
+    ...meal,
+    futureInfo: { count: 0, active: false },
+    items: [
+      {
+        ...item,
+        futureFlag: null,
+        food: { ...food, nutrition: { ...food.nutrition, futureBasis: "x" } },
+      },
+      { ...item, id: "other-item", futureFlag: "deleted with its item" },
+    ],
+  };
+  const updated = applyRecordContent({ ...args, current, submitted: olderEdit });
+  expect(updated).toEqual({
+    ...olderEdit,
+    futureInfo: current.futureInfo,
+    items: [
+      {
+        ...olderEdit.items[0],
+        futureFlag: null,
+        food: { ...food, nutrition: { ...food.nutrition, futureBasis: "x" } },
+      },
+    ],
+  });
+  const sameOpaqueWithReorderedKeys = { ...olderEdit, futureInfo: { active: false, count: 0 } };
+  expect(applyRecordContent({ ...args, current, submitted: sameOpaqueWithReorderedKeys })).toEqual(
+    updated,
+  );
+  expect(() =>
+    applyRecordContent({
+      ...args,
+      current,
+      submitted: { ...olderEdit, futureInfo: { count: 1, active: false } },
+    }),
+  ).toThrow(InvalidSyncContent);
+});
+
+it("rejects invalid snapshots, conflicting identity and unsupported new fields", () => {
+  const bad: JsonObject[] = [
+    { ...meal, id: "another-record" },
+    { ...meal, localDay: "2026-02-30" },
+    { ...meal, items: [item, item] },
+    { ...meal, items: [{ ...item, portion: { amount: 0, unit: "g" } }] },
+    { ...meal, items: [{ ...item, nutrients: { ...nutrients, fiberG: -1 } }] },
+    { ...meal, acknowledgedNever: true },
+  ];
+  for (const submitted of bad) {
+    expect(() => applyRecordContent({ ...args, current: null, submitted })).toThrow(
+      InvalidSyncContent,
+    );
+  }
+  expect(applyRecordContent({ ...args, current: null, submitted: meal })).toEqual(meal);
+  expect(() =>
+    applyRecordContent({ ...args, release: "9.9", current: null, submitted: meal }),
+  ).toThrow(InvalidSyncContent);
+});
+
+it("preserves a captured UTC offset and source ID from a legacy food snapshot", () => {
+  const legacy = {
+    ...meal,
+    items: [{ ...item, food: { ...food, id: { ...food.id, sourceId: "legacy\u0000id" } } }],
+  };
+  const current = { ...legacy, utcOffsetMinutes: -300 };
+  expect(applyRecordContent({ ...args, current: null, submitted: current })).toEqual(current);
+  expect(applyRecordContent({ ...args, current, submitted: legacy })).toEqual(current);
+  const moved = { ...legacy, occurredAt: legacy.occurredAt + 60_000 };
+  expect(applyRecordContent({ ...args, current, submitted: moved })).toEqual(moved);
+  expect(() =>
+    applyRecordContent({ ...args, current, submitted: { ...legacy, utcOffsetMinutes: 1440 } }),
+  ).toThrow(InvalidSyncContent);
+});
+
+it("enforces the diary's nutrition budget and keeps target revision IDs immutable", () => {
+  const record = {
+    id: "target-1",
+    effectiveDay: "2026-11-27",
+    configuredAt: meal.occurredAt,
+    mode: "manual",
+    target: { kcal: 1000, proteinG: 0, fatG: 0, availableCarbohydratesG: 250 },
+  };
+  const targetArgs = { ...args, key: { kind: "nutrition-target", id: record.id } };
+  expect(applyRecordContent({ ...targetArgs, current: null, submitted: record })).toEqual(record);
+  expect(applyRecordContent({ ...targetArgs, current: record, submitted: record })).toEqual(record);
+  for (const target of [
+    { ...record.target, availableCarbohydratesG: 900 },
+    { ...record.target, proteinG: 250 },
+  ]) {
+    expect(() =>
+      applyRecordContent({ ...targetArgs, current: null, submitted: { ...record, target } }),
+    ).toThrow(InvalidSyncContent);
+  }
+  const target = { ...record.target, kcal: 1200, availableCarbohydratesG: 300 };
+  expect(() =>
+    applyRecordContent({ ...targetArgs, current: record, submitted: { ...record, target } }),
+  ).toThrow(/requires a new revision ID/);
+});

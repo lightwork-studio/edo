@@ -78,6 +78,12 @@ importers:
       '@edo/catalog-import':
         specifier: workspace:*
         version: link:../../packages/catalog-import
+      '@edo/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
+      '@edo/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@edo/off-import':
         specifier: workspace:*
         version: link:../../packages/off-import
@@ -117,8 +123,15 @@ importers:
       '@edo/core':
         specifier: workspace:*
         version: link:../core
+      '@edo/sync':
+        specifier: workspace:*
+        version: link:../sync
 
-  packages/sync: {}
+  packages/sync:
+    dependencies:
+      '@edo/contract':
+        specifier: workspace:*
+        version: link:../contract
 
 packages:
 

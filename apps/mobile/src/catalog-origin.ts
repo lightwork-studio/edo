@@ -14,3 +14,5 @@ export function httpsOrigin(value: string | undefined): string | null {
     return null;
   }
 }
+
+export const packagedCatalogOrigin = httpsOrigin(process.env.EXPO_PUBLIC_EDO_CATALOG_ORIGIN);
