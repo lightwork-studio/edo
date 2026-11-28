@@ -200,6 +200,7 @@ interface StalePutEvidence {
 export interface BlockedSyncReview {
   readonly baseRevision: number | null;
   readonly original: Change | null;
+  /** The latest intent recorded in the outbox for this blocked record. */
   readonly device: OutboxEdit;
   readonly blocked: NonNullable<OutboxRecord["blocked"]>;
   /** The last authenticated pull for this record. The receipt may describe a newer value. */
@@ -480,7 +481,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         requireActiveSession(session);
       });
     },
-    /** Read the values for a review together, including any local edit made after the refusal. */
+    /** Read the values for a review together, including edits queued after the refusal. */
     blockedReview(key: RecordKey): BlockedSyncReview | null {
       return transact(() => {
         const row = db.get(
