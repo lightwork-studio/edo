@@ -218,7 +218,7 @@ test("upgrades and can recover a bound v5 diary without inventing accepted meal 
   expect(backup.prepare("SELECT content FROM edo_sync_outbox").get()).toEqual({ content: record });
 });
 
-test("recovers accepted meal evidence when a v5 attempt retries after a lost response", async () => {
+test.each(["none", "delete", "put"] as const)("recovers a v5 meal receipt (%s)", async (edit) => {
   const source = fixture();
   await migrateDiary(
     source.sqlite,
@@ -266,6 +266,9 @@ test("recovers accepted meal evidence when a v5 attempt retries after a lost res
   if (!history) throw new Error("Expected the restored binding");
   const reconnected = await client.connect(history);
   synced.sync.journal.bind(reconnected);
+  const editedMeal = { ...meal, occurredAt: meal.occurredAt + 60_000 };
+  if (edit === "delete") synced.sync.deleteMeal(meal.id, "newer-delete");
+  if (edit === "put") synced.sync.saveMeal(editedMeal, "newer-put");
   expect(synced.sync.journal.mealProjection(meal.id)).toBeNull();
   const retry = synced.sync.journal.prepare(reconnected);
   expect(retry).toEqual(attempt);
@@ -274,12 +277,29 @@ test("recovers accepted meal evidence when a v5 attempt retries after a lost res
   synced.sync.journal.applyResults(reconnected, accepted, () => undefined);
   upgrade.db.close();
 
-  const reopened = await openFile(source.path, source.dir).open();
-  expect(reopened.sync.journal.mealProjection(meal.id)).toEqual({
+  const file = openFile(source.path, source.dir);
+  const reopened = await file.open();
+  const evidence = {
     revision: 1,
-    origin: "accepted",
-    content: reopened.getMeal(meal.id),
-  });
+    origin: "accepted" as const,
+    content: meal,
+  };
+  const saved = file.sqlite.get(
+    "SELECT revision, origin, content FROM edo_sync_meal_projections WHERE id = ?",
+    meal.id,
+  );
+  expect(saved && { ...saved, content: JSON.parse(String(saved.content)) }).toEqual(evidence);
+  const diaryMeal = { none: meal, delete: null, put: editedMeal }[edit];
+  const pendingEdit = {
+    none: null,
+    delete: { op: "delete", submissionId: "newer-delete" },
+    put: { op: "put", submissionId: "newer-put", content: editedMeal },
+  }[edit];
+  expect(reopened.getMeal(meal.id)).toEqual(diaryMeal);
+  expect(reopened.sync.journal.mealProjection(meal.id)).toEqual(pendingEdit ? null : evidence);
+  expect(reopened.sync.journal.queued()).toMatchObject(
+    pendingEdit ? [{ key, baseRevision: 1, pending: pendingEdit }] : [],
+  );
   expect(reopened.sync.journal.serverCopy(key)).toBeNull();
   expect(reopened.sync.journal.history()).toMatchObject({ revision: 1, cursor: 0 });
 });

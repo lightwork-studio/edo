@@ -498,8 +498,9 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             if (result.status === "accepted" && record.key.kind === "meal") {
               const attempt = record.attempt;
               const content = attempt.op === "put" ? attempt.content : null;
+              // A newer local edit can hide the last accepted item's ownership.
               const projection: StoredMealProjection | null =
-                !hasLocalWork(next) && (content === null || content.id === attempt.id)
+                content === null || content.id === attempt.id
                   ? { revision: result.revision, origin: "accepted", content }
                   : null;
               writeMealProjection(db, record.key.id, projection);

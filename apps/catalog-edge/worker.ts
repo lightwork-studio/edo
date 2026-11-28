@@ -164,13 +164,29 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
     throw new Error("Published catalog manifest does not match its digest");
   const manifest = compatibleCatalog(active.value, prefix, [1]);
   if (!manifest) throw new Error("Unsupported Open Food Facts release");
-  const { value: index } = await readJson(bucket, `${prefix}/lookup/${active.sha}.json`, 32 * 1024);
-  if (!index || typeof index !== "object" || Array.isArray(index))
+  if (manifest.artifact.sha256 !== state.releases[state.active])
+    throw new Error("Published catalog artifact does not match its registration");
+  const { value: index, sha } = await readJson(
+    bucket,
+    `${prefix}/lookup/${active.sha}.json`,
+    32 * 1024,
+  );
+  const expectedIndex = state.barcodeIndexes?.[active.sha];
+  if (expectedIndex !== undefined && sha !== expectedIndex)
+    throw new Error("Published barcode index does not match its registration");
+  if (
+    !index ||
+    typeof index !== "object" ||
+    Array.isArray(index) ||
+    !Object.entries(index).every(
+      ([prefix, digest]) =>
+        /^[a-f0-9]{2}$/.test(prefix) && typeof digest === "string" && checksum.test(digest),
+    )
+  ) {
     throw new Error("Invalid barcode index");
-  const shardDigest = (index as Record<string, unknown>)[shardFor(key)];
+  }
+  const shardDigest = (index as Record<string, string>)[shardFor(key)];
   if (shardDigest === undefined) return json({ status: "not-found" }, 404);
-  if (typeof shardDigest !== "string" || !checksum.test(shardDigest))
-    throw new Error("Invalid barcode shard reference");
 
   const shard = await readJson(bucket, `${prefix}/shards/${shardDigest}.json`, 8 * 1024 * 1024);
   if (
