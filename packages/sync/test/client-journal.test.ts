@@ -324,6 +324,26 @@ test("rebases the latest blocked draft only against a verified newer server copy
       () => undefined,
     ),
   ).toBe(false);
+  const tooManyValues = { extra: Array.from({ length: 50_001 }, () => 1) };
+  expect(
+    local.journal.tryRebaseStalePut(
+      session,
+      key,
+      "rebased",
+      () => tooManyValues,
+      () => undefined,
+    ),
+  ).toBe(false);
+  expect(local.journal.queued()).toEqual(before);
+  expect(() =>
+    local.journal.tryRebaseStalePut(
+      session,
+      key,
+      "x".repeat(1025),
+      () => tooManyValues,
+      () => undefined,
+    ),
+  ).toThrow(expect.objectContaining({ code: "invalid-request" }));
   expect(() =>
     local.journal.tryRebaseStalePut(session, key, "rebased", resolve, () => {
       local.set(80);

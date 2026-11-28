@@ -493,12 +493,12 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         saveRecord(db, retried);
       });
     },
-    /** Rebase a blocked put and commit its merged diary value as one local transaction. */
+    /** Rebase a blocked put and commit its merged diary value. A null result declines the rebase. */
     tryRebaseStalePut(
       session: NegotiatedSync,
       key: RecordKey,
       submissionId: string,
-      resolve: (evidence: StalePutEvidence) => JsonObject | null,
+      resolve: (evidence: StalePutEvidence) => unknown,
       writeMerged: (content: JsonObject) => undefined,
     ): boolean {
       return transact(() => {
@@ -543,13 +543,22 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           server: server.content,
         });
         if (content === null) return false;
-        const replacement = decodeSubmission({
+        const candidate = {
           ...key,
           op: "put",
           content,
           submissionId,
           baseRevision: server.revision,
-        });
+        };
+        let replacement: Submission;
+        try {
+          replacement = decodeSubmission(candidate);
+        } catch (error) {
+          if (!(error instanceof SyncWireError) || error.code !== "invalid-request") throw error;
+          // Preserve caller errors in the submission metadata. A rejected merge body can wait for review.
+          decodeSubmission({ ...candidate, content: {} });
+          return false;
+        }
         const bytes = syncRequestBytes(
           JSON.stringify({ ...syncScope(session), submissions: [replacement] }),
         );

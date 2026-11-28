@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
+import { decodeChange } from "@edo/contract";
 import {
   createDiaryItem,
   type Food,
@@ -122,23 +123,30 @@ const revisedTarget: NutritionTargetRecord = {
   target: { ...target.target, kcal: 2100, availableCarbohydratesG: 280 },
 };
 
-function diarySyncSession() {
+function diarySyncClient(respond?: (path: string) => Response, revision = 0) {
   return createSyncClient({
     origin: "https://example.test",
     releases: [
       { release: "0.1", features: ["write-records"], writableKinds: ["meal", "weigh-in"] },
     ],
     authorization: () => "Bearer synthetic",
-    fetch: async () =>
-      Response.json({
+    fetch: async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path !== "/sync/hello" && respond) return respond(path);
+      return Response.json({
         accountBinding: "account",
         lineage: "fixture",
-        revision: 0,
+        revision,
         restoredFrom: null,
         release: "0.1",
         features: ["write-records"],
-      }),
-  }).connect();
+      });
+    },
+  });
+}
+
+function diarySyncSession() {
+  return diarySyncClient().connect();
 }
 
 test("queues the actual persisted meal and preserves an in-flight edit over a restart", async () => {
@@ -212,6 +220,136 @@ test("rolls back a sync meal deletion and its submission reservation if the jour
   const reopened = await createDatabase().start();
   expect(reopened.getMeal(meal.id)).toBeNull();
   expect(reopened.sync.journal.queued()[0]?.attempt?.submissionId).toBe("retry-delete");
+});
+
+const rebaseMeal = {
+  ...meal,
+  utcOffsetMinutes: -240,
+  items: [
+    createDiaryItem("item-drink", sourceFood, { amount: 100, unit: "ml" }),
+    createDiaryItem("item-side", sourceFood, { amount: 50, unit: "ml" }),
+  ],
+};
+const localDrink = createDiaryItem("item-drink", sourceFood, { amount: 150, unit: "ml" });
+const remoteSide = createDiaryItem("item-side", sourceFood, { amount: 80, unit: "ml" });
+const localMeal = { ...rebaseMeal, items: [localDrink, ...rebaseMeal.items.slice(1)] };
+const remoteMeal = { ...rebaseMeal, items: [...rebaseMeal.items.slice(0, 1), remoteSide] };
+
+async function stageStaleMeal(
+  diary: Awaited<ReturnType<typeof openDiary>>,
+  serverContent: unknown,
+) {
+  const journal = diary.sync.journal;
+  const scope = { accountBinding: "account", lineage: "fixture", release: "0.1" };
+  const base = decodeChange({
+    kind: "meal",
+    id: meal.id,
+    state: "live",
+    revision: 1,
+    content: rebaseMeal,
+  });
+  const remote = decodeChange({ ...base, revision: 2, content: serverContent });
+  let page = { ...scope, cursor: 1, hasMore: false, changes: [base] };
+  const client = diarySyncClient((path) => {
+    if (path === "/sync/pull") return Response.json(page);
+    if (path !== "/sync/push") throw new Error("Unexpected sync request");
+    return Response.json({
+      ...scope,
+      results: [
+        { status: "conflict", reason: "stale", submissionId: "local-portion", current: remote },
+      ],
+    });
+  });
+  const session = await client.connect();
+  journal.bind(session);
+  journal.applyPage(session, 0, await client.pull(session, 0), () => undefined);
+  diary.sync.saveMeal(localMeal, "local-portion");
+  const attempt = journal.prepare(session);
+  expect(attempt).toMatchObject([{ submissionId: "local-portion" }]);
+  journal.applyResults(session, await client.push(session, attempt), () => undefined);
+  page = { ...page, cursor: 2, changes: [remote] };
+  journal.applyPage(session, 1, await client.pull(session, 1), () => undefined);
+  return session;
+}
+
+test("rebases separated changes by meal item and commits the saved snapshot and retry together", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const session = await stageStaleMeal(diary, remoteMeal);
+  const blocked = diary.sync.journal.queued();
+  source.db.exec(`CREATE TRIGGER stop_meal_rebase BEFORE INSERT ON edo_sync_outbox
+    BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`);
+  expect(() => diary.sync.tryRebaseMeal(session, meal.id, "merged-meal")).toThrow(
+    /journal unavailable/,
+  );
+  expect(diary.getMeal(meal.id)).toEqual(localMeal);
+  expect(diary.sync.journal.queued()).toEqual(blocked);
+  source.db.exec("DROP TRIGGER stop_meal_rebase");
+
+  expect(diary.sync.tryRebaseMeal(session, meal.id, "merged-meal")).toBe(true);
+  source.db.close();
+  const reopened = await createDatabase().start();
+  const expected = { ...rebaseMeal, items: [localDrink, remoteSide] };
+  expect(reopened.getMeal(meal.id)).toEqual(expected);
+  const history = reopened.sync.journal.history();
+  if (!history) throw new Error("Expected saved account history");
+  const reconnected = await diarySyncClient(undefined, 2).connect(history);
+  reopened.sync.journal.bind(reconnected);
+  const [attempt] = reopened.sync.journal.prepare(reconnected);
+  if (attempt?.op !== "put") throw new Error("Expected a rebased meal");
+  expect(attempt).toMatchObject({
+    submissionId: "merged-meal",
+    baseRevision: 2,
+    content: expected,
+  });
+  const server = reopened.sync.journal.serverCopy(attempt);
+  if (server?.state !== "live") throw new Error("Expected the preserved server snapshot");
+  expect(
+    applyRecordContent({
+      key: attempt,
+      release: reconnected.release,
+      current: server.content,
+      submitted: attempt.content,
+    }),
+  ).toEqual(expected);
+});
+
+test("leaves overlapping, opaque, unjournaled and cross-meal edits for explicit review", async () => {
+  const ownedItem = createDiaryItem("another-meals-item", sourceFood, { amount: 75, unit: "ml" });
+  const otherMeal = { ...rebaseMeal, id: "another-meal", items: [ownedItem] };
+  for (const [name, server, drift] of [
+    [
+      "overlap",
+      {
+        ...remoteMeal,
+        items: [createDiaryItem("item-drink", sourceFood, { amount: 200, unit: "ml" }), remoteSide],
+      },
+      false,
+    ],
+    [
+      "opaque",
+      {
+        ...remoteMeal,
+        items: [...remoteMeal.items.slice(0, 1), { ...remoteSide, futureNutrition: 10 }],
+      },
+      false,
+    ],
+    ["shared-item", { ...remoteMeal, items: [...remoteMeal.items, ownedItem] }, false],
+    ["drift", remoteMeal, true],
+  ] as const) {
+    const diary = await createDatabase(`${name}.db`).start();
+    const session = await stageStaleMeal(diary, server);
+    const actual = drift ? { ...localMeal, occurredAt: localMeal.occurredAt + 60_000 } : localMeal;
+    if (drift) diary.saveMeal(actual);
+    if (name === "shared-item") diary.saveMeal(otherMeal);
+    const blocked = diary.sync.journal.queued();
+    const evidence = diary.sync.journal.serverCopy({ kind: "meal", id: meal.id });
+    expect(diary.sync.tryRebaseMeal(session, meal.id, "declined-meal")).toBe(false);
+    expect(diary.getMeal(meal.id)).toEqual(actual);
+    if (name === "shared-item") expect(diary.getMeal(otherMeal.id)).toEqual(otherMeal);
+    expect(diary.sync.journal.queued()).toEqual(blocked);
+    expect(diary.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toEqual(evidence);
+  }
 });
 
 test("commits a bound weigh-in and its pending tombstone with the private diary", async () => {
