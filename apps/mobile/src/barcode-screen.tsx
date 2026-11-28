@@ -1,6 +1,6 @@
 import type { PackagedFood } from "@edo/core";
 import type { BarcodeSettings, CameraView as ExpoCameraView } from "expo-camera";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import {
   AppState,
   Keyboard,
@@ -36,6 +36,8 @@ export function BarcodeScreen({
   onSubmit,
   onPick,
   onBack,
+  onSearch,
+  openCameraInitially,
 }: {
   t: Strings;
   locale: string;
@@ -46,6 +48,8 @@ export function BarcodeScreen({
   onSubmit: (code: string, cameraUpcE: boolean) => void;
   onPick: (food: PackagedFood) => void;
   onBack: () => void;
+  onSearch?: () => void;
+  openCameraInitially?: boolean;
 }) {
   const [digits, setDigits] = useState(code);
   const [preview, setPreview] = useState<{ view: typeof ExpoCameraView; session: object } | null>(
@@ -74,6 +78,11 @@ export function BarcodeScreen({
   useEffect(() => {
     if (!pending && result) submitting.current = false;
   }, [pending, result]);
+
+  const openOnEntry = useEffectEvent(() => void openCamera());
+  useEffect(() => {
+    if (openCameraInitially) openOnEntry();
+  }, [openCameraInitially]);
 
   function closeCamera() {
     cameraSession.current = null;
@@ -125,6 +134,11 @@ export function BarcodeScreen({
   function back() {
     closeCamera();
     onBack();
+  }
+
+  function searchByName() {
+    closeCamera();
+    (onSearch ?? onBack)();
   }
 
   const CameraView = preview?.view;
@@ -208,7 +222,7 @@ export function BarcodeScreen({
             t={t}
             locale={locale}
             onPick={onPick}
-            onSearch={back}
+            onSearch={searchByName}
           />
         )}
       </ScrollView>

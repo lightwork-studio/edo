@@ -5,6 +5,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
 import { type ComponentRef, useEffect, useRef, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { openFoodFactsLicenseUrl } from "./barcode";
+import { BarcodeShortcut } from "./barcode-shortcut";
 import { SourceLink } from "./catalog-source-link";
 import { searchCachedPackagedFoods } from "./packaged-food-search";
 import type { Language, Strings } from "./strings";
@@ -90,24 +91,7 @@ export function SearchScreen({
               </Pressable>
             )}
           </View>
-          <Pressable
-            accessibilityLabel={t.scanBarcode}
-            accessibilityRole="button"
-            style={styles.iconButton}
-            onPress={onBarcode}
-          >
-            <View
-              importantForAccessibility="no-hide-descendants"
-              accessibilityElementsHidden
-              style={local.barcode}
-            >
-              <View style={local.barcodeBar} />
-              <View style={local.barcodeBarWide} />
-              <View style={local.barcodeBar} />
-              <View style={local.barcodeBarWide} />
-              <View style={local.barcodeBar} />
-            </View>
-          </Pressable>
+          <BarcodeShortcut label={t.scanBarcode} onPress={onBarcode} />
         </View>
         <View style={[styles.row, local.actions]}>
           <Pressable accessibilityRole="button" style={local.source} onPress={onMyFoods}>
@@ -345,19 +329,6 @@ const local = StyleSheet.create({
   },
   clear: { width: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   clearText: { color: colors.muted, fontSize: 22, lineHeight: 26 },
-  barcode: {
-    width: 22,
-    height: 17,
-    flexDirection: "row",
-    alignItems: "stretch",
-    justifyContent: "space-between",
-    paddingHorizontal: 2,
-    borderLeftWidth: 1,
-    borderRightWidth: 1,
-    borderColor: colors.text,
-  },
-  barcodeBar: { width: 1, backgroundColor: colors.text },
-  barcodeBarWide: { width: 2, backgroundColor: colors.text },
   actions: { flexWrap: "wrap", gap: 8 },
   source: {
     minHeight: 44,

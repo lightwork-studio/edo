@@ -27,6 +27,8 @@ export function BarcodeEntry({
   initial,
   onPick,
   onBack,
+  onSearch,
+  openCameraInitially,
 }: {
   t: Strings;
   locale: string;
@@ -38,6 +40,8 @@ export function BarcodeEntry({
   initial: BarcodeState;
   onPick: (food: PackagedFood, state: BarcodeState) => void;
   onBack: () => void;
+  onSearch?: () => void;
+  openCameraInitially?: boolean;
 }) {
   const [submitted, setSubmitted] = useState<{ code: string; cameraUpcE: boolean } | null>(null);
   const [resolved, setResolved] = useState<{
@@ -77,6 +81,8 @@ export function BarcodeEntry({
       onSubmit={(code, cameraUpcE) => setSubmitted({ code, cameraUpcE })}
       onPick={(food) => onPick(food, { code, result })}
       onBack={onBack}
+      onSearch={onSearch}
+      openCameraInitially={openCameraInitially}
     />
   );
 }
