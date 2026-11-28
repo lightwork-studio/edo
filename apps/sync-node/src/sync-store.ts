@@ -24,6 +24,8 @@ import {
   syncCandidate,
   syncScope,
 } from "@edo/contract";
+import type { WeighIn } from "@edo/core";
+import { isLocalDay, isOccurredAt, isPositiveNumber, isRecordId } from "./record-values.ts";
 
 const applicationId = 0x45444f53;
 const schemaVersion = 2;
@@ -119,6 +121,8 @@ export interface SyncStoreOptions {
 export interface SyncStore extends Disposable {
   createAccount(accountBinding: string, lineage: string): AuthenticatedHistory;
   history(accountBinding: string): AuthenticatedHistory | null;
+  /** The caller supplies the account binding from its trusted access context. */
+  readWeighIn(accountBinding: string, id: string): (WeighIn & { readonly revision: number }) | null;
   push(accountBinding: string, session: NegotiatedSync, input: unknown): PushResponse;
   pull(accountBinding: string, session: NegotiatedSync, input: unknown): PullResponse;
 }
@@ -620,6 +624,25 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
         return account;
       },
       history,
+      readWeighIn(accountBinding, id) {
+        if (!isRecordId(accountBinding) || !isRecordId(id) || id.length > maxSyncEnvelopeBytes) {
+          return null;
+        }
+        const row = currentRecord.get(accountBinding, "weigh-in", id);
+        if (!row) return null;
+        const change = storedChange(row);
+        if (change.state !== "live") return null;
+        const { id: contentId, localDay, occurredAt, kg } = change.content;
+        if (
+          contentId !== id ||
+          !isLocalDay(localDay) ||
+          !isOccurredAt(occurredAt) ||
+          !isPositiveNumber(kg)
+        ) {
+          throw new Error("Invalid stored weigh-in");
+        }
+        return { id, revision: change.revision, localDay, occurredAt, kg };
+      },
       push(accountBinding, session, input) {
         assertAccountBinding(accountBinding, session);
         const request = decodePushRequest(input, session);

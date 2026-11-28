@@ -5,6 +5,12 @@ import {
   manualNutritionTarget,
   type Recipe,
 } from "@edo/core";
+import {
+  isLocalDay as day,
+  isRecordId as id,
+  isOccurredAt as instant,
+  isPositiveNumber as positive,
+} from "./record-values.ts";
 import { InvalidSyncContent } from "./sync-store.ts";
 
 type Scalar = (value: JsonValue) => boolean;
@@ -12,27 +18,11 @@ type Rule = Scalar | { fields: Shape } | { keyedItems: Shape; min: number };
 type Shape = Readonly<Record<string, { rule: Rule; optional?: true }>>;
 
 const text: Scalar = (value) => typeof value === "string" && Boolean(value.trim());
-const id: Scalar = (value) =>
-  typeof value === "string" &&
-  Boolean(value.trim()) &&
-  !value.includes("\0") &&
-  !/[\uD800-\uDFFF]/u.test(value);
-const positive: Scalar = (value) =>
-  typeof value === "number" && Number.isFinite(value) && value > 0;
 const nonNegative: Scalar = (value) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 const nutrientValue: Scalar = (value) => value === null || nonNegative(value);
 const utcOffset: Scalar = (value) =>
   typeof value === "number" && Number.isInteger(value) && Math.abs(value) < 24 * 60;
-const instant: Scalar = (value) =>
-  typeof value === "number" &&
-  Number.isSafeInteger(value) &&
-  Number.isFinite(new Date(value).valueOf());
-const day: Scalar = (value) => {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00Z`);
-  return Number.isFinite(date.valueOf()) && date.toISOString().slice(0, 10) === value;
-};
 const oneOf =
   (...values: readonly string[]): Scalar =>
   (value) =>

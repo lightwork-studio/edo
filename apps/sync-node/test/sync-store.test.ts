@@ -289,6 +289,101 @@ test("refuses a WAL-format snapshot even when the sidecars are absent", async ()
   expect(readdirSync(directory)).toEqual(["account-sync.sqlite"]);
 });
 
+test("looks up a live weigh-in by account and ID without exposing opaque fields or writing", () => {
+  const id = "reading-\uFFFD";
+  const localDay = "2026-11-11";
+  const occurredAt = Date.parse("2026-11-10T23:30:00Z");
+  const content = { id, localDay, occurredAt, kg: 80.002, future: { privateLabel: "opaque" } };
+  {
+    using store = openSyncStore(filename);
+    const alpha = sessionFor(store.createAccount("alpha-\uFFFD", "alpha-history"));
+    const beta = sessionFor(store.createAccount("beta", "beta-history"));
+    const reading: Submission = {
+      kind: "weigh-in",
+      op: "put",
+      id,
+      submissionId: "reading",
+      baseRevision: null,
+      content,
+    };
+    expect(push(store, alpha, reading).results).toMatchObject([
+      { status: "accepted", revision: 1 },
+    ]);
+    expect(
+      push(store, beta, { ...reading, content: { ...content, kg: 73.125 } }).results,
+    ).toMatchObject([{ status: "accepted", revision: 1 }]);
+    expect(
+      push(store, alpha, {
+        ...reading,
+        submissionId: "edited",
+        baseRevision: 1,
+        content: { ...content, kg: 81.003 },
+      }).results,
+    ).toMatchObject([{ status: "accepted", revision: 2 }]);
+  }
+  {
+    using store = openSyncStore(filename, { applyContent: applyRecordContent });
+    const before = readFileSync(filename);
+    expect(store.readWeighIn("alpha-\uFFFD", id)).toEqual({
+      id,
+      localDay,
+      occurredAt,
+      kg: 81.003,
+      revision: 2,
+    });
+    expect(store.readWeighIn("beta", id)).toEqual({
+      id,
+      localDay,
+      occurredAt,
+      kg: 73.125,
+      revision: 1,
+    });
+    expect(store.readWeighIn("missing-account", id)).toBeNull();
+    expect(store.readWeighIn("alpha-\uFFFD", "missing-reading")).toBeNull();
+    expect(store.readWeighIn("alpha-\uD800", id)).toBeNull();
+    expect(store.readWeighIn("alpha-\uFFFD", "reading-\uD800")).toBeNull();
+    expect(readFileSync(filename)).toEqual(before);
+    const alpha = sessionFor(store.history("alpha-\uFFFD"));
+    expect(pull(store, alpha).changes).toMatchObject([{ content: { future: content.future } }]);
+    expect(
+      push(store, alpha, {
+        kind: "weigh-in",
+        op: "delete",
+        id,
+        submissionId: "delete-reading",
+        baseRevision: 2,
+      }).results,
+    ).toMatchObject([{ status: "accepted", revision: 3 }]);
+  }
+  {
+    using store = openSyncStore(filename);
+    expect(store.readWeighIn("alpha-\uFFFD", id)).toBeNull();
+    expect(store.readWeighIn("beta", id)?.kg).toBe(73.125);
+  }
+});
+
+test.each([{ id: "different" }, { localDay: "2026-02-30" }, { occurredAt: 1.25 }, { kg: 0 }])(
+  "rejects malformed stored weigh-in data %j without returning it",
+  (override) => {
+    using store = openSyncStore(filename);
+    const account = sessionFor(store.createAccount("alpha", "alpha-history"));
+    const id = "reading";
+    expect(
+      push(store, account, {
+        kind: "weigh-in",
+        op: "put",
+        id,
+        submissionId: "legacy-reading",
+        baseRevision: null,
+        content: { id, localDay: "2026-02-01", occurredAt: 1, kg: 80, ...override },
+      }).results,
+    ).toMatchObject([{ status: "accepted", revision: 1 }]);
+    const before = readFileSync(filename);
+    expect(() => store.readWeighIn("alpha", id)).toThrow("Invalid stored weigh-in");
+    expect(readFileSync(filename)).toEqual(before);
+  },
+);
+
 test("replays canonical receipt outcomes after reopening the store and reserves used IDs", () => {
   let firstResult: unknown;
   let oldConflict: unknown;
