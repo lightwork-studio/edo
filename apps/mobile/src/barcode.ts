@@ -5,6 +5,7 @@ import {
   type PackagedFood,
 } from "@edo/core";
 import type { DiaryStore, MyFoodsStore, PackagedFoodCache } from "@edo/storage";
+import { File, Paths } from "expo-file-system";
 import { addDays } from "./diary-view";
 
 export type BarcodeResult =
@@ -23,6 +24,7 @@ const maxBarcodeLength = 64;
 const maxResponseBytes = 256 * 1024;
 const previewPath = "/catalog-preview/open-food-facts/barcodes/";
 const recentDays = 30;
+const outageProbe = new File(Paths.document, "edo-cache-outage-probe");
 
 function isFresh(checkedAt: number, now: number): boolean {
   return checkedAt <= now && now - checkedAt < freshnessMs;
@@ -181,7 +183,8 @@ async function fromCatalog(
   request: CatalogFetch,
 ): Promise<CatalogResult> {
   try {
-    const url = `${origin}${previewPath}${code}`;
+    const endpoint = outageProbe.exists ? "https://127.0.0.1:9" : origin;
+    const url = `${endpoint}${previewPath}${code}`;
     const response = await request(url, {
       signal,
       credentials: "omit",

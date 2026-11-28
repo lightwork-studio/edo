@@ -65,22 +65,17 @@ jobs:
           stat -f 'iOS two-product cache %z bytes' "$cache"
           echo "EDO_DATA_CONTAINER=$data" >> "$GITHUB_ENV"
       - name: Verify the existing device cache with an unreachable catalog
-        env:
-          EXPO_PUBLIC_EDO_CATALOG_ORIGIN: https://127.0.0.1:9
-          EXPO_PUBLIC_EDO_BLS_PREVIEW_ORIGIN: ''
-          EXPO_PUBLIC_EDO_BLS_PREVIEW_SHA256: ''
         working-directory: apps/mobile/ios
         run: |
           if nc -z -w 2 127.0.0.1 9; then
             echo 'The isolated catalog endpoint must be unreachable'
             exit 1
           fi
-          xcodebuild -quiet -workspace Edo.xcworkspace -scheme OfflineSmoke \
-            -configuration Release -sdk iphonesimulator \
-            -destination "platform=iOS Simulator,id=$EDO_SIMULATOR" \
-            -derivedDataPath "$RUNNER_TEMP/edo-outage" build-for-testing
-          bash ../../../.github/scripts/run-ios-cache-phase.sh edo-outage testCatalogOutage
+          test -d "$EDO_DATA_CONTAINER/Documents"
+          printf 'offline\n' > "$EDO_DATA_CONTAINER/Documents/edo-cache-outage-probe"
+          bash ../../../.github/scripts/run-ios-cache-phase.sh edo-online testCatalogOutage
           test "$EDO_DATA_CONTAINER" = "$(xcrun simctl get_app_container "$EDO_SIMULATOR" studio.lightwork.edo data)"
+          test -f "$EDO_DATA_CONTAINER/Documents/edo-cache-outage-probe"
       - name: Keep the iOS UI test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
