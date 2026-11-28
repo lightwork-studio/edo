@@ -1,5 +1,5 @@
 import type { DiaryProgressStore, DiaryStore } from "@edo/storage";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { calendarDate } from "./diary-view";
 import { type ProgressRange, progressSummary, type WeightPoint } from "./progress-data";
@@ -105,6 +105,7 @@ export function ProgressScreen({
   t,
   range,
   savedDay,
+  syncNotice,
   onRange,
   onBack,
   onWeight,
@@ -117,6 +118,7 @@ export function ProgressScreen({
   t: Strings;
   range: ProgressRange;
   savedDay: string | null;
+  syncNotice: ReactNode;
   onRange: (range: ProgressRange) => void;
   onBack: () => void;
   onWeight: () => void;
@@ -164,6 +166,7 @@ export function ProgressScreen({
           <Text style={styles.actionText}>{t.addWeight}</Text>
         </Pressable>
       </View>
+      {syncNotice && <View style={local.syncNotice}>{syncNotice}</View>}
       {summary ? (
         <ScrollView contentContainerStyle={styles.content}>
           {savedDay && (
@@ -346,4 +349,5 @@ const local = StyleSheet.create({
   selected: { backgroundColor: colors.text },
   selectedText: { color: colors.background },
   spread: { ...styles.row, justifyContent: "space-between" },
+  syncNotice: { marginHorizontal: 16 },
 });
