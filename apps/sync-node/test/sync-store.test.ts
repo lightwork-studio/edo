@@ -688,6 +688,7 @@ test("rejects projected records too large to fit a pull page and leaves existing
   }
   const unrelated = join(directory, "private-diary.sqlite");
   using existing = new DatabaseSync(unrelated);
+  if (process.platform !== "win32") chmodSync(unrelated, 0o600);
   existing.exec("CREATE TABLE private_records (id TEXT PRIMARY KEY)");
   expect(() => openSyncStore(unrelated)).toThrow("Unsupported sync database");
   expect(existing.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all()).toEqual([
