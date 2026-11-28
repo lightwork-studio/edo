@@ -23,7 +23,7 @@ if [[ ! -d "$container" ]]; then
   exit 1
 fi
 
-fixtures="$container/File Provider Storage/Archive Fixtures"
+fixtures="$container/File Provider Storage"
 mkdir -p "$fixtures"
 python3 - "$fixtures" <<'PYTHON'
 from pathlib import Path
@@ -34,4 +34,4 @@ from archive_smoke_fixtures import write_fixtures
 
 write_fixtures(Path(sys.argv[1]))
 PYTHON
-echo "Seeded synthetic archives in Files → On My iPhone → Archive Fixtures"
+echo "Seeded synthetic archives in Files → On My iPhone"
