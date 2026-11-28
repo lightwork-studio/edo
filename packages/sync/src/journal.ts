@@ -199,6 +199,18 @@ interface StalePutEvidence {
   readonly server: JsonObject;
 }
 
+function orderedJson(content: JsonObject): string {
+  return JSON.stringify(content, (_key, value: unknown) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const fields = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(fields)
+        .sort()
+        .map((name) => [name, fields[name]]),
+    );
+  });
+}
+
 function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
 }
@@ -517,11 +529,12 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         if (
           current.revision === server.revision &&
           current.state === "live" &&
-          JSON.stringify(current.content) !== JSON.stringify(server.content)
+          orderedJson(current.content) !== orderedJson(server.content)
         ) {
           return false;
         }
 
+        const rebased = createOutboxRecord(key, server);
         const content = resolve({
           base: base.content,
           draft: draft.content,
@@ -535,15 +548,15 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           submissionId,
           baseRevision: server.revision,
         });
-        if (replacement.op !== "put") throw new Error("Expected a rebased put");
         const bytes = syncRequestBytes(
           JSON.stringify({ ...syncScope(session), submissions: [replacement] }),
         );
         if (bytes > maxSyncRequestBytes) return false;
 
         requireUnusedId(db, submissionId);
-        const queued = queueOutboxEdit(createOutboxRecord(key, server), replacement);
-        requireSynchronousWrite(writeMerged(replacement.content));
+        const queued = queueOutboxEdit(rebased, replacement);
+        if (queued.pending?.op !== "put") throw new Error("Expected a rebased put");
+        requireSynchronousWrite(writeMerged(queued.pending.content));
         saveRecord(db, queued);
         return true;
       });

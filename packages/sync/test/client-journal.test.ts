@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Change } from "@edo/contract";
+import type { Change, JsonValue } from "@edo/contract";
 import { expect, test, vi } from "vitest";
 import { applyRecordContent } from "../../../apps/sync-node/src/record-projection.ts";
 import { createHealthServer } from "../../../apps/sync-node/src/server.ts";
@@ -291,7 +291,9 @@ test("rebases the latest blocked draft only against a verified newer server copy
       expect(draft.kg).toBe(76);
       expect(latest).toEqual(server.content);
       if (typeof draft.kg !== "number") throw new Error("Invalid fixture weight");
-      return { ...latest, kg: draft.kg };
+      const updated = latest as Record<string, JsonValue>;
+      updated.kg = draft.kg;
+      return updated;
     },
   );
   expect(local.journal.tryRebaseStalePut(session, key, "rebased", resolve, () => undefined)).toBe(
@@ -330,9 +332,12 @@ test("rebases the latest blocked draft only against a verified newer server copy
   expect(
     local.journal.tryRebaseStalePut(session, key, "rebased", resolve, (content) => {
       expect(content).toMatchObject({ kg: 76, serverNote: "preserved" });
+      expect(Object.isFrozen(content)).toBe(true);
       return local.set(76);
     }),
   ).toBe(true);
+  expect(local.journal.queued()[0]?.base).toEqual(server);
+  expect(local.journal.serverCopy(key)).toEqual(server);
   local.journal.applyResults(session, conflict, local.receive);
   expect(local.journal.prepare(session)).toMatchObject([
     {
@@ -343,6 +348,60 @@ test("rebases the latest blocked draft only against a verified newer server copy
     },
   ]);
   expect(local.journal.history()?.cursor).toBe(3);
+});
+
+test("accepts same-revision live evidence with reordered JSON members", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const base = { ...key, state: "live", revision: 1, content: edit("unused", 74).content };
+  const pulled = {
+    ...base,
+    revision: 2,
+    content: { ...base.content, extra: { first: 1, second: 2 } },
+  };
+  const current = { ...pulled, content: { extra: { second: 2, first: 1 }, ...base.content } };
+  let page = { ...scope, cursor: 1, hasMore: false, changes: [base] };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/hello"))
+        return Response.json({
+          ...scope,
+          features: ["write-records"],
+          revision: 0,
+          restoredFrom: null,
+        });
+      if (url.endsWith("/pull")) return Response.json(page);
+      return Response.json({
+        ...scope,
+        results: [{ status: "conflict", reason: "stale", submissionId: "edit", current }],
+      });
+    },
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  local.journal.applyPage(session, 0, await client.pull(session, 0), local.receive);
+  local.journal.commitLocal(key, edit("edit", 75), () => local.set(75));
+  const rejected = await client.push(session, local.journal.prepare(session));
+  local.journal.applyResults(session, rejected, local.receive);
+  page = { ...page, cursor: 2, changes: [pulled] };
+  local.journal.applyPage(session, 1, await client.pull(session, 1), local.receive);
+
+  expect(
+    local.journal.tryRebaseStalePut(
+      session,
+      key,
+      "replacement",
+      ({ server }) => ({ ...server, kg: 75 }),
+      () => local.set(75),
+    ),
+  ).toBe(true);
+  expect(local.journal.queued()[0]?.base).toEqual(pulled);
+  expect(local.journal.prepare(session)).toMatchObject([
+    { baseRevision: 2, submissionId: "replacement", content: { kg: 75 } },
+  ]);
 });
 
 test("rolls back a diary write when a callback returns a thenable", async () => {
