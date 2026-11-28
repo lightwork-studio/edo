@@ -75,7 +75,7 @@ def capture(name):
 
 
 def open_banana():
-    tap("Add food", fragments=True)
+    tap("Log")
     tap("Search by food name", widget="android.widget.EditText")
     for character in "bananennektar":
         adb("shell", "input", "text", character)
