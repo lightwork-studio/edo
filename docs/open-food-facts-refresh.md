@@ -92,6 +92,21 @@ fails the job, so GitHub Actions failure notifications can surface stalled publi
 job runs. If nightly runs stop appearing, check whether GitHub disabled the schedule after
 repository inactivity. Re-enable the workflow and dispatch it on the current `main`.
 
+Check the published Open Food Facts source independently of GitHub Actions from the repo root.
+The command reads the public manifest and exits nonzero when the source is stale, the timestamp
+is missing or in the future, or the manifest cannot be read.
+
+```sh
+set -o pipefail
+curl --fail --silent --show-error --max-time 20 \
+  https://edo.timweb.app/catalog-preview/open-food-facts/active.json |
+  node apps/catalog-edge/off-source-status.ts
+```
+
+The output includes the published release, artifact digest, row count, source time and observed
+time. Use the recorded source time to check freshness. The manifest does not record the time
+that R2 activated the release.
+
 Each new Open Food Facts publication also records the SHA-256 of its barcode lookup index in
 the same publication state. The Worker checks registered index bytes before reading barcode
 shards. Existing releases created before this metadata remain readable.
