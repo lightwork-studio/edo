@@ -556,6 +556,8 @@ function DiaryApp({
               recipeFoods={recipes?.map(foodForRecipe) ?? null}
               catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
               cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
+              diary={diary}
+              today={today}
               language={language}
               onPick={(food) => pickFood(route, food, true)}
               onRemove={(id) => setFavorite(id, false)}
