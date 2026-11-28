@@ -1,4 +1,5 @@
 import { installSyncJournalV5 } from "@edo/sync/journal-schema-v5";
+import { installSyncJournalV6 } from "@edo/sync/journal-schema-v6";
 import { type DiarySqliteConnection, rollback } from "./sqlite.ts";
 
 type Migration = (db: DiarySqliteConnection) => void;
@@ -81,6 +82,7 @@ export const diaryMigrations: readonly Migration[] = [
     `);
   },
   installSyncJournalV5,
+  installSyncJournalV6,
 ];
 
 function storageVersion(db: DiarySqliteConnection): number {
@@ -187,6 +189,7 @@ async function verifyBackup(
             "SELECT * FROM edo_sync_submission_ids ORDER BY submission_id",
           ]
         : []),
+      ...(installed >= 6 ? ["SELECT * FROM edo_sync_meal_projections ORDER BY id"] : []),
     ]) {
       if (JSON.stringify(source.all(query)) !== JSON.stringify(snapshot.all(query))) {
         throw new Error("Diary backup does not match the current diary");
