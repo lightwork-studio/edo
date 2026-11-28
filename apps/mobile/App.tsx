@@ -25,7 +25,10 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   StatusBar,
+  Text,
+  View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { pruneArchiveExports } from "./src/archive-files";
@@ -70,7 +73,7 @@ import { SyncBlockerNotice, SyncBlockerScreen } from "./src/sync-blocker-screen"
 import { syncBlockerNotice } from "./src/sync-blockers";
 import { TargetsScreen } from "./src/targets-screen";
 import { TodayScreen } from "./src/today";
-import { DetailHeader, Notice, showDay, styles } from "./src/ui";
+import { DetailHeader, fontFace, Notice, showDay, styles } from "./src/ui";
 import { useDatabase } from "./src/use-database";
 import { WeighInScreen } from "./src/weigh-in";
 
@@ -135,9 +138,59 @@ export default function App() {
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
           <DiaryGate {...device} />
+          <InterWeightProbe />
         </KeyboardAvoidingView>
       </SafeAreaView>
     </SafeAreaProvider>
+  );
+}
+
+const interProbeWeights = ["400", "500", "600", "700"] as const;
+
+function InterWeightProbe() {
+  const [visible, setVisible] = useState(true);
+  const [widths, setWidths] = useState<Record<string, number>>({});
+  if (!visible) return null;
+  const values = Object.values(widths);
+  const label =
+    values.length < interProbeWeights.length
+      ? "Measuring Inter weight metrics"
+      : new Set(values).size === interProbeWeights.length
+        ? "Distinct Inter weight metrics"
+        : `Inter weight metrics overlapped ${values.join(", ")}`;
+  return (
+    <>
+      <View
+        accessible={false}
+        pointerEvents="none"
+        importantForAccessibility="no-hide-descendants"
+        style={{ width: 1600, position: "absolute", top: 0, left: 0, opacity: 0 }}
+      >
+        {interProbeWeights.map((weight) => (
+          <Text
+            key={weight}
+            style={{ ...fontFace(weight), fontSize: 32 }}
+            onTextLayout={({ nativeEvent }) => {
+              if (nativeEvent.lines.length !== 1) return;
+              const width = nativeEvent.lines[0].width;
+              setWidths((previous) => (
+                previous[weight] === width ? previous : { ...previous, [weight]: width }
+              ));
+            }}
+          >
+            {"WmzigßÄ ".repeat(6)}Wi
+          </Text>
+        ))}
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        onPress={() => setVisible(false)}
+        style={{ position: "absolute", left: 20, top: 75, padding: 12, backgroundColor: "#232323" }}
+      >
+        <Text style={styles.body}>{label}</Text>
+      </Pressable>
+    </>
   );
 }
 
