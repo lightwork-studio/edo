@@ -99,3 +99,15 @@ test("waits for a current owner and declines inconsistent duplicate latest claim
     deferred: ["b", "new"],
   });
 });
+
+test("keeps ownership changes with opaque claims and permits an unrelated metadata edit", () => {
+  const cleanMetadata = { ...mealB, occurredAt: mealB.occurredAt + 60_000 };
+  const source = { id: mealA.id, current: mealA, prior: mealA, incoming: meal("a", []) };
+  const independent = { id: mealB.id, current: mealB, prior: mealB, incoming: cleanMetadata };
+  const opaque = { id: "future", current: null, prior: undefined, incoming: undefined };
+  const expected = { groups: [[mealB.id]], deferred: [mealA.id, opaque.id] };
+  expect(
+    groupMealProjections([source, independent, { ...opaque, opaqueClaims: [first.id] }], owners),
+  ).toEqual(expected);
+  expect(groupMealProjections([source, independent, opaque], owners)).toEqual(expected);
+});
