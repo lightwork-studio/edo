@@ -248,10 +248,10 @@ function pulledMealProjection(change: Change | null): StoredMealProjection | nul
 
 function localRecord(db: JournalSqlite, key: RecordKey) {
   const row = db.get("SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?", key.kind, key.id);
-  if (row) return storedRecord(row);
+  if (row) return { ...storedRecord(row), persisted: true };
   const remote = remoteRecord(db, key);
   const base = remote?.state === "unavailable" ? null : remote;
-  return { record: createOutboxRecord(key, base), release: null };
+  return { record: createOutboxRecord(key, base), release: null, persisted: false };
 }
 
 function requireUnusedId(db: JournalSqlite, id: string) {
@@ -341,13 +341,21 @@ function availableMealProjection(db: JournalSqlite, id: string): MealProjection 
     : null;
 }
 
+export interface MealProjectionHistory {
+  readonly projection: MealProjection | null;
+  readonly hadPriorBase: boolean;
+}
+
 type ProjectMeals = (
   changes: readonly Change[],
-  priorProjection: (id: string) => MealProjection | null,
+  history: (id: string) => MealProjectionHistory,
 ) => readonly string[];
 
 function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
-  const available = new Map<string, { record: OutboxRecord; change: Change }>();
+  const available = new Map<
+    string,
+    { record: OutboxRecord; change: Change; hadPriorBase: boolean }
+  >();
   const deferred: string[] = [];
   for (const row of db.all(`
     SELECT remote.id FROM edo_sync_remote AS remote
@@ -360,7 +368,7 @@ function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
     const key = { kind: "meal", id: row.id };
     const remote = remoteRecord(db, key);
     if (!remote) throw new Error("Missing meal copy");
-    const { record } = localRecord(db, key);
+    const { record, persisted } = localRecord(db, key);
     if (remote.revision < (record.baseRevision ?? 0)) continue;
     if (remote.state === "unavailable" || hasLocalWork(record)) {
       deferred.push(remote.id);
@@ -368,12 +376,19 @@ function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
     }
     const projected = createOutboxRecord(remote, remote);
     if (!projected.base) throw new Error("Missing immutable meal projection");
-    available.set(remote.id, { record: projected, change: projected.base });
+    available.set(remote.id, {
+      record: projected,
+      change: projected.base,
+      hadPriorBase: persisted && record.baseRevision !== null,
+    });
   }
   const applied = new Set(
     apply(
       [...available.values()].map(({ change }) => change),
-      (id) => availableMealProjection(db, id),
+      (id) => ({
+        projection: availableMealProjection(db, id),
+        hadPriorBase: available.get(id)?.hadPriorBase ?? false,
+      }),
     ),
   );
   for (const id of applied) {

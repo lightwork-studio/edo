@@ -62,16 +62,27 @@ test("defers a whole connected transfer if a local meal changed outside the jour
 
 test("preserves local deletions and differing legacy meals while adopting exact matches", () => {
   const matched = meal("legacy-matched", []);
+  const legacyRemoved = meal("legacy-removed", []);
   const result = groupMealProjections(
     [
       { id: "a", current: null, prior: mealA, incoming: meal("a", []) },
       { id: "b", current: mealB, prior: undefined, incoming: meal("b", []) },
       { id: matched.id, current: matched, prior: undefined, incoming: matched },
+      {
+        id: legacyRemoved.id,
+        current: null,
+        prior: undefined,
+        hadPriorBase: true,
+        incoming: legacyRemoved,
+      },
       { id: "deleted", current: null, prior: null, incoming: meal("deleted", []) },
     ],
     owners,
   );
-  expect(result).toEqual({ groups: [[matched.id]], deferred: ["a", "b", "deleted"] });
+  expect(result).toEqual({
+    groups: [[matched.id]],
+    deferred: ["a", "b", legacyRemoved.id, "deleted"],
+  });
 });
 
 test("waits for a current owner and declines inconsistent duplicate latest claims", () => {

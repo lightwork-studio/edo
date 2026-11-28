@@ -1,6 +1,6 @@
 import type { Change, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
-import { type MealProjection, openSyncJournal } from "@edo/sync";
+import { type MealProjectionHistory, openSyncJournal } from "@edo/sync";
 import { readMealEntries } from "./diary-archive.ts";
 import {
   type DiaryProgressStore,
@@ -176,13 +176,14 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
 function projectMeals(
   db: DiarySqliteConnection,
   changes: readonly Change[],
-  previous: (id: string) => MealProjection | null,
+  history: (id: string) => MealProjectionHistory,
 ): string[] {
   const candidates: {
     id: string;
     current: DiaryMeal | null;
     prior: DiaryMeal | null | undefined;
     incoming: DiaryMeal | null;
+    hadPriorBase: boolean;
   }[] = [];
   const owners = new Map<string, string>();
   for (const change of changes) {
@@ -201,13 +202,13 @@ function projectMeals(
     ) {
       continue;
     }
-    const evidence = previous(change.id);
-    const prior = evidence
-      ? evidence.content === null
+    const { projection, hadPriorBase } = history(change.id);
+    const prior = projection
+      ? projection.content === null
         ? null
-        : (readRebaseMeal(evidence.content, change.id) ?? undefined)
+        : (readRebaseMeal(projection.content, change.id) ?? undefined)
       : undefined;
-    candidates.push({ id: change.id, current, prior, incoming });
+    candidates.push({ id: change.id, current, prior, incoming, hadPriorBase });
     for (const item of incoming?.items ?? []) {
       const row = db.get("SELECT meal_id FROM diary_items WHERE id = ?", item.id);
       if (row) owners.set(item.id, diaryId(row.meal_id, "meal ID"));
@@ -297,10 +298,8 @@ export async function openDiary({
     verifyMyFoods(connection);
   });
   const journal = openSyncJournal(db, () => requireCurrentDiaryVersion(db));
-  const applyMeals = (
-    changes: readonly Change[],
-    previous: (id: string) => MealProjection | null,
-  ) => projectMeals(db, changes, previous);
+  const applyMeals = (changes: readonly Change[], history: (id: string) => MealProjectionHistory) =>
+    projectMeals(db, changes, history);
   return {
     ...diaryProgress(db),
     ...myFoods(db),

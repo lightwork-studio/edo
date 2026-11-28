@@ -355,7 +355,7 @@ test("leaves overlapping, opaque, unjournaled and cross-meal edits for explicit 
   }
 });
 
-test.each(["clean", "local edit"] as const)(
+test.each(["clean", "local edit", "legacy local deletion"] as const)(
   "reconciles a real paged meal swap after restarting with a %s diary",
   async (caseName) => {
     using store = openSyncStore(join(directory, "account.sqlite"), {
@@ -478,6 +478,11 @@ test.each(["clean", "local edit"] as const)(
         ? { ...left, items: [updateDiaryPortion(leftItem, { amount: 175, unit: "ml" })] }
         : left;
     if (caseName === "local edit") diary.saveMeal(localLeft);
+    if (caseName === "legacy local deletion") {
+      // A v5 diary could carry the accepted revision without storing the local projection.
+      reopened.db.prepare("DELETE FROM edo_sync_meal_projections WHERE id = ?").run(left.id);
+      diary.deleteMeal(left.id);
+    }
     const secondPage = await phone.pull(active, page.cursor, 1);
     expect(secondPage).toMatchObject({ cursor: 6, hasMore: true });
     expect(diary.sync.applyMealPage(active, page.cursor, secondPage)).toEqual({
@@ -497,13 +502,19 @@ test.each(["clean", "local edit"] as const)(
       expect(diary.sync.journal.history()?.cursor).toBe(secondPage.cursor);
       reopened.db.exec("DROP TRIGGER stop_swap");
     }
-    const expectedDeferred = caseName === "local edit" ? [left.id, right.id] : [];
+    const expectedDeferred = caseName === "clean" ? [] : [left.id, right.id];
     expect(diary.sync.applyMealPage(active, secondPage.cursor, finalPage)).toEqual({
       awaitingPages: false,
       deferred: expectedDeferred,
     });
-    expect(diary.getMeal(left.id)).toEqual(caseName === "local edit" ? localLeft : movedLeft);
-    expect(diary.getMeal(right.id)).toEqual(caseName === "local edit" ? right : movedRight);
+    expect(diary.getMeal(left.id)).toEqual(
+      caseName === "legacy local deletion"
+        ? null
+        : caseName === "local edit"
+          ? localLeft
+          : movedLeft,
+    );
+    expect(diary.getMeal(right.id)).toEqual(caseName === "clean" ? movedRight : right);
     expect(diary.sync.journal.serverCopy({ kind: "weigh-in", id: weighIn.id })).toMatchObject({
       revision: 7,
       content: weighIn,
