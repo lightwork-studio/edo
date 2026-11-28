@@ -583,8 +583,13 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       WHERE account_binding = ? AND kind = ? AND record_id = ?
     `);
     const currentWeighIn = db.prepare(`
-      SELECT revision, kind, record_id, CAST(content AS BLOB) AS content FROM main.sync_records
-      WHERE account_binding = ? AND kind = 'weigh-in' AND record_id = ?
+      SELECT record.revision, record.kind, record.record_id,
+        typeof(record.content) AS content_type,
+        CAST(record.content AS BLOB) AS content,
+        account.revision AS account_revision
+      FROM main.sync_records AS record
+      LEFT JOIN main.sync_accounts AS account ON account.account_binding = record.account_binding
+      WHERE record.account_binding = ? AND record.kind = 'weigh-in' AND record.record_id = ?
     `);
     currentWeighIn.setReadBigInts(true);
     const textDecoder = databaseTextDecoder(db);
@@ -642,8 +647,20 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
         if (!row || row.content === null) return null;
         let change: Change;
         try {
-          const { content, revision } = row;
-          if (!(content instanceof Uint8Array) || typeof revision !== "bigint") {
+          const {
+            content,
+            content_type: contentType,
+            revision,
+            account_revision: accountRevision,
+          } = row;
+          if (
+            contentType !== "text" ||
+            !(content instanceof Uint8Array) ||
+            typeof revision !== "bigint" ||
+            typeof accountRevision !== "bigint" ||
+            accountRevision < revision ||
+            !Number.isSafeInteger(Number(accountRevision))
+          ) {
             throw new TypeError("Invalid stored representation");
           }
           change = storedChange({

@@ -405,6 +405,44 @@ test("refuses malformed SQLite text that the JavaScript bridge aliases to a vali
   expect(readFileSync(filename)).toEqual(before);
 });
 
+test.each([
+  ["a revision beyond account history", "UPDATE main.sync_records SET revision = 20"],
+  ["a missing account", "DELETE FROM main.sync_accounts"],
+  [
+    "a non-text field in an incompatible store",
+    `CREATE TABLE copied_records (
+       account_binding TEXT, revision INTEGER, kind TEXT, record_id TEXT, content ANY
+     ) STRICT;
+     INSERT INTO copied_records
+       SELECT account_binding, revision, kind, record_id, CAST(content AS BLOB)
+       FROM main.sync_records;
+     DROP TABLE main.sync_records;
+     ALTER TABLE copied_records RENAME TO sync_records;`,
+  ],
+])("rejects a saved weigh-in with %s", (_scenario, fixtureSql) => {
+  using store = openSyncStore(filename, { applyContent: applyRecordContent });
+  const account = sessionFor(store.createAccount("alpha", "alpha-history"));
+  const id = "reading";
+  const content = { id, localDay: "2026-02-01", occurredAt: 1, kg: 80 };
+  expect(
+    push(store, account, {
+      kind: "weigh-in",
+      op: "put",
+      id,
+      submissionId: "valid-reading",
+      baseRevision: null,
+      content,
+    }).results,
+  ).toMatchObject([{ status: "accepted", revision: 1 }]);
+  expect(store.readWeighIn("alpha", id)).toEqual({ ...content, revision: 1 });
+
+  using fixture = new DatabaseSync(filename, { enableForeignKeyConstraints: false });
+  fixture.exec(fixtureSql);
+  const before = readFileSync(filename);
+  expect(() => store.readWeighIn("alpha", id)).toThrow("Invalid stored weigh-in");
+  expect(readFileSync(filename)).toEqual(before);
+});
+
 test.each([{ id: "different" }, { localDay: "2026-02-30" }, { occurredAt: 1.25 }, { kg: 0 }])(
   "rejects malformed stored weigh-in data %j without returning it",
   (override) => {
