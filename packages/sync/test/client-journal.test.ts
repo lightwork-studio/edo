@@ -653,7 +653,7 @@ test("a blocked review cannot combine its old device edit with a newer pull afte
       ...client.connection,
       get(sql, ...parameters) {
         const row = client.connection.get(sql, ...parameters);
-        if (!injected && sql.includes("FROM edo_sync_outbox")) {
+        if (!injected && sql.includes("FROM main.edo_sync_outbox")) {
           injected = true;
           writer.exec("BEGIN IMMEDIATE");
           writeDraft.run(

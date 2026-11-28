@@ -72,7 +72,7 @@ function inTransaction<T>(
 
 function savedBinding(db: JournalSqlite): Binding | null {
   const row = db.get(
-    "SELECT server, account_binding, lineage, observed_revision, cursor FROM edo_sync_binding",
+    "SELECT server, account_binding, lineage, observed_revision, cursor FROM main.edo_sync_binding",
   );
   if (!row) return null;
   const {
@@ -99,6 +99,19 @@ function savedBinding(db: JournalSqlite): Binding | null {
     throw new Error("Stored sync binding is invalid");
   }
   return { accountBinding, lineage, revision, cursor, server };
+}
+
+function verifyStoredBinding(db: JournalSqlite, expected: Binding): void {
+  const current = savedBinding(db);
+  if (
+    current?.accountBinding !== expected.accountBinding ||
+    current.lineage !== expected.lineage ||
+    current.server !== expected.server ||
+    current.revision !== expected.revision ||
+    current.cursor !== expected.cursor
+  ) {
+    throw new Error("The sync binding changed while saving");
+  }
 }
 
 function verifyScope(binding: Binding | null, session: NegotiatedSync): Binding {
@@ -129,22 +142,45 @@ function storedRecord(row: Row) {
   return { record: decodeStoredOutbox(JSON.parse(content), { kind, id }, attemptId), release };
 }
 
-function saveRecord(db: JournalSqlite, record: OutboxRecord, release: string | null = null) {
+function saveRecord(
+  db: JournalSqlite,
+  record: OutboxRecord,
+  release: string | null = null,
+  verify = false,
+) {
+  const { kind, id } = record.key;
+  const attemptId = record.attempt?.submissionId ?? null;
+  const attemptRelease = record.attempt ? release : null;
+  const content = JSON.stringify(record);
   db.run(
-    `INSERT INTO edo_sync_outbox VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO main.edo_sync_outbox VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(kind,id) DO UPDATE SET attempt_id = excluded.attempt_id,
       attempt_release = excluded.attempt_release, content = excluded.content`,
-    record.key.kind,
-    record.key.id,
-    record.attempt?.submissionId ?? null,
-    record.attempt ? release : null,
-    JSON.stringify(record),
+    kind,
+    id,
+    attemptId,
+    attemptRelease,
+    content,
   );
+  if (verify) {
+    const row = db.get(
+      "SELECT attempt_id, attempt_release, content FROM main.edo_sync_outbox WHERE kind = ? AND id = ?",
+      kind,
+      id,
+    );
+    if (
+      row?.attempt_id !== attemptId ||
+      row.attempt_release !== attemptRelease ||
+      row.content !== content
+    ) {
+      throw new Error("The sync outbox changed while saving");
+    }
+  }
 }
 
 function pinnedRelease(db: JournalSqlite): string | null {
   const rows = db.all(
-    "SELECT DISTINCT attempt_release FROM edo_sync_outbox WHERE attempt_id IS NOT NULL LIMIT 2",
+    "SELECT DISTINCT attempt_release FROM main.edo_sync_outbox WHERE attempt_id IS NOT NULL LIMIT 2",
   );
   if (rows.length === 0) return null;
   const release = rows[0]?.attempt_release;
@@ -162,19 +198,52 @@ function readRemoteCopy(row: Row | undefined, key: RecordKey): Change | null {
   return record;
 }
 
-function remoteRecord(db: JournalSqlite, key: RecordKey): Change | null {
-  return readRemoteCopy(
-    db.get(
-      "SELECT revision, content FROM edo_sync_remote WHERE kind = ? AND id = ?",
-      key.kind,
-      key.id,
-    ),
-    key,
+function remoteRow(db: JournalSqlite, key: RecordKey): Row | undefined {
+  return db.get(
+    "SELECT revision, content FROM main.edo_sync_remote WHERE kind = ? AND id = ?",
+    key.kind,
+    key.id,
   );
 }
 
-function retainDisplacedCopy(db: JournalSqlite, attempt: Submission, incoming: Change) {
-  const previous = remoteRecord(db, attempt);
+function remoteRecord(db: JournalSqlite, key: RecordKey): Change | null {
+  return readRemoteCopy(remoteRow(db, key), key);
+}
+
+function saveRemoteCopy(
+  db: JournalSqlite,
+  change: Change,
+  previous: Row | undefined,
+  verify: boolean,
+) {
+  const content = JSON.stringify(change);
+  db.run(
+    `INSERT INTO main.edo_sync_remote VALUES (?, ?, ?, ?)
+    ON CONFLICT(kind,id) DO UPDATE SET revision = excluded.revision, content = excluded.content
+    WHERE excluded.revision > edo_sync_remote.revision`,
+    change.kind,
+    change.id,
+    change.revision,
+    content,
+  );
+  if (!verify) return;
+  const expected =
+    typeof previous?.revision === "number" && previous.revision >= change.revision
+      ? previous
+      : { revision: change.revision, content };
+  const saved = remoteRow(db, change);
+  if (!saved || saved.revision !== expected.revision || saved.content !== expected.content) {
+    throw new Error("The account copy changed while saving");
+  }
+}
+
+function retainDisplacedCopy(
+  db: JournalSqlite,
+  attempt: Submission,
+  incoming: Change,
+  previous: Change | null,
+  verify: boolean,
+) {
   if (
     !previous ||
     previous.state === "unavailable" ||
@@ -182,13 +251,17 @@ function retainDisplacedCopy(db: JournalSqlite, attempt: Submission, incoming: C
     previous.revision < (attempt.baseRevision ?? 0)
   )
     return;
+  const content = JSON.stringify(previous);
   db.run(
-    `INSERT INTO edo_sync_attempt_observations VALUES (?, ?, ?)
+    `INSERT INTO main.edo_sync_attempt_observations VALUES (?, ?, ?)
     ON CONFLICT(submission_id,revision) DO NOTHING`,
     attempt.submissionId,
     previous.revision,
-    JSON.stringify(previous),
+    content,
   );
+  if (verify && JSON.stringify(attemptObservation(db, attempt, previous.revision)) !== content) {
+    throw new Error("The attempt observation changed while saving");
+  }
 }
 
 function attemptObservation(
@@ -198,7 +271,7 @@ function attemptObservation(
 ): Change | null {
   return readRemoteCopy(
     db.get(
-      "SELECT revision, content FROM edo_sync_attempt_observations WHERE submission_id = ? AND revision = ?",
+      "SELECT revision, content FROM main.edo_sync_attempt_observations WHERE submission_id = ? AND revision = ?",
       attempt.submissionId,
       revision,
     ),
@@ -217,7 +290,7 @@ type StoredMealProjection = MealProjection &
 
 function readMealProjection(db: JournalSqlite, id: string): StoredMealProjection | null {
   const row = db.get(
-    "SELECT revision, origin, content FROM edo_sync_meal_projections WHERE id = ?",
+    "SELECT revision, origin, content FROM main.edo_sync_meal_projections WHERE id = ?",
     id,
   );
   if (!row) return null;
@@ -251,11 +324,11 @@ function writeMealProjection(
   projection: StoredMealProjection | null,
 ): void {
   if (!projection) {
-    db.run("DELETE FROM edo_sync_meal_projections WHERE id = ?", id);
+    db.run("DELETE FROM main.edo_sync_meal_projections WHERE id = ?", id);
     return;
   }
   db.run(
-    `INSERT INTO edo_sync_meal_projections VALUES (?, ?, ?, ?)
+    `INSERT INTO main.edo_sync_meal_projections VALUES (?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       revision = excluded.revision, origin = excluded.origin, content = excluded.content`,
     id,
@@ -273,12 +346,83 @@ function pulledMealProjection(change: Change | null): StoredMealProjection | nul
     : null;
 }
 
-function clearAcceptedWeighIn(db: JournalSqlite, id: string, revision: number): void {
-  db.run(
-    "DELETE FROM main.edo_sync_weigh_in_projections WHERE id = ? AND revision <= ?",
+function clearAcceptedWeighIn(
+  db: JournalSqlite,
+  id: string,
+  revision: number,
+  verify = false,
+): void {
+  const outdated = "FROM main.edo_sync_weigh_in_projections WHERE id = ? AND revision <= ?";
+  db.run(`DELETE ${outdated}`, id, revision);
+  if (verify && db.get(`SELECT 1 ${outdated}`, id, revision)) {
+    throw new Error("The accepted weigh-in evidence changed while clearing");
+  }
+}
+
+function acceptedWeighInRow(db: JournalSqlite, id: string): Row | undefined {
+  return db.get(
+    "SELECT revision, content FROM main.edo_sync_weigh_in_projections WHERE id = ?",
+    id,
+  );
+}
+
+function appliedWeighInRow(db: JournalSqlite, id: string, revision: number): Row | undefined {
+  return db.get(
+    "SELECT content FROM main.edo_sync_applied_weigh_ins WHERE id = ? AND revision = ?",
     id,
     revision,
   );
+}
+
+function receiptMatchesAppliedWeighIn(
+  db: JournalSqlite,
+  remote: Change,
+  expected: JsonObject | null | undefined,
+): boolean {
+  const evidence = appliedWeighInRow(db, remote.id, remote.revision);
+  if (expected === null) return remote.state === "deleted" && evidence?.content === null;
+  if (!expected || remote.state !== "live") return false;
+  const content = JSON.stringify(expected);
+  return (
+    evidence?.content === content &&
+    JSON.stringify(weighInFields(remote.content, remote.id)) === content
+  );
+}
+
+function rememberAcceptedWeighIn(
+  db: JournalSqlite,
+  attempt: Submission,
+  revision: number,
+  verify: boolean,
+): void {
+  let content: string | null = null;
+  if (attempt.op === "put") {
+    const fields = weighInFields(attempt.content, attempt.id);
+    if (!fields) {
+      clearAcceptedWeighIn(db, attempt.id, revision, verify);
+      return;
+    }
+    // The local writer stores these fields. Opaque account data stays in the pulled copy.
+    content = JSON.stringify(fields);
+  }
+  const previous = verify ? acceptedWeighInRow(db, attempt.id) : undefined;
+  db.run(
+    `INSERT INTO main.edo_sync_weigh_in_projections VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, content = excluded.content
+    WHERE excluded.revision >= edo_sync_weigh_in_projections.revision`,
+    attempt.id,
+    revision,
+    content,
+  );
+  if (!verify) return;
+  const expected =
+    typeof previous?.revision === "number" && previous.revision > revision
+      ? previous
+      : { revision, content };
+  const saved = acceptedWeighInRow(db, attempt.id);
+  if (!saved || saved.revision !== expected.revision || saved.content !== expected.content) {
+    throw new Error("The accepted weigh-in evidence changed while saving");
+  }
 }
 
 function weighInFields(value: unknown, expectedId: string): JsonObject | null {
@@ -293,27 +437,6 @@ function weighInFields(value: unknown, expectedId: string): JsonObject | null {
     kg > 0
     ? { id, localDay, occurredAt, kg }
     : null;
-}
-
-function rememberAcceptedWeighIn(db: JournalSqlite, attempt: Submission, revision: number): void {
-  let content: string | null = null;
-  if (attempt.op === "put") {
-    const fields = weighInFields(attempt.content, attempt.id);
-    if (!fields) {
-      clearAcceptedWeighIn(db, attempt.id, revision);
-      return;
-    }
-    // The local writer stores these fields. Opaque account data stays in the pulled copy.
-    content = JSON.stringify(fields);
-  }
-  db.run(
-    `INSERT INTO main.edo_sync_weigh_in_projections VALUES (?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, content = excluded.content
-    WHERE excluded.revision >= edo_sync_weigh_in_projections.revision`,
-    attempt.id,
-    revision,
-    content,
-  );
 }
 
 export type WeighInProjector = (change: Change, expected: JsonObject | null) => JsonObject | null;
@@ -345,11 +468,7 @@ function applyGuardedWeighIn(
     change.revision,
     snapshot,
   );
-  const persisted = db.get(
-    "SELECT content FROM main.edo_sync_applied_weigh_ins WHERE id = ? AND revision = ?",
-    change.id,
-    change.revision,
-  );
+  const persisted = appliedWeighInRow(db, change.id, change.revision);
   if (!persisted || persisted.content !== snapshot) {
     throw new Error("The applied weigh-in evidence changed while saving");
   }
@@ -359,11 +478,7 @@ function priorWeighIn(db: JournalSqlite, record: OutboxRecord) {
   const { key, baseRevision } = record;
   if (baseRevision === null) return null;
   const row =
-    db.get(
-      "SELECT content FROM main.edo_sync_applied_weigh_ins WHERE id = ? AND revision = ?",
-      key.id,
-      baseRevision,
-    ) ??
+    appliedWeighInRow(db, key.id, baseRevision) ??
     db.get(
       "SELECT content FROM main.edo_sync_weigh_in_projections WHERE id = ? AND revision = ?",
       key.id,
@@ -375,7 +490,11 @@ function priorWeighIn(db: JournalSqlite, record: OutboxRecord) {
 }
 
 function localRecord(db: JournalSqlite, key: RecordKey) {
-  const row = db.get("SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?", key.kind, key.id);
+  const row = db.get(
+    "SELECT * FROM main.edo_sync_outbox WHERE kind = ? AND id = ?",
+    key.kind,
+    key.id,
+  );
   if (row) return storedRecord(row);
   const remote = remoteRecord(db, key);
   const base = remote?.state === "unavailable" ? null : remote;
@@ -383,10 +502,12 @@ function localRecord(db: JournalSqlite, key: RecordKey) {
 }
 
 function requireUnusedId(db: JournalSqlite, id: string) {
-  if (db.get("SELECT submission_id FROM edo_sync_submission_ids WHERE submission_id = ?", id)) {
+  if (
+    db.get("SELECT submission_id FROM main.edo_sync_submission_ids WHERE submission_id = ?", id)
+  ) {
     throw new Error("A new edit cannot reuse a previous submission ID");
   }
-  db.run("INSERT INTO edo_sync_submission_ids VALUES (?)", id);
+  db.run("INSERT INTO main.edo_sync_submission_ids VALUES (?)", id);
 }
 
 function reserveLocalEdit(db: JournalSqlite, key: RecordKey, submissionId: string) {
@@ -434,7 +555,11 @@ function orderedJson(content: unknown): string {
 function readBlockedReview(db: JournalSqlite, key: RecordKey) {
   const binding = savedBinding(db);
   if (!binding) return null;
-  const row = db.get("SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?", key.kind, key.id);
+  const row = db.get(
+    "SELECT * FROM main.edo_sync_outbox WHERE kind = ? AND id = ?",
+    key.kind,
+    key.id,
+  );
   if (!row) return null;
   const { record, release } = storedRecord(row);
   if (!record.blocked) return null;
@@ -504,7 +629,11 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
 
   function checkSession(session: NegotiatedSync) {
     requireActiveSession(session);
-    return verifyScope(savedBinding(db), session);
+    const binding = verifyScope(savedBinding(db), session);
+    if (binding.server !== serverForSession(session)) {
+      throw new SyncWireError("account-changed", "This diary belongs to a different sync server");
+    }
+    return binding;
   }
 
   return {
@@ -525,16 +654,23 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           if (session.revision < binding.revision) {
             throw new SyncWireError("cursor-reset", "This account revision moved backwards");
           }
-          db.run("UPDATE edo_sync_binding SET observed_revision = ?", session.revision);
+          db.run("UPDATE main.edo_sync_binding SET observed_revision = ?", session.revision);
         } else {
           db.run(
-            "INSERT INTO edo_sync_binding VALUES (1, ?, ?, ?, ?, 0)",
+            "INSERT INTO main.edo_sync_binding VALUES (1, ?, ?, ?, ?, 0)",
             endpoint,
             session.accountBinding,
             session.lineage,
             session.revision,
           );
         }
+        verifyStoredBinding(db, {
+          server: endpoint,
+          accountBinding: session.accountBinding,
+          lineage: session.lineage,
+          revision: session.revision,
+          cursor: binding?.cursor ?? 0,
+        });
       });
       activeSession = session;
     },
@@ -587,7 +723,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         const batch: { attempt: Submission; save: OutboxRecord | null }[] = [];
         scan: for (let offset = 0; batch.length < limit; offset += limit) {
           const rows = db.all(
-            `SELECT * FROM edo_sync_outbox
+            `SELECT * FROM main.edo_sync_outbox
             WHERE attempt_id IS NOT NULL OR (
               json_type(content, '$.pending') = 'object' AND json_type(content, '$.blocked') = 'null'
             ) ORDER BY (attempt_id IS NULL), kind, id LIMIT ? OFFSET ?`,
@@ -640,16 +776,17 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       const { results } = authenticatedResponseSnapshot(response, session);
       return transact(() => {
         const binding = checkSession(session);
+        const verify = projectWeighIn !== undefined;
         let revision = binding.revision;
         for (const result of results) {
           const row = db.get(
-            "SELECT * FROM edo_sync_outbox WHERE attempt_id = ?",
+            "SELECT * FROM main.edo_sync_outbox WHERE attempt_id = ?",
             result.submissionId,
           );
           if (!row) {
             if (
               db.get(
-                "SELECT submission_id FROM edo_sync_receipts WHERE submission_id = ?",
+                "SELECT submission_id FROM main.edo_sync_receipts WHERE submission_id = ?",
                 result.submissionId,
               )
             )
@@ -679,10 +816,11 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             );
           }
           if (result.status !== "retryable") {
-            db.run(
-              "DELETE FROM edo_sync_attempt_observations WHERE submission_id = ?",
-              result.submissionId,
-            );
+            const observations = "FROM main.edo_sync_attempt_observations WHERE submission_id = ?";
+            db.run(`DELETE ${observations}`, result.submissionId);
+            if (verify && db.get(`SELECT 1 ${observations}`, result.submissionId)) {
+              throw new Error("The attempt observation changed while clearing");
+            }
           }
           if (projectRemote) {
             const projected = createOutboxRecord(remote, remote);
@@ -692,18 +830,24 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
                 attempt.op === "delete"
                   ? null
                   : (weighInFields(attempt.content, attempt.id) ?? undefined);
-              applyGuardedWeighIn(db, remote, next.baseRevision, expected, projectWeighIn);
+              if (
+                result.status !== "accepted" ||
+                remote.revision !== result.revision ||
+                !receiptMatchesAppliedWeighIn(db, remote, expected)
+              ) {
+                applyGuardedWeighIn(db, remote, next.baseRevision, expected, projectWeighIn);
+              }
             } else {
               requireSynchronousWrite(applyRemote(remote));
             }
-            saveRecord(db, projected);
+            saveRecord(db, projected, null, verify);
             if (record.key.kind === "meal") {
               writeMealProjection(db, record.key.id, pulledMealProjection(projected.base));
             } else if (record.key.kind === "weigh-in") {
-              clearAcceptedWeighIn(db, record.key.id, remote.revision);
+              clearAcceptedWeighIn(db, record.key.id, remote.revision, verify);
             }
           } else {
-            saveRecord(db, withBase, release);
+            saveRecord(db, withBase, release, verify);
             if (result.status === "accepted" && record.key.kind === "meal") {
               const attempt = record.attempt;
               const content = attempt.op === "put" ? attempt.content : null;
@@ -714,16 +858,27 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
                   : null;
               writeMealProjection(db, record.key.id, projection);
             } else if (result.status === "accepted" && record.key.kind === "weigh-in") {
-              rememberAcceptedWeighIn(db, record.attempt, result.revision);
+              rememberAcceptedWeighIn(db, record.attempt, result.revision, verify);
             }
           }
-          if (result.status !== "retryable")
-            db.run("INSERT INTO edo_sync_receipts VALUES (?)", result.submissionId);
+          if (result.status !== "retryable") {
+            db.run("INSERT INTO main.edo_sync_receipts VALUES (?)", result.submissionId);
+            if (
+              verify &&
+              !db.get(
+                "SELECT 1 FROM main.edo_sync_receipts WHERE submission_id = ?",
+                result.submissionId,
+              )
+            ) {
+              throw new Error("The sync receipt changed while saving");
+            }
+          }
           if (result.status === "accepted") revision = Math.max(revision, result.revision);
           if (result.status === "conflict" && result.current)
             revision = Math.max(revision, result.current.revision);
         }
-        db.run("UPDATE edo_sync_binding SET observed_revision = ?", revision);
+        db.run("UPDATE main.edo_sync_binding SET observed_revision = ?", revision);
+        if (verify) verifyStoredBinding(db, { ...binding, revision });
         requireActiveSession(session);
       });
     },
@@ -742,24 +897,28 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       }
       return transact(() => {
         const binding = checkSession(session);
+        const verify = projectWeighIn !== undefined;
         if (binding.cursor !== requestCursor)
           throw new Error("The pull cursor changed before the page was saved");
         for (const change of page.changes) {
           const { record, release } = localRecord(db, change);
-          if (record.attempt) retainDisplacedCopy(db, record.attempt, change);
-          db.run(
-            `INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)
-            ON CONFLICT(kind,id) DO UPDATE SET revision = excluded.revision, content = excluded.content
-            WHERE excluded.revision > edo_sync_remote.revision`,
-            change.kind,
-            change.id,
-            change.revision,
-            JSON.stringify(change),
-          );
+          const guardedWeighIn = change.kind === "weigh-in" && verify;
+          const previousRow = record.attempt || verify ? remoteRow(db, change) : undefined;
+          const previous =
+            record.attempt || guardedWeighIn ? readRemoteCopy(previousRow, change) : null;
+          if (guardedWeighIn) {
+            if (change.state === "unavailable")
+              throw new Error("This account weigh-in is unavailable");
+            if (change.state === "live" && previous?.state === "deleted") {
+              throw new Error("A deleted weigh-in needs review before any same-ID account update");
+            }
+          }
+          if (record.attempt) retainDisplacedCopy(db, record.attempt, change, previous, verify);
+          saveRemoteCopy(db, change, previousRow, verify);
           if (change.state === "unavailable" || !isKnownRecordKind(change.kind)) continue;
           if (hasLocalWork(record)) {
             const withBase = withPulledBase(record, change);
-            if (withBase !== record) saveRecord(db, withBase, release);
+            if (withBase !== record) saveRecord(db, withBase, release, verify);
             continue;
           }
           if (change.revision < (record.baseRevision ?? 0)) continue;
@@ -775,18 +934,25 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           } else {
             requireSynchronousWrite(applyRemote(change));
           }
-          saveRecord(db, projected);
+          saveRecord(db, projected, null, verify);
           if (projected.key.kind === "meal") {
             writeMealProjection(db, projected.key.id, pulledMealProjection(projected.base));
           } else if (projected.key.kind === "weigh-in") {
-            clearAcceptedWeighIn(db, projected.key.id, change.revision);
+            clearAcceptedWeighIn(db, projected.key.id, change.revision, verify);
           }
         }
         db.run(
-          "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
+          "UPDATE main.edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
           page.cursor,
           observed,
         );
+        if (verify) {
+          verifyStoredBinding(db, {
+            ...binding,
+            cursor: page.cursor,
+            revision: Math.max(binding.revision, observed),
+          });
+        }
         requireActiveSession(session);
       });
     },
@@ -804,7 +970,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       return inspect(() => {
         const rows = db.all(
           `SELECT kind, id, json_extract(content, '$.blocked.result.status') AS status
-           FROM edo_sync_outbox
+           FROM main.edo_sync_outbox
            WHERE (kind, id) > (?, ?) AND json_type(content, '$.blocked') = 'object'
            ORDER BY kind, id LIMIT ?`,
           after?.kind ?? "",
@@ -945,7 +1111,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     queued: () =>
       inspect(() =>
         db
-          .all("SELECT * FROM edo_sync_outbox ORDER BY kind, id")
+          .all("SELECT * FROM main.edo_sync_outbox ORDER BY kind, id")
           .map((row) => storedRecord(row).record)
           .filter(hasLocalWork),
       ),
