@@ -31,6 +31,7 @@ import { isLocalDay, isOccurredAt, isPositiveNumber, isRecordId } from "./record
 const applicationId = 0x45444f53;
 const schemaVersion = 2;
 const defaultPageSize = 100;
+const maxAccountBindingLength = 1024;
 // Two escaped 1,024-unit IDs plus release, cursor, and JSON framing fit in this reserve.
 const pullEnvelopeReserve = 14 * 1024;
 
@@ -635,7 +636,12 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
     }
 
     function readCurrentRecord(kind: CurrentReadKind, accountBinding: string, id: string) {
-      if (!isRecordId(accountBinding) || !isRecordId(id) || id.length > maxSyncEnvelopeBytes) {
+      if (
+        !isRecordId(accountBinding) ||
+        accountBinding.length > maxAccountBindingLength ||
+        !isRecordId(id) ||
+        id.length > maxSyncEnvelopeBytes
+      ) {
         return null;
       }
       try {
@@ -646,23 +652,23 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
           id,
         );
         if (!row) return null;
+        const { content, content_type, revision, account_revision } = row;
         if (
           duplicate ||
           row.record_account !== accountBinding ||
-          row.joined_account !== accountBinding
-        ) {
-          throw new TypeError("Invalid stored account identity");
-        }
-        if (row.content_type === "null" && row.content === null) return null;
-        const { content, content_type, revision, account_revision } = row;
-        if (
-          content_type !== "text" ||
-          !(content instanceof Uint8Array) ||
+          row.joined_account !== accountBinding ||
+          row.kind !== kind ||
+          row.record_id !== id ||
           typeof revision !== "bigint" ||
+          revision < 1n ||
           typeof account_revision !== "bigint" ||
           account_revision < revision ||
           !Number.isSafeInteger(Number(account_revision))
         ) {
+          throw new TypeError("Invalid stored record metadata");
+        }
+        if (content_type === "null" && content === null) return null;
+        if (content_type !== "text" || !(content instanceof Uint8Array)) {
           throw new TypeError("Invalid stored representation");
         }
         const decoded = textDecoder.decode(content);
@@ -674,8 +680,8 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
           revision: Number(revision),
           content: decoded,
         });
-        if (change.state !== "live" || change.kind !== kind || change.id !== id) {
-          throw new TypeError("Invalid stored identity");
+        if (change.state !== "live") {
+          throw new TypeError("Invalid stored record state");
         }
         return change;
       } catch {

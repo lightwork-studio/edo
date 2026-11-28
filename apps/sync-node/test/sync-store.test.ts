@@ -1152,6 +1152,39 @@ test("reads only a current live meal in the exact account and preserves captured
   expect(reopened.readMeal("ALPHA", id)).toEqual({ ...upperMeal, revision: 1 });
 });
 
+test("rejects a persisted meal deletion beyond its account revision", () => {
+  using store = openSyncStore(filename);
+  const alpha = sessionFor(store.createAccount("alpha", "alpha-lineage"));
+  const id = "deleted-meal";
+  expect(
+    push(store, alpha, put(id, "create-meal", null, capturedMeal(id, "Oats"))).results,
+  ).toMatchObject([{ status: "accepted", revision: 1 }]);
+  expect(
+    push(store, sessionFor(store.history("alpha")), remove(id, "remove-meal", 1)).results,
+  ).toMatchObject([{ status: "accepted", revision: 2 }]);
+  expect(store.readMeal("alpha", id)).toBeNull();
+  using db = new DatabaseSync(filename);
+  db.prepare("UPDATE main.sync_records SET revision = ? WHERE record_id = ?").run(3, id);
+  expect(() => store.readMeal("alpha", id)).toThrowError(/^Invalid stored meal$/);
+});
+
+test("does not read persisted current meals for an invalid wire account binding", () => {
+  using store = openSyncStore(filename);
+  const account = "a".repeat(1025);
+  expect(() => store.createAccount(account, "lineage")).toThrow();
+  using db = new DatabaseSync(filename);
+  db.prepare("INSERT INTO main.sync_accounts(account_binding,lineage,revision) VALUES (?,?,?)").run(
+    account,
+    "lineage",
+    1,
+  );
+  const id = "overlong-account-meal";
+  db.prepare(
+    "INSERT INTO main.sync_records(account_binding,revision,kind,record_id,content) VALUES (?,?,?,?,?)",
+  ).run(account, 1, "meal", id, JSON.stringify(capturedMeal(id, "Oats")));
+  expect(store.readMeal(account, id)).toBeNull();
+});
+
 test.each([
   [
     "invalid calendar day",
