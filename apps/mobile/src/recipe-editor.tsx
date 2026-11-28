@@ -1,9 +1,9 @@
+import { type CatalogDatabase, searchBls } from "@edo/catalog-import/bls-search";
 import { type Food, type Portion, type Recipe, roundNutritionForDisplay } from "@edo/core";
 import type { PackagedFoodCache } from "@edo/storage";
 import { useEffect, useRef, useState } from "react";
 import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { openFoodFactsLicenseUrl } from "./barcode";
-import { type CatalogDatabase, searchBls } from "./catalog";
 import { SourceLink } from "./catalog-source-link";
 import { readAmount } from "./diary-view";
 import { searchCachedPackagedFoods } from "./packaged-food-search";

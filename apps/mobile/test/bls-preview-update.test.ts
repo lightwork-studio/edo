@@ -254,7 +254,7 @@ it("passes the byte snapshot checked by SHA-256 to SQLite even if the cache path
     return Uint8Array.from(createHash("sha256").update(bytes).digest()).buffer;
   });
   const { openBlsPreview } = await import("../src/bls-preview-update");
-  const { searchBls } = await import("../src/catalog");
+  const { searchBls } = await import("@edo/catalog-import/bls-search");
   const approved = await openBlsPreview({ origin, digest });
   if (!approved) throw new Error("Expected the verified preview");
   try {
@@ -294,7 +294,7 @@ it("keeps the open bundled connection, stages once, and opens the verified downl
   const committed = sdk.files.get(installed);
   expect(committed && sha256(committed)).toBe(digest);
   expect(sdk.files.has(`${cache}/pending.sqlite`)).toBe(false);
-  const { searchBls } = await import("../src/catalog");
+  const { searchBls } = await import("@edo/catalog-import/bls-search");
   expect(await searchBls(first.db, "Banane", "de")).toMatchObject([{ name: "Banane im Paket" }]);
   const reopened = await open();
   expect(await searchBls(reopened.db, "Banane", "de")).toMatchObject([
@@ -381,7 +381,7 @@ it("falls back offline with a damaged cache and removes only the abandoned stage
   const refresh = refreshBlsPreview({ origin, digest });
   offline.reject(new Error("Offline"));
   await refresh;
-  const { searchBls } = await import("../src/catalog");
+  const { searchBls } = await import("@edo/catalog-import/bls-search");
   expect(await searchBls(result.db, "Banane", "de")).toMatchObject([{ name: "Banane im Paket" }]);
   expect(sdk.files.has(`${cache}/pending.sqlite`)).toBe(false);
   expect(sdk.files.has(`${cache}/${"0".repeat(64)}.sqlite`)).toBe(true);

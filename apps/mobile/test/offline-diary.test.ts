@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, URL } from "node:url";
+import { type CatalogDatabase, findBlsFoods, searchBls } from "@edo/catalog-import/bls-search";
 import { createDiaryItem, type Food } from "@edo/core";
 import { openDiary } from "@edo/storage";
 import { expect, test } from "vitest";
-import { type CatalogDatabase, findBlsFoods, searchBls } from "../src/catalog";
 import {
   diaryDayLimit,
   entryTime,

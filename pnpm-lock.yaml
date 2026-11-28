@@ -103,7 +103,11 @@ importers:
         specifier: 0.2.0
         version: 0.2.0
 
-  packages/catalog-import: {}
+  packages/catalog-import:
+    dependencies:
+      '@edo/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/contract: {}
 

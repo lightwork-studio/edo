@@ -5,9 +5,13 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./bls-search": "./src/bls-search.ts",
     "./manifest": "./src/manifest.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@edo/core": "workspace:*"
   }
 }

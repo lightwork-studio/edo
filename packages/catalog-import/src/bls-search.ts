@@ -1,5 +1,6 @@
 import type { Food } from "@edo/core";
-import type { Language } from "./strings";
+
+export type BlsSearchLanguage = "de" | "en";
 
 interface CatalogFood {
   source_id: string;
@@ -19,7 +20,7 @@ export interface CatalogDatabase {
   getAllAsync<T>(sql: string, parameter: string): Promise<T[]>;
 }
 
-function catalogFood(row: CatalogFood, language: Language): Food {
+function catalogFood(row: CatalogFood, language: BlsSearchLanguage): Food {
   return {
     id: { provider: "bls", sourceId: row.source_id },
     name: language === "de" ? row.name : row.alternate_name || row.name,
@@ -41,7 +42,7 @@ function catalogFood(row: CatalogFood, language: Language): Food {
 export async function searchBls(
   db: CatalogDatabase,
   query: string,
-  language: Language,
+  language: BlsSearchLanguage,
 ): Promise<Food[]> {
   // Quote individual words so typed input cannot become FTS syntax.
   const words = query.normalize("NFC").match(/[\p{L}\p{N}\p{M}]+/gu);
@@ -63,7 +64,7 @@ export async function searchBls(
 export async function findBlsFoods(
   db: CatalogDatabase,
   ids: readonly string[],
-  language: Language,
+  language: BlsSearchLanguage,
 ): Promise<Food[]> {
   if (ids.length === 0) return [];
   const rows = await db.getAllAsync<CatalogFood>(
