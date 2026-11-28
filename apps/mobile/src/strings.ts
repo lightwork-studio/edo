@@ -175,6 +175,8 @@ export const strings = {
     caloriesOverTarget: (kcal: string) => `${kcal} kcal over target`,
     progressMacros: "Macros · daily average",
     nutritionTargets: "Targets",
+    profileNutrition: "Calories and macros",
+    profileData: "Data",
     proteinTargetDays: (hits: number, days: number) =>
       `Protein target reached on ${hits} of ${days} days`,
     progressError: "Couldn’t read progress.",
@@ -369,6 +371,8 @@ export const strings = {
     caloriesOverTarget: (kcal: string) => `${kcal} kcal über dem Ziel`,
     progressMacros: "Makros · Tagesdurchschnitt",
     nutritionTargets: "Ziele",
+    profileNutrition: "Kalorien und Makros",
+    profileData: "Daten",
     proteinTargetDays: (hits: number, days: number) =>
       `Eiweißziel an ${hits} von ${days} Tagen erreicht`,
     progressError: "Der Fortschritt konnte nicht geladen werden.",

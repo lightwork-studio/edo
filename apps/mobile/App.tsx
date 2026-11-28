@@ -470,6 +470,8 @@ function DiaryApp({
       "profile",
       <ProfileScreen
         t={t}
+        locale={locale}
+        target={readTarget(diary, today)?.target ?? null}
         onTargets={() => setRoute({ kind: "targets", returnTo: "profile" })}
         onDiaryFiles={() => setRoute({ kind: "archive", returnTo: "profile" })}
       />,
