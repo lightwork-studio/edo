@@ -3,15 +3,18 @@ import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-nati
 import { type Language, strings } from "./strings";
 import {
   type BlockerJournal,
-  formatWeighInKilograms,
+  type MealReviewSide,
+  mealReviewPage,
   readSyncBlocker,
+  reviewQuantityFormatter,
   type syncBlockerNotice,
   type WeighInReviewSide,
 } from "./sync-blockers";
-import { DetailHeader, Notice, styles } from "./ui";
+import { DetailHeader, macros, Notice, styles } from "./ui";
 
 const gregorianCutoverDay = "1582-10-15";
 const gregorianCutoverTime = Date.parse(`${gregorianCutoverDay}T00:00:00.000Z`);
+const reviewNutrients = [...macros, { label: "fibre", nutrient: "fiberG" }] as const;
 
 const copy = {
   en: {
@@ -35,6 +38,17 @@ const copy = {
       deleted: "Deleted",
       unavailable: "Weigh-in values unavailable",
       unknown: "Current account value unknown",
+    },
+    meal: {
+      unavailable: "Meal contents unavailable",
+      empty: "No items in this meal.",
+      previousPage: "Previous items",
+      nextPage: "Next items",
+      itemRange: (first: number, last: number, total: number) =>
+        `Items ${first}–${last} of ${total}`,
+      offset: "Recorded UTC offset",
+      missingOffset: "Offset unavailable",
+      unknownEnergy: "Energy unknown",
     },
     kinds: {
       meal: "Meal",
@@ -76,6 +90,17 @@ const copy = {
       deleted: "Gelöscht",
       unavailable: "Gewichtsdaten nicht verfügbar",
       unknown: "Aktueller Kontowert unbekannt",
+    },
+    meal: {
+      unavailable: "Mahlzeit nicht verfügbar",
+      empty: "Diese Mahlzeit enthält keine Einträge.",
+      previousPage: "Vorherige Einträge",
+      nextPage: "Nächste Einträge",
+      itemRange: (first: number, last: number, total: number) =>
+        `Einträge ${first}–${last} von ${total}`,
+      offset: "Erfasste UTC-Abweichung",
+      missingOffset: "UTC-Abweichung nicht verfügbar",
+      unknownEnergy: "Energie unbekannt",
     },
     kinds: {
       meal: "Mahlzeit",
@@ -129,21 +154,26 @@ export function SyncBlockerScreen({
 }) {
   const words = copy[language];
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
-  const [{ issue, position }, setReview] = useState(() => ({
+  const [{ issue, position, generation }, setReview] = useState(() => ({
     issue: readSyncBlocker(journal, null),
     position: 1,
+    generation: 0,
   }));
   function restart() {
     const first = readSyncBlocker(journal, null);
     scroll.current?.scrollTo({ y: 0, animated: false });
-    setReview({ issue: first, position: 1 });
+    setReview({ issue: first, position: 1, generation: generation + 1 });
     if (first.state !== "empty") AccessibilityInfo.announceForAccessibility(words.position(1));
   }
   function next() {
     if (!issue.next) return;
     const nextPosition = position + 1;
     scroll.current?.scrollTo({ y: 0, animated: false });
-    setReview({ issue: readSyncBlocker(journal, issue.next), position: nextPosition });
+    setReview({
+      issue: readSyncBlocker(journal, issue.next),
+      position: nextPosition,
+      generation,
+    });
     AccessibilityInfo.announceForAccessibility(words.position(nextPosition));
   }
   return (
@@ -170,6 +200,23 @@ export function SyncBlockerScreen({
                   side={issue.weighIn.account}
                   locale={locale}
                   words={words.weighIn}
+                />
+              </>
+            ) : issue.meal ? (
+              <>
+                <MealSide
+                  key={`${generation}-${position}-phone`}
+                  title={words.weighIn.phone}
+                  side={issue.meal.phone}
+                  locale={locale}
+                  language={language}
+                />
+                <MealSide
+                  key={`${generation}-${position}-account`}
+                  title={words.weighIn.account}
+                  side={issue.meal.account}
+                  locale={locale}
+                  language={language}
                 />
               </>
             ) : (
@@ -206,7 +253,7 @@ function WeighInSide({
   locale: string;
   words: (typeof copy)[Language]["weighIn"];
 }) {
-  const recorded = side.state === "live" ? new Date(side.occurredAt) : null;
+  const formatQuantity = reviewQuantityFormatter(locale);
   return (
     <View>
       <Text accessibilityRole="header" style={styles.title}>
@@ -214,37 +261,170 @@ function WeighInSide({
       </Text>
       {side.state === "live" ? (
         <>
-          <Text style={[styles.body, styles.numbers]}>
-            {formatWeighInKilograms(side.kg, locale)} kg
-          </Text>
-          <Text style={styles.meta}>{words.localDay}</Text>
-          <Text style={styles.body}>
-            {side.localDay < gregorianCutoverDay
-              ? side.localDay
-              : new Intl.DateTimeFormat(locale, {
-                  dateStyle: "medium",
-                  timeZone: "UTC",
-                }).format(new Date(`${side.localDay}T00:00:00.000Z`))}
-          </Text>
-          <Text style={styles.meta}>{words.instant}</Text>
-          <Text style={styles.body}>
-            {recorded && (side.occurredAt < gregorianCutoverTime || side.occurredAt % 1000 !== 0)
-              ? recorded.toISOString()
-              : new Intl.DateTimeFormat(locale, {
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                  second: "2-digit",
-                  timeZone: "UTC",
-                  timeZoneName: "short",
-                }).format(side.occurredAt)}
-          </Text>
+          <Text style={[styles.body, styles.numbers]}>{formatQuantity(side.kg)} kg</Text>
+          <CapturedTime
+            localDay={side.localDay}
+            occurredAt={side.occurredAt}
+            locale={locale}
+            words={words}
+          />
         </>
       ) : (
         <Text style={styles.meta}>{words[side.state]}</Text>
       )}
     </View>
   );
+}
+
+function CapturedTime({
+  localDay,
+  occurredAt,
+  locale,
+  words,
+}: {
+  localDay: string;
+  occurredAt: number;
+  locale: string;
+  words: Pick<(typeof copy)[Language]["weighIn"], "localDay" | "instant">;
+}) {
+  return (
+    <>
+      <Text style={styles.meta}>{words.localDay}</Text>
+      <Text style={styles.body}>
+        {localDay < gregorianCutoverDay
+          ? localDay
+          : new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(
+              new Date(`${localDay}T00:00:00.000Z`),
+            )}
+      </Text>
+      <Text style={styles.meta}>{words.instant}</Text>
+      <Text style={styles.body}>
+        {occurredAt < gregorianCutoverTime || occurredAt % 1000 !== 0
+          ? new Date(occurredAt).toISOString()
+          : new Intl.DateTimeFormat(locale, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+              second: "2-digit",
+              timeZone: "UTC",
+              timeZoneName: "short",
+            }).format(occurredAt)}
+      </Text>
+    </>
+  );
+}
+
+function MealSide({
+  title,
+  side,
+  locale,
+  language,
+}: {
+  title: string;
+  side: MealReviewSide;
+  locale: string;
+  language: Language;
+}) {
+  const words = copy[language];
+  const [page, setPage] = useState(0);
+  const heading = (
+    <Text accessibilityRole="header" style={styles.title}>
+      {title}
+    </Text>
+  );
+  if (side.state !== "live") {
+    return (
+      <View>
+        {heading}
+        <Text style={styles.meta}>
+          {side.state === "unavailable" ? words.meal.unavailable : words.weighIn[side.state]}
+        </Text>
+      </View>
+    );
+  }
+
+  const { meal } = side;
+  const offset = meal.utcOffsetMinutes;
+  const formatQuantity = reviewQuantityFormatter(locale);
+  const { items, total, start, end } = mealReviewPage(meal.items, page);
+  function changePage(next: number) {
+    setPage(next);
+    const nextPage = mealReviewPage(meal.items, next);
+    AccessibilityInfo.announceForAccessibility(
+      `${title}. ${words.meal.itemRange(nextPage.start + 1, nextPage.end, total)}`,
+    );
+  }
+  return (
+    <View>
+      {heading}
+      <CapturedTime
+        localDay={meal.localDay}
+        occurredAt={meal.occurredAt}
+        locale={locale}
+        words={words.weighIn}
+      />
+      <Text style={styles.meta}>{words.meal.offset}</Text>
+      <Text style={styles.body}>
+        {offset === undefined ? words.meal.missingOffset : formatUtcOffset(offset)}
+      </Text>
+      {total === 0 && <Text style={styles.meta}>{words.meal.empty}</Text>}
+      {(start > 0 || end < total) && (
+        <>
+          <Text style={styles.meta}>{words.meal.itemRange(start + 1, end, total)}</Text>
+          <View style={styles.row}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: start === 0 }}
+              accessibilityLabel={`${title}. ${words.meal.previousPage}`}
+              disabled={start === 0}
+              onPress={() => changePage(page - 1)}
+              style={[styles.action, styles.stretch, start === 0 && styles.faded]}
+            >
+              <Text style={styles.actionText}>{words.meal.previousPage}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: end === total }}
+              accessibilityLabel={`${title}. ${words.meal.nextPage}`}
+              disabled={end === total}
+              onPress={() => changePage(page + 1)}
+              style={[styles.action, styles.stretch, end === total && styles.faded]}
+            >
+              <Text style={styles.actionText}>{words.meal.nextPage}</Text>
+            </Pressable>
+          </View>
+        </>
+      )}
+      {items.map(({ id, food, portion, nutrients }) => (
+        <View key={id}>
+          <Text style={styles.body}>{food.name}</Text>
+          <Text style={[styles.meta, styles.numbers]}>
+            {formatQuantity(portion.amount)}{" "}
+            {portion.unit === "portion" ? strings[language].portion : portion.unit}
+            {" · "}
+            {nutrients.kcal === null
+              ? words.meal.unknownEnergy
+              : `${formatQuantity(nutrients.kcal)} kcal`}
+          </Text>
+          <Text style={styles.meta}>
+            {reviewNutrients
+              .map(({ label, nutrient }) => {
+                const value = nutrients[nutrient];
+                const amount = value === null ? "—" : `${formatQuantity(value)} g`;
+                return `${strings[language][label]} ${amount}`;
+              })
+              .join(" · ")}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function formatUtcOffset(offset: number): string {
+  const minutes = Math.abs(offset);
+  const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
+  return `UTC${offset < 0 ? "-" : "+"}${hours}:${String(minutes % 60).padStart(2, "0")}`;
 }

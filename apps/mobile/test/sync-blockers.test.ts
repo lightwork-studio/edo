@@ -2,15 +2,36 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createDiaryItem } from "@edo/core";
 import { openDiary, type SqliteConnection } from "@edo/storage";
 import { expect, it } from "vitest";
-import { formatWeighInKilograms, readSyncBlocker, syncBlockerNotice } from "../src/sync-blockers";
+import {
+  mealReviewPage,
+  readSyncBlocker,
+  reviewQuantityFormatter,
+  syncBlockerNotice,
+} from "../src/sync-blockers";
+
+it("bounds each captured meal page and reaches a partial final page without repeating items", () => {
+  const items = Array.from({ length: 61 }, (_, index) => ({ id: `item-${index + 1}` }));
+  const pages = [0, 1, 2, 3].map((page) => mealReviewPage(items, page));
+  expect(pages.map(({ start, end }) => [start, end])).toEqual([
+    [0, 20],
+    [20, 40],
+    [40, 60],
+    [60, 61],
+  ]);
+  expect(pages.map(({ items }) => items.length)).toEqual([20, 20, 20, 1]);
+  expect(pages.flatMap(({ items }) => items)).toEqual(items);
+  expect(mealReviewPage([], 0)).toEqual({ items: [], total: 0, start: 0, end: 0 });
+});
 
 it("keeps weight precision when the locale uses a different decimal separator or numeral glyph", () => {
-  expect(formatWeighInKilograms(80.0021, "de-DE")).toBe("80,0021");
-  expect(formatWeighInKilograms(80.0022, "de-DE")).toBe("80,0022");
-  expect(formatWeighInKilograms(80.0021, "de-CH")).toBe("80.0021");
-  expect(formatWeighInKilograms(80.0021, "en-US-u-nu-mathbold")).toBe("80.0021");
+  const german = reviewQuantityFormatter("de-DE");
+  expect(german(80.0021)).toBe("80,0021");
+  expect(german(80.0022)).toBe("80,0022");
+  expect(reviewQuantityFormatter("de-CH")(80.0021)).toBe("80.0021");
+  expect(reviewQuantityFormatter("en-US-u-nu-mathbold")(80.0021)).toBe("80.0021");
 });
 
 function connectionFor(db: DatabaseSync): SqliteConnection {
@@ -95,6 +116,10 @@ it("finds persisted record blockers offline and exposes only their presentation 
       reason: "exists",
       operation: "delete",
       next: meal,
+      meal: {
+        phone: { state: "deleted" },
+        account: { state: "unavailable" },
+      },
     });
     if (first.state !== "blocked") throw new Error("Expected the first blocker");
     expect(readSyncBlocker(journal, first.next)).toEqual({
@@ -240,6 +265,89 @@ it("shows the latest phone change and account weigh-in without opaque or identit
     json_set(content, '$.pending.content.localDay', '2026-02-29')`);
   expect(readSyncBlocker(journal, null)).toMatchObject({
     weighIn: { phone: { state: "unavailable" } },
+  });
+});
+
+it("compares captured meals without exposing opaque fields or changing the saved journal", async () => {
+  using db = new DatabaseSync(":memory:");
+  const {
+    sync: { journal },
+  } = await open(db);
+  const key = { kind: "meal", id: "reviewed-meal" };
+  const day = { localDay: "2026-11-05", occurredAt: 1793910600003, utcOffsetMinutes: -240 };
+  const food = {
+    id: { provider: "bls", sourceId: "local-fixture" },
+    name: "Captured oats",
+    release: "BLS fixture",
+    preparation: "raw",
+    nutrition: {
+      basis: "per-100-g",
+      nutrients: { kcal: 100, proteinG: 2, availableCarbohydratesG: 18, fatG: 1, fiberG: 2 },
+    },
+  } as const;
+  const large = createDiaryItem("stable-item", food, { amount: 75, unit: "g" });
+  const small = createDiaryItem("stable-item", food, { amount: 50, unit: "g" });
+  // Preserve the stored nutrient values even if a newer catalog would recalculate the amount.
+  const phoneItem = { ...large, nutrients: { ...large.nutrients, kcal: 76.125 } };
+  const accountItem = { ...small, nutrients: { ...small.nutrients, kcal: null, proteinG: 2.125 } };
+  const phone = { id: key.id, ...day, items: [{ ...phoneItem, future: "opaque-item" }] };
+  const account = {
+    ...key,
+    revision: 2,
+    state: "live",
+    content: { id: key.id, ...day, items: [accountItem], future: "opaque-meal" },
+  };
+  db.exec(`INSERT INTO edo_sync_binding
+    VALUES (1, 'https://example.test', 'account', 'lineage', 2, 2)`);
+  db.prepare("INSERT INTO edo_sync_outbox VALUES (?, ?, NULL, NULL, ?)").run(
+    key.kind,
+    key.id,
+    JSON.stringify({
+      key,
+      baseRevision: 1,
+      base: null,
+      pending: { op: "put", submissionId: "latest", content: phone },
+      attempt: null,
+      blocked: {
+        submission: { ...key, op: "put", baseRevision: 1, submissionId: "prior", content: phone },
+        result: {
+          submissionId: "prior",
+          status: "conflict",
+          reason: "stale",
+          current: { ...key, revision: 2, state: "unavailable" },
+        },
+      },
+    }),
+  );
+  db.prepare("INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)").run(
+    key.kind,
+    key.id,
+    account.revision,
+    JSON.stringify(account),
+  );
+  const saved = db.prepare("SELECT content FROM edo_sync_outbox").get();
+  db.exec("PRAGMA query_only = ON");
+  const review = readSyncBlocker(journal, null);
+  if (review.state !== "blocked") throw new Error("Expected a tracked meal conflict");
+  expect(review.meal).toEqual({
+    phone: { state: "live", meal: { ...day, items: [phoneItem] } },
+    account: { state: "live", meal: { ...day, items: [accountItem] } },
+  });
+  expect(db.prepare("SELECT content FROM edo_sync_outbox").get()).toEqual(saved);
+  db.exec("PRAGMA query_only = OFF");
+
+  const setAccount = db.prepare("UPDATE edo_sync_remote SET revision = ?, content = ?");
+  const malformed = {
+    ...account,
+    content: { ...account.content, items: [accountItem, accountItem] },
+  };
+  setAccount.run(2, JSON.stringify(malformed));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    meal: { account: { state: "unavailable" } },
+  });
+  setAccount.run(3, JSON.stringify({ ...key, revision: 3, state: "deleted" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    meal: { account: { state: "deleted" } },
   });
 });
 
