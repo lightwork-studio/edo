@@ -1,6 +1,8 @@
 export const strings = {
   en: {
     today: "Today",
+    foods: "Foods",
+    profile: "Profile",
     previousWeek: "Previous week",
     nextWeek: "Next week",
     logged: "Logged",
@@ -90,6 +92,18 @@ export const strings = {
     catalogError: "Couldn’t open the offline catalog.",
     amount: "Amount",
     selectedPortion: "In this portion",
+    dayWithFood: "Your day with this",
+    kcalLeftAfterFood: "kcal left after",
+    kcalOverAfterFood: "kcal over after",
+    dayImpactValue: (
+      name: string,
+      logged: string,
+      portion: string,
+      total: string,
+      target: string,
+      editing: boolean,
+    ) =>
+      `${name}. ${editing ? "Other logged food" : "Logged"} ${logged}. This portion ${portion}. Total ${total}. Target ${target}.`,
     nutritionBasis: "Nutrition reference",
     foodDetailNutrition: (basis: "per-100-g" | "per-100-ml" | "per-portion") =>
       ({
@@ -199,6 +213,8 @@ export const strings = {
   },
   de: {
     today: "Heute",
+    foods: "Lebensmittel",
+    profile: "Profil",
     previousWeek: "Vorherige Woche",
     nextWeek: "Nächste Woche",
     logged: "Erfasst",
@@ -289,6 +305,18 @@ export const strings = {
     catalogError: "Der Offline-Katalog konnte nicht geöffnet werden.",
     amount: "Menge",
     selectedPortion: "In dieser Menge",
+    dayWithFood: "Dein Tag mit dieser Portion",
+    kcalLeftAfterFood: "kcal danach übrig",
+    kcalOverAfterFood: "kcal danach darüber",
+    dayImpactValue: (
+      name: string,
+      logged: string,
+      portion: string,
+      total: string,
+      target: string,
+      editing: boolean,
+    ) =>
+      `${name}. ${editing ? "Sonstige erfasste Lebensmittel" : "Erfasst"} ${logged}. Diese Portion ${portion}. Gesamt ${total}. Ziel ${target}.`,
     nutritionBasis: "Nährwertbezug",
     foodDetailNutrition: (basis: "per-100-g" | "per-100-ml" | "per-portion") =>
       ({
