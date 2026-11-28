@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./journal-schema-v5": "./src/journal-schema-v5.ts",
     "./journal-schema-v6": "./src/journal-schema-v6.ts",
-    "./journal-schema-v7": "./src/journal-schema-v7.ts"
+    "./journal-schema-v7": "./src/journal-schema-v7.ts",
+    "./journal-schema-v8": "./src/journal-schema-v8.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."
