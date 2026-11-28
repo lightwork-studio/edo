@@ -114,11 +114,9 @@ export function totalNutrition(meals: readonly DiaryMeal[]): Nutrients | null {
 export function nutritionTargetProgress(logged: number | null, target: number | null) {
   if (logged === null || target === null) return null;
   const ratio = target > 0 ? logged / target : Number(logged > 0);
-  const percent = target > 0 ? Math.round(ratio * 100) : null;
   return {
-    balance: target - logged,
     fraction: Math.min(ratio, 1),
-    percent: percent !== null && Number.isFinite(percent) ? percent : null,
+    ratio: target > 0 && Number.isFinite(ratio) ? ratio : null,
   };
 }
 
