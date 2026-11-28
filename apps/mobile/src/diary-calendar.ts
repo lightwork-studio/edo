@@ -1,10 +1,24 @@
 import { addDays, calendarDate } from "./diary-view";
 
+function diaryKey(date: Date): string | null {
+  const year = date.getUTCFullYear();
+  return year >= 0 && year <= 9999 ? date.toISOString().slice(0, 10) : null;
+}
+
 export function shiftDiaryMonth(day: string, offset: number): string | null {
   const date = calendarDate(`${day.slice(0, 7)}-01`);
   date.setUTCMonth(date.getUTCMonth() + offset);
-  const year = date.getUTCFullYear();
-  return year >= 1 && year <= 9999 ? date.toISOString().slice(0, 10) : null;
+  return diaryKey(date);
+}
+
+export function diaryWeekDates(day: string): (string | null)[] {
+  const first = calendarDate(day);
+  first.setUTCDate(first.getUTCDate() - ((first.getUTCDay() + 6) % 7));
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(first);
+    date.setUTCDate(first.getUTCDate() + index);
+    return diaryKey(date);
+  });
 }
 
 export function diaryMonthWeeks(month: string): (string | null)[][] {
