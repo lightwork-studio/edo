@@ -93,9 +93,10 @@ test("upgrades a historical v4 diary and restores the full verified backup", asy
     "edo_sync_outbox",
     "edo_sync_receipts",
     "edo_sync_remote",
+    "edo_sync_staged_meal_claims",
     "edo_sync_submission_ids",
   ]);
-  expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(6);
+  expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(7);
   const journal = openSyncJournal(source.sqlite);
   expect(journal.history()).toBeNull();
   expect(journal.queued()).toEqual([]);
@@ -304,7 +305,94 @@ test.each(["none", "delete", "put"] as const)("recovers a v5 meal receipt (%s)",
   expect(reopened.sync.journal.history()).toMatchObject({ revision: 1, cursor: 0 });
 });
 
-test.each(["edo_sync_submission_ids", "edo_sync_meal_projections"] as const)(
+test("backs up a bound v6 diary before adding staged ownership storage and retries after interruption", async () => {
+  const source = fixture();
+  const v6Migrations = diaryMigrations.slice(0, 6);
+  await migrateDiary(source.sqlite, v6Migrations, source.backupBeforeMigration, () => {});
+  const meal = v4Archive.meals[0];
+  source.sqlite.run(
+    "INSERT INTO edo_sync_binding VALUES (1, ?, ?, ?, 3, 2)",
+    "https://example.test",
+    "account",
+    "fixture",
+  );
+  const journal = openSyncJournal(source.sqlite);
+  journal.commitLocal(
+    { kind: "meal", id: meal.id },
+    { op: "delete", submissionId: "pending-delete" },
+    () => {
+      source.sqlite.run("DELETE FROM diary_meals WHERE id = ?", meal.id);
+      return undefined;
+    },
+  );
+  source.sqlite.run("INSERT INTO edo_sync_receipts VALUES (?)", "accepted-meal");
+  source.sqlite.run("INSERT INTO edo_sync_submission_ids VALUES (?)", "accepted-meal");
+  source.sqlite.run(
+    "INSERT INTO edo_sync_meal_projections VALUES (?, 1, 'accepted', ?)",
+    meal.id,
+    JSON.stringify(meal),
+  );
+  const serverCopy = { kind: "meal", id: meal.id, state: "deleted", revision: 2 };
+  source.sqlite.run(
+    "INSERT INTO edo_sync_remote VALUES ('meal', ?, 2, ?)",
+    meal.id,
+    JSON.stringify(serverCopy),
+  );
+  const before = new Map(
+    journalTables(source.sqlite).map((name) => [name, source.sqlite.all(`SELECT * FROM ${name}`)]),
+  );
+  const interrupted: DiarySqliteConnection = {
+    ...source.sqlite,
+    exec: (sql) => {
+      source.sqlite.exec(sql);
+      if (sql.includes("CREATE TABLE edo_sync_staged_meal_claims")) {
+        throw new Error("Simulated v7 interruption");
+      }
+    },
+  };
+  await expect(
+    openDiary({ connection: interrupted, backupBeforeMigration: source.backupBeforeMigration }),
+  ).rejects.toThrow("Simulated v7 interruption");
+  expect(source.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 6 });
+  expect(journalTables(source.sqlite)).toEqual([...before.keys()]);
+  for (const [name, rows] of before) {
+    expect(source.sqlite.all(`SELECT * FROM ${name}`)).toEqual(rows);
+  }
+  source.db.close();
+
+  const retry = openFile(source.path, source.dir);
+  const diary = await retry.open();
+  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 7 });
+  expect(retry.sqlite.all("SELECT * FROM edo_sync_staged_meal_claims")).toEqual([]);
+  expect(JSON.parse(diary.exportPrivateArchive())).toEqual({
+    ...v4Archive,
+    meals: v4Archive.meals.filter((entry: { id: string }) => entry.id !== meal.id),
+  });
+  expect(diary.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toEqual(serverCopy);
+  expect(diary.sync.journal.queued()).toMatchObject([
+    {
+      key: { kind: "meal", id: meal.id },
+      pending: { op: "delete", submissionId: "pending-delete" },
+    },
+  ]);
+  using backup = new DatabaseSync(join(source.dir, "prior-v6-diary.sqlite"), { readOnly: true });
+  expect(backup.prepare("PRAGMA user_version").get()).toEqual({ user_version: 6 });
+  expect(journalTables(connection(backup))).toEqual([...before.keys()]);
+  for (const [name, rows] of before) {
+    expect(retry.sqlite.all(`SELECT * FROM ${name}`)).toEqual(rows);
+    expect(backup.prepare(`SELECT * FROM ${name}`).all()).toEqual(rows);
+  }
+  await expect(
+    migrateDiary(retry.sqlite, v6Migrations, retry.backupBeforeMigration, () => {}),
+  ).rejects.toThrow("saved by a newer version of Edo");
+  expect(retry.sqlite.get("PRAGMA user_version")).toEqual({ user_version: 7 });
+});
+
+test.each([
+  "edo_sync_submission_ids",
+  "edo_sync_meal_projections",
+  "edo_sync_staged_meal_claims",
+] as const)(
   "rejects a backup that drops a row from %s before a subsequent migration",
   async (table) => {
     const source = fixture();
@@ -314,6 +402,11 @@ test.each(["edo_sync_submission_ids", "edo_sync_meal_projections"] as const)(
       "INSERT INTO edo_sync_meal_projections VALUES (?, 2, 'accepted', ?)",
       "meal",
       '{"id":"meal"}',
+    );
+    source.sqlite.run(
+      "INSERT INTO edo_sync_staged_meal_claims VALUES (?, ?, 1)",
+      "meal",
+      '["item"]',
     );
 
     await expect(
@@ -334,9 +427,7 @@ test.each(["edo_sync_submission_ids", "edo_sync_meal_projections"] as const)(
         () => {},
       ),
     ).rejects.toThrow("Diary backup does not match the current diary");
-    expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(6);
-    expect(source.sqlite.get("SELECT submission_id FROM edo_sync_submission_ids")).toMatchObject({
-      submission_id: "reserved",
-    });
+    expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(7);
+    expect(source.sqlite.get(`SELECT count(*) AS count FROM ${table}`)).toEqual({ count: 1 });
   },
 );
