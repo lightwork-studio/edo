@@ -272,8 +272,11 @@ export async function openDiary({
         journal.commitLocalProjection(
           { kind: "nutrition-target", id: target.id },
           submissionId,
-          () => {
-            writeNutritionTarget(db, target);
+          ({ hasRevisionOrEdit, hasDeletion }) => {
+            if (hasDeletion)
+              throw new Error("Recreating a nutrition target requires a new revision ID");
+            // Older journals may remember only the accepted revision after deleting a target.
+            writeNutritionTarget(db, target, hasRevisionOrEdit);
             const row = db.get("SELECT * FROM diary_targets WHERE id = ?", target.id);
             if (!row) throw new Error("Could not read the saved nutrition target for sync");
             return { op: "put", content: readNutritionTarget(row) };

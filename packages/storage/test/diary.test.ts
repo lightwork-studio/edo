@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,8 @@ import {
 import { createSyncClient } from "@edo/sync";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { applyRecordContent } from "../../../apps/sync-node/src/record-projection.ts";
+import { createHealthServer } from "../../../apps/sync-node/src/server.ts";
+import { openSyncStore } from "../../../apps/sync-node/src/sync-store.ts";
 import { diaryMigrations, migrateDiary } from "../src/migrations.ts";
 import { decodeSnapshot } from "../src/snapshot.ts";
 
@@ -295,7 +298,77 @@ test("queues immutable bound target revisions and restores the previous target a
   expect(reopened.sync.journal.queued()).toMatchObject([
     { attempt, pending: { op: "delete", submissionId: "target-deletion" } },
   ]);
+  expect(() =>
+    reopened.sync.saveNutritionTarget(
+      { ...revisedTarget, configuredAt: revisedTarget.configuredAt + 1 },
+      "replace-pending-delete",
+    ),
+  ).toThrow(/requires a new revision ID/);
+  expect(reopened.nutritionTargetAt(target.effectiveDay)).toEqual(target);
+  expect(reopened.sync.journal.queued()).toMatchObject([
+    { attempt, pending: { op: "delete", submissionId: "target-deletion" } },
+  ]);
 });
+
+test.each(["tombstone", "legacy revision"] as const)(
+  "rejects reusing an acknowledged nutrition target's ID with a stored %s",
+  async (evidence) => {
+    using store = openSyncStore(join(directory, "account.sqlite"), {
+      applyContent: applyRecordContent,
+    });
+    store.createAccount("account", "fixture");
+    await using server = createHealthServer({
+      sync: {
+        store,
+        authorize: () => ({ accountBinding: "account", sessionKey: "phone" }),
+      },
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing sync test port");
+    const client = createSyncClient({
+      origin: `http://127.0.0.1:${address.port}`,
+      allowLoopbackHttp: true,
+      authorization: () => "Bearer synthetic",
+    });
+    const session = await client.connect();
+    const source = createDatabase();
+    const diary = await source.start();
+    diary.saveNutritionTarget(target);
+    const journal = diary.sync.journal;
+    journal.bind(session);
+    diary.sync.saveNutritionTarget(revisedTarget, "put-target");
+    const saved = await client.push(session, journal.prepare(session));
+    expect(saved.results).toMatchObject([{ status: "accepted", revision: 1 }]);
+    journal.applyResults(session, saved, () => undefined);
+
+    diary.sync.deleteNutritionTarget(revisedTarget.id, "delete-target");
+    const deleted = await client.push(session, journal.prepare(session));
+    expect(deleted.results).toMatchObject([{ status: "accepted", revision: 2 }]);
+    journal.applyResults(session, deleted, () => undefined);
+    expect(journal.serverCopy({ kind: "nutrition-target", id: revisedTarget.id })).toBeNull();
+    expect(
+      source.db
+        .prepare("SELECT json_extract(content, '$.base.state') AS state FROM edo_sync_outbox")
+        .get(),
+    ).toMatchObject({ state: "deleted" });
+    if (evidence === "legacy revision") {
+      source.db.exec("UPDATE edo_sync_outbox SET content = json_set(content, '$.base', NULL)");
+    }
+    source.db.close();
+    const reopened = await createDatabase().start();
+
+    expect(() => reopened.sync.saveNutritionTarget(revisedTarget, "recreate-target")).toThrow(
+      /requires a new revision ID/,
+    );
+    expect(reopened.nutritionTargetAt(target.effectiveDay)).toEqual(target);
+    expect(reopened.sync.journal.queued()).toEqual([]);
+    const following = { ...revisedTarget, id: "target-three" };
+    reopened.sync.saveNutritionTarget(following, "recreate-target");
+    expect(reopened.nutritionTargetAt(target.effectiveDay)).toEqual(following);
+  },
+);
 
 test("reopens locally, preserving the event day, stable IDs and nutrition after a catalog refresh", async () => {
   const source = createDatabase();

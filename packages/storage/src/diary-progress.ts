@@ -127,12 +127,15 @@ function insertNutritionTarget(db: DiarySqliteConnection, record: NutritionTarge
 export function writeNutritionTarget(
   db: DiarySqliteConnection,
   record: NutritionTargetRecord,
+  previouslyTracked = false,
 ): void {
   const existing = db.get("SELECT * FROM diary_targets WHERE id = ?", record.id);
   if (existing) {
     if (JSON.stringify(readNutritionTarget(existing)) === JSON.stringify(record)) return;
     throw new Error("Changing a nutrition target requires a new revision ID");
   }
+  if (previouslyTracked)
+    throw new Error("Recreating a nutrition target requires a new revision ID");
   validateTargetBudget(record.target);
   insertNutritionTarget(db, record);
 }
