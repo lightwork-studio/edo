@@ -3,6 +3,7 @@ import { installSyncJournalV6 } from "@edo/sync/journal-schema-v6";
 import { installSyncJournalV7 } from "@edo/sync/journal-schema-v7";
 import { installSyncJournalV8 } from "@edo/sync/journal-schema-v8";
 import { installSyncJournalV9 } from "@edo/sync/journal-schema-v9";
+import { installSyncJournalV10 } from "@edo/sync/journal-schema-v10";
 import { type DiarySqliteConnection, rollback } from "./sqlite.ts";
 
 type Migration = (db: DiarySqliteConnection) => void;
@@ -89,6 +90,7 @@ export const diaryMigrations: readonly Migration[] = [
   installSyncJournalV7,
   installSyncJournalV8,
   installSyncJournalV9,
+  installSyncJournalV10,
 ];
 
 function storageVersion(db: DiarySqliteConnection): number {
@@ -174,7 +176,7 @@ async function verifyBackup(
       "SELECT * FROM diary_items ORDER BY id",
       ...(installed >= 3
         ? [
-            "SELECT * FROM diary_weigh_ins ORDER BY id",
+            "SELECT * FROM main.diary_weigh_ins ORDER BY id",
             "SELECT * FROM diary_targets ORDER BY save_order",
           ]
         : []),
@@ -201,6 +203,7 @@ async function verifyBackup(
       ...(installed >= 9
         ? ["SELECT * FROM edo_sync_attempt_observations ORDER BY submission_id, revision"]
         : []),
+      ...(installed >= 10 ? ["SELECT * FROM main.edo_sync_applied_weigh_ins ORDER BY id"] : []),
     ]) {
       if (JSON.stringify(source.all(query)) !== JSON.stringify(snapshot.all(query))) {
         throw new Error("Diary backup does not match the current diary");

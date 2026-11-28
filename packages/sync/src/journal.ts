@@ -274,35 +274,104 @@ function pulledMealProjection(change: Change | null): StoredMealProjection | nul
 }
 
 function clearAcceptedWeighIn(db: JournalSqlite, id: string, revision: number): void {
-  db.run("DELETE FROM edo_sync_weigh_in_projections WHERE id = ? AND revision <= ?", id, revision);
+  db.run(
+    "DELETE FROM main.edo_sync_weigh_in_projections WHERE id = ? AND revision <= ?",
+    id,
+    revision,
+  );
+}
+
+function weighInFields(value: unknown, expectedId: string): JsonObject | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { id, localDay, occurredAt, kg } = value as Record<string, unknown>;
+  return id === expectedId &&
+    typeof localDay === "string" &&
+    typeof occurredAt === "number" &&
+    Number.isSafeInteger(occurredAt) &&
+    typeof kg === "number" &&
+    Number.isFinite(kg) &&
+    kg > 0
+    ? { id, localDay, occurredAt, kg }
+    : null;
 }
 
 function rememberAcceptedWeighIn(db: JournalSqlite, attempt: Submission, revision: number): void {
   let content: string | null = null;
   if (attempt.op === "put") {
-    const { id, localDay, occurredAt, kg } = attempt.content;
-    if (
-      id !== attempt.id ||
-      typeof localDay !== "string" ||
-      typeof occurredAt !== "number" ||
-      !Number.isSafeInteger(occurredAt) ||
-      typeof kg !== "number" ||
-      kg <= 0
-    ) {
+    const fields = weighInFields(attempt.content, attempt.id);
+    if (!fields) {
       clearAcceptedWeighIn(db, attempt.id, revision);
       return;
     }
     // The local writer stores these fields. Opaque account data stays in the pulled copy.
-    content = JSON.stringify({ id, localDay, occurredAt, kg });
+    content = JSON.stringify(fields);
   }
   db.run(
-    `INSERT INTO edo_sync_weigh_in_projections VALUES (?, ?, ?)
+    `INSERT INTO main.edo_sync_weigh_in_projections VALUES (?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, content = excluded.content
     WHERE excluded.revision >= edo_sync_weigh_in_projections.revision`,
     attempt.id,
     revision,
     content,
   );
+}
+
+export type WeighInProjector = (change: Change, expected: JsonObject | null) => JsonObject | null;
+
+function applyGuardedWeighIn(
+  db: JournalSqlite,
+  change: Change,
+  previous: number | null,
+  expected: JsonObject | null | undefined,
+  project: WeighInProjector,
+) {
+  if (expected === undefined) {
+    throw new Error("The previous device weigh-in is unavailable for review");
+  }
+  if (previous !== null && expected === null && change.state === "live") {
+    throw new Error("A deleted weigh-in needs review before any same-ID account update");
+  }
+  const content = project(change, expected);
+  const fields = weighInFields(content, change.id);
+  if ((change.state === "live" && !fields) || (change.state === "deleted" && content !== null)) {
+    throw new Error("The weigh-in projector returned invalid device evidence");
+  }
+  const snapshot = fields ? JSON.stringify(fields) : null;
+  db.run(
+    `INSERT INTO main.edo_sync_applied_weigh_ins VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, content = excluded.content
+    WHERE excluded.revision >= edo_sync_applied_weigh_ins.revision`,
+    change.id,
+    change.revision,
+    snapshot,
+  );
+  const persisted = db.get(
+    "SELECT content FROM main.edo_sync_applied_weigh_ins WHERE id = ? AND revision = ?",
+    change.id,
+    change.revision,
+  );
+  if (!persisted || persisted.content !== snapshot) {
+    throw new Error("The applied weigh-in evidence changed while saving");
+  }
+}
+
+function priorWeighIn(db: JournalSqlite, record: OutboxRecord) {
+  const { key, baseRevision } = record;
+  if (baseRevision === null) return null;
+  const row =
+    db.get(
+      "SELECT content FROM main.edo_sync_applied_weigh_ins WHERE id = ? AND revision = ?",
+      key.id,
+      baseRevision,
+    ) ??
+    db.get(
+      "SELECT content FROM main.edo_sync_weigh_in_projections WHERE id = ? AND revision = ?",
+      key.id,
+      baseRevision,
+    );
+  if (row?.content === null) return null;
+  if (typeof row?.content !== "string") return undefined;
+  return weighInFields(JSON.parse(row.content), key.id) ?? undefined;
 }
 
 function localRecord(db: JournalSqlite, key: RecordKey) {
@@ -565,6 +634,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       session: NegotiatedSync,
       response: PushResponse,
       applyRemote: (change: Change) => undefined,
+      projectWeighIn?: WeighInProjector,
     ) {
       requireActiveSession(session);
       const { results } = authenticatedResponseSnapshot(response, session);
@@ -616,7 +686,16 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           }
           if (projectRemote) {
             const projected = createOutboxRecord(remote, remote);
-            requireSynchronousWrite(applyRemote(remote));
+            if (record.key.kind === "weigh-in" && projectWeighIn) {
+              const attempt = record.attempt;
+              const expected =
+                attempt.op === "delete"
+                  ? null
+                  : (weighInFields(attempt.content, attempt.id) ?? undefined);
+              applyGuardedWeighIn(db, remote, next.baseRevision, expected, projectWeighIn);
+            } else {
+              requireSynchronousWrite(applyRemote(remote));
+            }
             saveRecord(db, projected);
             if (record.key.kind === "meal") {
               writeMealProjection(db, record.key.id, pulledMealProjection(projected.base));
@@ -653,6 +732,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       requestCursor: number,
       input: PullResponse,
       applyRemote: (change: Change) => undefined,
+      projectWeighIn?: WeighInProjector,
     ) {
       requireActiveSession(session);
       const page = authenticatedResponseSnapshot(input, session, requestCursor);
@@ -684,7 +764,17 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           }
           if (change.revision < (record.baseRevision ?? 0)) continue;
           const projected = createOutboxRecord(change, change);
-          requireSynchronousWrite(applyRemote(change));
+          if (change.kind === "weigh-in" && projectWeighIn) {
+            applyGuardedWeighIn(
+              db,
+              change,
+              record.baseRevision,
+              priorWeighIn(db, record),
+              projectWeighIn,
+            );
+          } else {
+            requireSynchronousWrite(applyRemote(change));
+          }
           saveRecord(db, projected);
           if (projected.key.kind === "meal") {
             writeMealProjection(db, projected.key.id, pulledMealProjection(projected.base));
@@ -867,7 +957,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         const { baseRevision } = record;
         if (baseRevision === null) return null;
         const row = db.get(
-          "SELECT content FROM edo_sync_weigh_in_projections WHERE id = ? AND revision = ?",
+          "SELECT content FROM main.edo_sync_weigh_in_projections WHERE id = ? AND revision = ?",
           id,
           baseRevision,
         );
