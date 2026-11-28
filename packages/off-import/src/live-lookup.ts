@@ -25,6 +25,7 @@ export const liveLookupRequestsPerWindow = 10;
 export interface LiveLookupQuota {
   /** The latest time this lookup may dispatch, or null when the quota is exhausted. */
   reserve(at: number): number | null | Promise<number | null>;
+  canDispatch(at: number): boolean;
   pause(until: number): void | Promise<void>;
 }
 
@@ -37,6 +38,9 @@ function memoryQuota(): LiveLookupQuota {
       if (at < pausedUntil || requests.length >= liveLookupRequestsPerWindow) return null;
       requests.push(at);
       return Number.POSITIVE_INFINITY;
+    },
+    canDispatch(at) {
+      return at >= pausedUntil;
     },
     pause(until) {
       pausedUntil = Math.max(pausedUntil, until);
@@ -109,7 +113,9 @@ export function createOpenFoodFactsLiveLookup(
     url.searchParams.set("product_type", "food");
     url.searchParams.set("fields", fields);
     try {
-      if (now() > dispatchBy) return { status: "rate-limited" };
+      const dispatchAt = now();
+      if (dispatchAt > dispatchBy || !quota.canDispatch(dispatchAt))
+        return { status: "rate-limited" };
       const response = await fetchProduct(url, {
         headers: { "User-Agent": "Edo/1 (https://github.com/lightwork-studio/edo)" },
         credentials: "omit",

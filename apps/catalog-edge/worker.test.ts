@@ -181,6 +181,35 @@ test("expires a slow dispatch before it can violate the rolling quota", async ()
   }
 });
 
+test("checks the upstream pause again after an earlier reservation becomes durable", async () => {
+  const upstream = vi.fn<typeof fetch>(async () => new Response(null, { status: 429 }));
+  vi.stubGlobal("fetch", upstream);
+  const entries = new Map<string, { requests: number[]; pausedUntil: number }>();
+  let flushEarlier = () => {};
+  const pendingFlush = new Promise<void>((resolve) => {
+    flushEarlier = resolve;
+  });
+  const sync = vi.fn(async () => {}).mockReturnValueOnce(pendingFlush);
+  const actor = new OpenFoodFactsLive({
+    storage: {
+      kv: { get: (key) => entries.get(key), put: (key, value) => entries.set(key, value) },
+      sync,
+    },
+  });
+  const earlier = actor.fetch(new Request("https://off-live.internal/1234"));
+  try {
+    const later = await actor.fetch(new Request("https://off-live.internal/5678"));
+    expect(later.status).toBe(429);
+    flushEarlier();
+    expect((await earlier).status).toBe(429);
+    expect(upstream).toHaveBeenCalledOnce();
+  } finally {
+    flushEarlier();
+    await earlier;
+    vi.unstubAllGlobals();
+  }
+});
+
 test("does not expose internal index objects or respond to write methods", async () => {
   const { env, read, release } = await prepare();
   const hidden = await worker.fetch(new Request(`${origin}/${prefix}/lookup/${release}.json`), env);

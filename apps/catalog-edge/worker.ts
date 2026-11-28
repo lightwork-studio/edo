@@ -124,6 +124,9 @@ export class OpenFoodFactsLive {
         await storage.sync();
         return dispatchBy;
       },
+      canDispatch(at) {
+        return at >= readBudget().pausedUntil;
+      },
       async pause(until) {
         const budget = readBudget();
         storage.kv.put(quotaKey, { ...budget, pausedUntil: Math.max(budget.pausedUntil, until) });
