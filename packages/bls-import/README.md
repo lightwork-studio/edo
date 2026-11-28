@@ -8,6 +8,12 @@ pnpm --filter @edo/bls-import run import /absolute/path/to/BLS_4_0_2025_DE.zip /
 
 The importer verifies the reviewed archive checksum and requires 7,140 foods. A successful import publishes a standalone SQLite file in `bls/artifacts` and its manifest in `bls/active.json` under the catalog root.
 
+Run **Rebuild reviewed BLS catalog** on `main` in GitHub Actions to replay the
+pinned download with the toolchain used for the mobile seed. A successful run
+matches the bundled SQLite file byte for byte and uploads the validated
+`bls-4.0-reviewed` artifact with its manifest and attribution. Use the normal
+catalog review and publication steps when adopting a new publisher release.
+
 The [mobile seed](../../apps/mobile/assets/bls.sqlite) comes from the pinned release. Its
 SHA-256 is `de019d3c43f8836e678d6eb32584ba1280fc2b0fe9c2ee6fb033af73c17cdf05`.
 The seed was generated with Node.js 24.22.3 and SQLite 3.54.1.
