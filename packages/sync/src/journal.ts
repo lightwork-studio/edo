@@ -274,6 +274,11 @@ export interface BlockedSyncReview {
   readonly pulled: Change | null;
 }
 
+interface BlockedSyncRecord {
+  readonly key: RecordKey;
+  readonly status: NonNullable<OutboxRecord["blocked"]>["result"]["status"];
+}
+
 function orderedJson(content: unknown): string {
   return JSON.stringify(content, (_key, value: unknown) => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
@@ -587,6 +592,41 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           page.cursor,
         );
         requireActiveSession(session);
+      });
+    },
+    /** Discover blocked records without passing any record content to the list caller. */
+    blockedRecords(
+      after: RecordKey | null = null,
+      limit = 50,
+    ): {
+      readonly records: readonly BlockedSyncRecord[];
+      readonly next: RecordKey | null;
+    } {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        throw new RangeError("Invalid blocked record page size");
+      }
+      return inspect(() => {
+        const rows = db.all(
+          `SELECT kind, id, json_extract(content, '$.blocked.result.status') AS status
+           FROM edo_sync_outbox
+           WHERE (kind, id) > (?, ?) AND json_type(content, '$.blocked') = 'object'
+           ORDER BY kind, id LIMIT ?`,
+          after?.kind ?? "",
+          after?.id ?? "",
+          limit + 1,
+        );
+        const records = rows.slice(0, limit).map<BlockedSyncRecord>(({ kind, id, status }) => {
+          if (
+            typeof kind !== "string" ||
+            !isKnownRecordKind(kind) ||
+            typeof id !== "string" ||
+            (status !== "conflict" && status !== "rejected")
+          ) {
+            throw new Error("Invalid blocked sync record");
+          }
+          return { key: { kind, id }, status };
+        });
+        return { records, next: rows.length > limit ? (records.at(-1)?.key ?? null) : null };
       });
     },
     /** Read the values for a review together, including edits queued after the refusal. */

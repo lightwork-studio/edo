@@ -62,6 +62,106 @@ function diary(file: string, fresh = true) {
   };
 }
 
+test("pages only persistent refusals and lets a reopened diary review each record", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "edo-blocked-sync-records-"));
+  try {
+    const filename = join(directory, "phone.sqlite");
+    const first = { kind: "meal", id: "group-first" };
+    const second = { kind: "weigh-in", id: "group-second" };
+    const retrying = { kind: "weigh-in", id: "retryable" };
+    const pending = { kind: "weigh-in", id: "pending" };
+    const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+    const onAccount = { ...first, state: "live", revision: 1, content: { id: first.id } };
+    const client = createSyncClient({
+      origin: "https://example.test",
+      authorization: () => "Bearer synthetic",
+      fetch: async (url) => {
+        if (String(url).endsWith("/hello")) {
+          return Response.json({
+            ...scope,
+            revision: 1,
+            restoredFrom: null,
+            features: ["write-records"],
+          });
+        }
+        if (String(url).endsWith("/pull")) {
+          return Response.json({ ...scope, cursor: 1, hasMore: false, changes: [onAccount] });
+        }
+        return Response.json({
+          ...scope,
+          results: [
+            {
+              submissionId: first.id,
+              status: "conflict",
+              reason: "exists",
+              current: onAccount,
+            },
+            {
+              submissionId: second.id,
+              status: "rejected",
+              code: "invalid-content",
+              message: "Fixture rejected",
+            },
+            {
+              submissionId: retrying.id,
+              status: "retryable",
+              reason: "temporarily-unavailable",
+            },
+          ],
+        });
+      },
+    });
+    {
+      using source = diary(filename);
+      expect(source.journal.blockedRecords()).toEqual({ records: [], next: null });
+      const session = await client.connect();
+      source.journal.bind(session);
+      for (const record of [retrying, second, first]) {
+        source.journal.commitLocal(
+          record,
+          { op: "put", submissionId: record.id, content: { id: record.id, secret: "example" } },
+          () => undefined,
+        );
+      }
+      const receipt = await client.push(session, source.journal.prepare(session));
+      source.journal.applyResults(session, receipt, () => undefined);
+      source.journal.commitLocal(
+        pending,
+        { op: "put", submissionId: pending.id, content: { id: pending.id } },
+        () => undefined,
+      );
+      source.journal.commitLocal(
+        first,
+        { op: "put", submissionId: "later-device-edit", content: { id: first.id } },
+        () => undefined,
+      );
+    }
+    using open = diary(filename, false);
+    const page = open.journal.blockedRecords(null, 1);
+    expect(page).toEqual({ records: [{ key: first, status: "conflict" }], next: first });
+    expect(open.journal.blockedRecords(page.next, 1)).toEqual({
+      records: [{ key: second, status: "rejected" }],
+      next: null,
+    });
+    expect(open.journal.blockedRecords(second, 1)).toEqual({ records: [], next: null });
+    expect(() => open.journal.blockedRecords(null, 0)).toThrow(RangeError);
+    expect(() => open.journal.blockedRecords(null, 101)).toThrow(RangeError);
+    const session = await client.connect(open.journal.history() ?? undefined);
+    open.journal.bind(session);
+    open.journal.applyPage(session, 0, await client.pull(session, 0), () => undefined);
+    const review = open.journal.blockedReview(first);
+    if (!review) throw new Error("Expected the refusal to survive reopening");
+    expect(review.device.submissionId).toBe("later-device-edit");
+    open.journal.retryReviewed(review, "reviewed-retry");
+    expect(open.journal.blockedRecords()).toEqual({
+      records: [{ key: second, status: "rejected" }],
+      next: null,
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("local edits roll back with failed queue writes", async () => {
   using local = diary(":memory:");
   const session = await candidateSession();
