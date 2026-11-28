@@ -44,8 +44,10 @@ jobs:
           device=$(xcrun simctl list devices available -j | node --input-type=module -e '
             import { readFileSync } from "node:fs";
             const { devices } = JSON.parse(readFileSync(0, "utf8"));
-            const iphone = Object.values(devices).flat().find(({ name }) => name.startsWith("iPhone"));
-            if (!iphone) throw new Error("The runner has no available iPhone simulator");
+            const runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-5";
+            const iphone = (devices[runtime] ?? []).find(({ name }) => name === "iPhone 17");
+            if (!iphone) throw new Error("The runner has no iPhone 17 with iOS 26.5");
+            console.error("Testing iOS 26.5 on " + iphone.name);
             console.log(iphone.udid);
           ')
           xcrun simctl bootstatus "$device" -b
