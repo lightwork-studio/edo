@@ -86,12 +86,23 @@ export function FavoriteFoodList({
     result.diary === diary &&
     result.today === today &&
     result.language === language;
+  const showCacheRetry =
+    ready &&
+    (cache === "error" || result.resolved.packagedCacheFailed) &&
+    result.resolved.fromDiary.size > 0 &&
+    ids.every((id) => id.provider !== "open-food-facts" || result.resolved.byId.has(foodKey(id)));
   return (
     <>
       <Text accessibilityRole="header" style={styles.title}>
         {t.favorites}
       </Text>
       {!ready && <Notice text={t.loading} pending />}
+      {showCacheRetry && (
+        <Notice
+          text={t.favoriteCacheUnavailable}
+          action={{ label: t.retry, onPress: () => onRetry("open-food-facts") }}
+        />
+      )}
       {ready &&
         ids.map((id) => {
           const key = foodKey(id);

@@ -19,11 +19,12 @@ function addRecentPackagedFavorites(
   const missing = new Set(
     sourceIds.filter((id) => !byId.has(foodKey({ provider: "open-food-facts", sourceId: id }))),
   );
+  if (!missing.size) return false;
   let unreadableDay = false;
+  const latest = new Map<string, { food: Food; occurredAt: number }>();
+  // A later local date can precede an older one in real time after travel.
   for (const day of recentPackagedDays(today)) {
-    if (!missing.size) break;
     try {
-      const latest = new Map<string, { food: Food; occurredAt: number }>();
       for (const { items, occurredAt } of diary.listMeals(day)) {
         for (const { food } of items) {
           const { provider, sourceId } = food.id;
@@ -33,17 +34,16 @@ function addRecentPackagedFavorites(
             latest.set(sourceId, { food, occurredAt });
         }
       }
-      for (const [sourceId, { food }] of latest) {
-        const key = foodKey(food.id);
-        byId.set(key, food);
-        fromDiary.add(key);
-        missing.delete(sourceId);
-      }
     } catch {
       unreadableDay = true;
     }
   }
-  return unreadableDay && missing.size > 0;
+  for (const { food } of latest.values()) {
+    const key = foodKey(food.id);
+    byId.set(key, food);
+    fromDiary.add(key);
+  }
+  return unreadableDay && latest.size < missing.size;
 }
 
 export async function resolveFavoriteFoods({
@@ -65,11 +65,13 @@ export async function resolveFavoriteFoods({
 }): Promise<{
   byId: ReadonlyMap<string, Food>;
   fromDiary: ReadonlySet<string>;
+  packagedCacheFailed: boolean;
   failedProviders: ReadonlySet<FoodId["provider"]>;
 }> {
   const byId = new Map(localFoods.map((food) => [foodKey(food.id), food]));
   const fromDiary = new Set<string>();
   const failedProviders = new Set<FoodId["provider"]>();
+  let packagedCacheFailed = false;
   const offIds = ids
     .filter(({ provider }) => provider === "open-food-facts")
     .map(({ sourceId }) => sourceId);
@@ -80,6 +82,7 @@ export async function resolveFavoriteFoods({
       byId.set(foodKey(food.id), food);
     }
   } catch {
+    packagedCacheFailed = true;
     failedProviders.add("open-food-facts");
   }
   if (recentDiary && addRecentPackagedFavorites(recentDiary, offIds, byId, fromDiary)) {
@@ -95,5 +98,5 @@ export async function resolveFavoriteFoods({
       failedProviders.add("bls");
     }
   }
-  return { byId, fromDiary, failedProviders };
+  return { byId, fromDiary, packagedCacheFailed, failedProviders };
 }

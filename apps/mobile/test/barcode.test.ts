@@ -673,6 +673,7 @@ it("offers the last captured favorite after the disposable catalog cache is lost
   const fromCapturedMeal = await resolveFavoriteFoods(args);
   expect(fromCapturedMeal.byId).toEqual(new Map([[key, latest]]));
   expect(fromCapturedMeal.fromDiary).toEqual(new Set([key]));
+  expect(fromCapturedMeal.packagedCacheFailed).toBe(false);
   expect(fromCapturedMeal.failedProviders).toEqual(new Set());
   expect(reopened.exportPrivateArchive()).toBe(before);
   expect(cache.findByIds([latest.id.sourceId], 100)).toEqual([]);
@@ -719,5 +720,57 @@ it("can use a favorite from a readable diary day when another day and the cache 
   });
   expect(resolved.byId.get(foodKey(food.id))).toEqual(food);
   expect(resolved.fromDiary).toEqual(new Set([foodKey(food.id)]));
+  expect(resolved.packagedCacheFailed).toBe(true);
   expect(resolved.failedProviders.has("open-food-facts")).toBe(true);
+});
+
+it("chooses the latest occurrence when the favorite crosses the date line", async () => {
+  using db = new DatabaseSync(":memory:");
+  const diary = await openDiary({
+    connection: testConnection(db),
+    async backupBeforeMigration() {
+      throw new Error("The test diary is blank");
+    },
+  });
+  const today = "2026-11-27";
+  const tokyo = foodForPackagedProduct(product);
+  const honolulu = {
+    ...tokyo,
+    release: "later-across-date-line",
+    nutrition: { ...tokyo.nutrition, nutrients: { ...tokyo.nutrition.nutrients, kcal: 65.5 } },
+  };
+  const records = [
+    {
+      city: "tokyo",
+      localDay: "2026-11-28",
+      occurredAt: Date.parse("2026-11-28T01:00:00+09:00"),
+      utcOffsetMinutes: 540,
+      food: tokyo,
+    },
+    {
+      city: "honolulu",
+      localDay: today,
+      occurredAt: Date.parse("2026-11-27T14:00:00-10:00"),
+      utcOffsetMinutes: -600,
+      food: honolulu,
+    },
+  ];
+  for (const { city, food, ...timing } of records) {
+    diary.saveMeal({
+      id: city,
+      ...timing,
+      items: [createDiaryItem(`item-${city}`, food, { amount: 100, unit: "ml" })],
+    });
+  }
+  diary.setFavorite(product.id, true);
+  const result = await resolveFavoriteFoods({
+    ids: diary.listFavorites(),
+    localFoods: [],
+    catalog: null,
+    cache: null,
+    language: "en",
+    accessedAt: 100,
+    recentDiary: { diary, today },
+  });
+  expect(result.byId.get(foodKey(product.id))).toEqual(honolulu);
 });
