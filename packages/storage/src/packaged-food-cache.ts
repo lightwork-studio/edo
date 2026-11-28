@@ -418,7 +418,6 @@ export function openPackagedFoodCache(
       if (
         !key ||
         ids.length === 0 ||
-        ids.length > 100 ||
         new Set(ids).size !== ids.length ||
         products.some((product) => normalizeOpenFoodFactsBarcode(product.barcode) !== key)
       ) {

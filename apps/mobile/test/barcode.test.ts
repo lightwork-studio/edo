@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createDiaryItem, type PackagedFood } from "@edo/core";
 import { openDiary, openPackagedFoodCache, type SqliteConnection } from "@edo/storage";
@@ -233,6 +236,59 @@ it("keeps a known barcode available when a response is too large or has duplicat
   }
   const limited = async () => jsonResponse({ status: "rate-limited" }, 429);
   await expect(lookupPackagedFood({ ...input, request: limited })).resolves.toEqual(expected);
+});
+
+it("keeps a complete barcode group with over 100 products available offline", async () => {
+  const aliasBarcode = `0${product.barcode}`;
+  const aliases = Array.from({ length: 100 }, (_, position) => ({
+    ...product,
+    id: { ...product.id, sourceId: `candidate-${String(position).padStart(3, "0")}` },
+    name: `Juice variant ${position + 1}`,
+    barcode: aliasBarcode,
+  }));
+  const retired = { ...product, id: { ...product.id, sourceId: "retired" } };
+  const products = [product, ...aliases];
+  const request = vi.fn(async () =>
+    jsonResponse(
+      { status: "found", source: "catalog", releaseManifestSha256: "a".repeat(64), products },
+      200,
+    ),
+  );
+  const input = {
+    code: product.barcode,
+    origin: "https://example.test",
+    keep: () => [retired.id.sourceId],
+    now: () => 8 * 86400000,
+    signal: new AbortController().signal,
+    request,
+  };
+  const directory = await mkdtemp(join(tmpdir(), "edo-barcode-groups-"));
+  try {
+    const filename = join(directory, "cache.sqlite");
+    {
+      using db = new DatabaseSync(filename);
+      const cache = openPackagedFoodCache(testConnection(db));
+      cache.save([retired], 0, []);
+      await expect(lookupPackagedFood({ ...input, cache })).resolves.toEqual({
+        status: "found",
+        products,
+        cached: false,
+      });
+    }
+    using db = new DatabaseSync(filename);
+    const cache = openPackagedFoodCache(testConnection(db));
+    await expect(lookupPackagedFood({ ...input, origin: null, cache })).resolves.toEqual({
+      status: "found",
+      products,
+      cached: true,
+    });
+    expect(cache.findByIds([retired.id.sourceId], input.now())).toMatchObject([
+      { product: retired },
+    ]);
+    expect(request).toHaveBeenCalledTimes(1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 it("refreshes only the selected source and keeps both diary snapshots after cache eviction", async () => {

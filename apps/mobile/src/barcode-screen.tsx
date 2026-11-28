@@ -19,6 +19,7 @@ import { colors, DetailHeader, displayNumber, Notice, nutrientValue, styles } fr
 const productCodes: BarcodeSettings = {
   barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "itf14"],
 };
+const candidatePageSize = 100;
 const basisLabels = {
   "per-100-g": "per100g",
   "per-100-ml": "per100ml",
@@ -229,6 +230,7 @@ function BarcodeResults({
   onSearch: () => void;
 }) {
   const [showLicenseUrl, setShowLicenseUrl] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(candidatePageSize);
   if (result.status !== "found") {
     const copy = {
       invalid: t.invalidBarcode,
@@ -252,7 +254,7 @@ function BarcodeResults({
         </Text>
       )}
       {result.cached && <Text style={styles.meta}>{t.barcodeCached}</Text>}
-      {result.products.map((food) => (
+      {result.products.slice(0, visibleCount).map((food) => (
         <Pressable
           key={food.id.sourceId}
           accessibilityRole="button"
@@ -269,6 +271,15 @@ function BarcodeResults({
           </Text>
         </Pressable>
       ))}
+      {visibleCount < result.products.length && (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setVisibleCount((count) => count + candidatePageSize)}
+          style={local.license}
+        >
+          <Text style={styles.actionText}>{t.moreBarcodeMatches}</Text>
+        </Pressable>
+      )}
       <View style={local.credit}>
         <Text style={styles.meta}>{t.openFoodFactsCredit}</Text>
         {showLicenseUrl ? (

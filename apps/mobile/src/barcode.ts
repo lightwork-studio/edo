@@ -116,8 +116,7 @@ function readProducts(value: unknown, key: string): PackagedFood[] | null {
     typeof value !== "object" ||
     !("products" in value) ||
     !Array.isArray(value.products) ||
-    value.products.length < 1 ||
-    value.products.length > 100
+    value.products.length === 0
   ) {
     return null;
   }
