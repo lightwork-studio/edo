@@ -10,7 +10,7 @@ final class ArchiveSmokeUITests: XCTestCase {
         try openDiaryFiles()
 
         try tap("Choose archive", in: [app])
-        try tap("Cancel", in: [app])
+        try tapPicker("Cancel")
         try waitFor("Share diary archive", in: [app])
         print("Cancelled the iOS picker and returned to Diary files")
 
@@ -47,26 +47,35 @@ final class ArchiveSmokeUITests: XCTestCase {
 
     private func chooseArchive(_ name: String) throws {
         try tap("Choose archive", in: [app])
-        // The document picker is presented inside Edo. The standalone Files app need not run.
-        let providers = [app]
         let fileNames = [name, name + ".json"]
-        if let archive = element(fileNames, in: providers, timeout: 3, hittable: true) {
-            archive.tap()
+        if let archive = element(fileNames, in: [app], timeout: 3, hittable: false, picker: true) {
+            tapPickerElement(archive)
             return
         }
-        if element(["On My iPhone"], in: providers, timeout: 2, hittable: true) == nil {
+        if element(["On My iPhone"], in: [app], timeout: 2, hittable: false, picker: true) == nil {
             // The picker may initially show Recents or an iCloud Drive folder.
-            try tap("Browse", in: providers)
+            try tapPicker("Browse")
         }
-        if element(["Archive Fixtures"], in: providers, timeout: 2, hittable: true) == nil {
-            try tap("On My iPhone", in: providers)
+        if element(["Archive Fixtures"], in: [app], timeout: 2, hittable: false, picker: true) == nil {
+            try tapPicker("On My iPhone")
         }
-        if let archive = element(fileNames, in: providers, timeout: 3, hittable: true) {
-            archive.tap()
+        if let archive = element(fileNames, in: [app], timeout: 3, hittable: false, picker: true) {
+            tapPickerElement(archive)
             return
         }
-        try tap("Archive Fixtures", in: providers)
-        try locate(fileNames, in: providers, hittable: true).tap()
+        try tapPicker("Archive Fixtures")
+        tapPickerElement(try locate(fileNames, in: [app], hittable: false, picker: true))
+    }
+
+    private func tapPicker(_ label: String) throws {
+        tapPickerElement(try locate([label], in: [app], hittable: false, picker: true))
+    }
+
+    private func tapPickerElement(_ element: XCUIElement) {
+        // The remote view exposes the rendered frame even when XCTest cannot hit-test it.
+        let frame = element.frame
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
     }
 
     private func tap(_ label: String, in applications: [XCUIApplication]) throws {
@@ -78,25 +87,35 @@ final class ArchiveSmokeUITests: XCTestCase {
     }
 
     private func locate(
-        _ labels: [String], in applications: [XCUIApplication], hittable: Bool
+        _ labels: [String], in applications: [XCUIApplication], hittable: Bool,
+        picker: Bool = false
     ) throws -> XCUIElement {
-        let match = element(labels, in: applications, timeout: 25, hittable: hittable)
+        let match = element(labels, in: applications, timeout: 25, hittable: hittable, picker: picker)
         let hierarchy = match == nil ? applications.map(\.debugDescription).joined(separator: "\n") : ""
         return try XCTUnwrap(match, "Expected \(labels). Accessibility hierarchy:\n\(hierarchy)")
     }
 
     private func element(
-        _ labels: [String], in applications: [XCUIApplication], timeout: TimeInterval, hittable: Bool
+        _ labels: [String], in applications: [XCUIApplication], timeout: TimeInterval,
+        hittable: Bool, picker: Bool = false
     ) -> XCUIElement? {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
             for application in applications {
                 for label in labels {
-                    let matches = application.descendants(matching: .any).matching(identifier: label)
+                    let predicate = NSPredicate(format: "label == %@ OR identifier == %@", label, label)
+                    let matches = application.descendants(matching: .any).matching(predicate)
                     for match in matches.allElementsBoundByIndex {
-                        if match.exists && (!hittable || match.isHittable) {
-                            return match
+                        guard match.exists else { continue }
+                        if picker {
+                            let frame = match.frame
+                            guard !frame.isEmpty,
+                                  application.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+                            else { continue }
+                        } else if hittable && (!match.isHittable || !match.isEnabled) {
+                            continue
                         }
+                        return match
                     }
                 }
             }
