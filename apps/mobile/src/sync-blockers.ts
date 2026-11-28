@@ -1,4 +1,5 @@
-import { type DiaryMeal, type openDiary, readMealSnapshot } from "@edo/storage";
+import type { Recipe } from "@edo/core";
+import { type DiaryMeal, type openDiary, readMealSnapshot, readRecipeSnapshot } from "@edo/storage";
 
 type Diary = Awaited<ReturnType<typeof openDiary>>;
 export type BlockerJournal = Pick<
@@ -27,6 +28,10 @@ export type SyncBlocker = {
     readonly phone: MealReviewSide;
     readonly account: MealReviewSide;
   };
+  readonly recipe?: {
+    readonly phone: RecipeReviewSide;
+    readonly account: RecipeReviewSide;
+  };
 };
 
 type ReviewSide<T> =
@@ -40,6 +45,7 @@ export type WeighInReviewSide = ReviewSide<{
 }>;
 
 export type MealReviewSide = ReviewSide<{ readonly meal: Omit<DiaryMeal, "id"> }>;
+export type RecipeReviewSide = ReviewSide<{ readonly recipe: Omit<Recipe, "id"> }>;
 
 export function reviewQuantityFormatter(locale: string): (amount: number) => string {
   const formatter = new Intl.NumberFormat(locale);
@@ -47,12 +53,12 @@ export function reviewQuantityFormatter(locale: string): (amount: number) => str
   return (amount) => amount.toString().replace(".", decimal);
 }
 
-const mealReviewPageSize = 20;
+const reviewPageSize = 20;
 
-export function mealReviewPage<T>(items: readonly T[], page: number) {
+export function reviewItemPage<T>(items: readonly T[], page: number) {
   const total = items.length;
-  const start = page * mealReviewPageSize;
-  const end = Math.min(start + mealReviewPageSize, total);
+  const start = page * reviewPageSize;
+  const end = Math.min(start + reviewPageSize, total);
   return { items: items.slice(start, end), total, start, end };
 }
 
@@ -78,14 +84,28 @@ function weighInValues(content: Record<string, unknown>, id: string): WeighInRev
   return { state: "live", kg, localDay, occurredAt };
 }
 
-function mealValues(content: Record<string, unknown>, id: string): MealReviewSide {
-  if (content.id !== id) return { state: "unavailable" };
+function capturedValues<T extends { readonly id: string }>(
+  content: Record<string, unknown>,
+  id: string,
+  read: (input: unknown) => T,
+): Omit<T, "id"> | null {
+  if (content.id !== id) return null;
   try {
-    const { id: _mealId, ...meal } = readMealSnapshot(content);
-    return { state: "live", meal };
+    const { id: snapshotId, ...snapshot } = read(content);
+    return snapshotId === id ? snapshot : null;
   } catch {
-    return { state: "unavailable" };
+    return null;
   }
+}
+
+function mealValues(content: Record<string, unknown>, id: string): MealReviewSide {
+  const meal = capturedValues(content, id, readMealSnapshot);
+  return meal ? { state: "live", meal } : { state: "unavailable" };
+}
+
+function recipeValues(content: Record<string, unknown>, id: string): RecipeReviewSide {
+  const recipe = capturedValues(content, id, readRecipeSnapshot);
+  return recipe ? { state: "live", recipe } : { state: "unavailable" };
 }
 
 function latestAccountSide<T>(
@@ -155,6 +175,12 @@ export function readSyncBlocker(
         meal: {
           phone: device.op === "put" ? mealValues(device.content, key.id) : { state: "deleted" },
           account: latestAccountSide(review, key, mealValues),
+        },
+      }),
+      ...(key.kind === "recipe" && {
+        recipe: {
+          phone: device.op === "put" ? recipeValues(device.content, key.id) : { state: "deleted" },
+          account: latestAccountSide(review, key, recipeValues),
         },
       }),
     };

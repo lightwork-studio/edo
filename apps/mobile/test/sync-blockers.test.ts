@@ -6,15 +6,15 @@ import { createDiaryItem } from "@edo/core";
 import { openDiary, type SqliteConnection } from "@edo/storage";
 import { expect, it } from "vitest";
 import {
-  mealReviewPage,
   readSyncBlocker,
+  reviewItemPage,
   reviewQuantityFormatter,
   syncBlockerNotice,
 } from "../src/sync-blockers";
 
 it("bounds each captured meal page and reaches a partial final page without repeating items", () => {
   const items = Array.from({ length: 61 }, (_, index) => ({ id: `item-${index + 1}` }));
-  const pages = [0, 1, 2, 3].map((page) => mealReviewPage(items, page));
+  const pages = [0, 1, 2, 3].map((page) => reviewItemPage(items, page));
   expect(pages.map(({ start, end }) => [start, end])).toEqual([
     [0, 20],
     [20, 40],
@@ -23,7 +23,7 @@ it("bounds each captured meal page and reaches a partial final page without repe
   ]);
   expect(pages.map(({ items }) => items.length)).toEqual([20, 20, 20, 1]);
   expect(pages.flatMap(({ items }) => items)).toEqual(items);
-  expect(mealReviewPage([], 0)).toEqual({ items: [], total: 0, start: 0, end: 0 });
+  expect(reviewItemPage([], 0)).toEqual({ items: [], total: 0, start: 0, end: 0 });
 });
 
 it("keeps weight precision when the locale uses a different decimal separator or numeral glyph", () => {
@@ -361,4 +361,120 @@ it("shows a recoverable status when reading the journal fails", async () => {
     ALTER TABLE edo_sync_outbox RENAME TO unreadable_test_outbox`);
   expect(syncBlockerNotice(journal)).toBe("error");
   expect(readSyncBlocker(journal, null)).toEqual({ state: "error", next: null });
+});
+
+it("reviews captured recipe yields and ingredients without changing the saved conflict", async () => {
+  using db = new DatabaseSync(":memory:");
+  const {
+    sync: { journal },
+  } = await open(db);
+  const key = { kind: "recipe", id: "captured-recipe" };
+  const food = {
+    id: { provider: "bls", sourceId: "fixture-oats" },
+    name: "Captured oats",
+    release: "recipe-fixture",
+    preparation: "raw",
+    nutrition: {
+      basis: "per-100-g",
+      nutrients: { kcal: 100, proteinG: 0, availableCarbohydratesG: null, fatG: 1, fiberG: 2 },
+    },
+  } as const;
+  const phoneItem = createDiaryItem("recipe-item-1", food, { amount: 123.125, unit: "g" });
+  const accountItem = createDiaryItem("recipe-item-1", food, { amount: 89.25, unit: "g" });
+  const phoneIngredients = [{ ...phoneItem, nutrients: { ...phoneItem.nutrients, kcal: 128.125 } }];
+  const accountIngredients = [
+    { ...accountItem, nutrients: { ...accountItem.nutrients, kcal: null } },
+  ];
+  const phone = {
+    id: key.id,
+    name: "Phone oats",
+    servings: 2.125,
+    cookedWeightG: 458.002,
+    ingredients: phoneIngredients.map((item) => ({ ...item, future: "opaque phone ingredient" })),
+    future: "opaque phone recipe",
+  };
+  const account = {
+    ...key,
+    revision: 2,
+    state: "live",
+    content: {
+      id: key.id,
+      name: "Account oats",
+      servings: 1.875,
+      ingredients: accountIngredients.map((item) => ({
+        ...item,
+        future: "opaque account ingredient",
+      })),
+      future: "opaque account recipe",
+    },
+  };
+  db.exec(`INSERT INTO edo_sync_binding
+    VALUES (1, 'https://example.test', 'fixture-account', 'fixture-lineage', 2, 2)`);
+  const blocked = {
+    key,
+    baseRevision: 1,
+    base: null,
+    pending: { op: "put", submissionId: "latest", content: phone },
+    attempt: null,
+    blocked: {
+      submission: {
+        ...key,
+        baseRevision: 1,
+        submissionId: "older",
+        op: "put",
+        content: { ...phone, name: "Older phone name" },
+      },
+      result: {
+        submissionId: "older",
+        status: "conflict",
+        reason: "stale",
+        current: { ...key, revision: 2, state: "unavailable" },
+      },
+    },
+  };
+  db.prepare("INSERT INTO edo_sync_outbox VALUES (?, ?, NULL, NULL, ?)").run(
+    key.kind,
+    key.id,
+    JSON.stringify(blocked),
+  );
+  db.prepare("INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)").run(
+    key.kind,
+    key.id,
+    account.revision,
+    JSON.stringify(account),
+  );
+
+  const before = db.prepare("SELECT content FROM edo_sync_outbox").get();
+  db.exec("PRAGMA query_only = ON");
+  const review = readSyncBlocker(journal, null);
+  expect(review).toMatchObject({ state: "blocked", kind: "recipe" });
+  if (review.state !== "blocked") throw new Error("Expected a recipe conflict");
+  expect(review.recipe).toEqual({
+    phone: {
+      state: "live",
+      recipe: {
+        name: "Phone oats",
+        servings: 2.125,
+        cookedWeightG: 458.002,
+        ingredients: phoneIngredients,
+      },
+    },
+    account: {
+      state: "live",
+      recipe: { name: "Account oats", servings: 1.875, ingredients: accountIngredients },
+    },
+  });
+  expect(db.prepare("SELECT content FROM edo_sync_outbox").get()).toEqual(before);
+  db.exec("PRAGMA query_only = OFF");
+
+  const replace = db.prepare("UPDATE edo_sync_remote SET revision = ?, content = ?");
+  const impossibleYield = { ...account, content: { ...account.content, cookedWeightG: -1 } };
+  replace.run(2, JSON.stringify(impossibleYield));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    recipe: { account: { state: "unavailable" } },
+  });
+  replace.run(3, JSON.stringify({ ...key, revision: 3, state: "deleted" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    recipe: { account: { state: "deleted" } },
+  });
 });
