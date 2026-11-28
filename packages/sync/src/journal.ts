@@ -373,6 +373,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       return transact(() => {
         const binding = checkSession(session);
         const { results } = authenticatedResponseSnapshot(response, session);
+        serverForSession(session);
         let revision = binding.revision;
         for (const result of results) {
           const row = db.get(
@@ -419,6 +420,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           if (result.status === "conflict" && result.current)
             revision = Math.max(revision, result.current.revision);
         }
+        serverForSession(session);
         db.run("UPDATE edo_sync_binding SET observed_revision = ?", revision);
       });
     },
@@ -456,6 +458,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           requireSynchronousWrite(applyRemote(change));
           saveRecord(db, projected);
         }
+        serverForSession(session);
         db.run(
           "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
           page.cursor,

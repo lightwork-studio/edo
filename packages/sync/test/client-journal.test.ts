@@ -257,7 +257,12 @@ test("the journal consumes the authenticated push and pull snapshots", async () 
           ],
         });
       }
-      return Response.json({ ...scope, cursor: 1, hasMore: false, changes: [change] });
+      const futureChange = {
+        ...change,
+        content: { ...change.content, futureValue: "fixture-negative-zero" },
+      };
+      const page = JSON.stringify({ ...scope, cursor: 1, hasMore: false, changes: [futureChange] });
+      return new Response(page.replace('"fixture-negative-zero"', "-0"));
     },
   });
   const session = await client.connect();
@@ -279,12 +284,19 @@ test("the journal consumes the authenticated push and pull snapshots", async () 
   peer.journal.bind(session);
   const page = await client.pull(session, 0);
   const changes = page.changes;
-  let reads = 0;
   Object.defineProperty(page, "changes", {
     enumerable: true,
-    get: () => (++reads === 1 ? changes : [{ ...change, content: { ...change.content, kg: 98 } }]),
+    get() {
+      Object.defineProperty(page, "changes", {
+        value: [{ ...change, content: { ...change.content, kg: 98 } }],
+      });
+      return changes;
+    },
   });
-  peer.journal.applyPage(session, 0, page, peer.receive);
+  peer.journal.applyPage(session, 0, page, (record) => {
+    expect(record.state === "live" && Object.is(record.content.futureValue, -0)).toBe(true);
+    peer.receive(record);
+  });
   expect(peer.get()).toBe(74);
   expect(peer.journal.history()).toMatchObject({ revision: 1, cursor: 1 });
 });
@@ -310,6 +322,72 @@ test("the journal refuses a response whose enumerable payload has changed", asyn
     expect.objectContaining({ code: "invalid-request" }),
   );
   expect(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+});
+
+test("the journal rolls back if response or projection code replaces its connection", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/hello")) {
+        return Response.json({
+          ...scope,
+          revision: 0,
+          restoredFrom: null,
+          features: ["write-records"],
+        });
+      }
+      if (url.endsWith("/push")) {
+        return Response.json({
+          ...scope,
+          results: [{ submissionId: "local", status: "accepted", revision: 1 }],
+        });
+      }
+      const change = { ...key, state: "live", revision: 1, content: edit("unused", 74).content };
+      return Response.json({ ...scope, cursor: 1, hasMore: false, changes: [change] });
+    },
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  local.journal.commitLocal(key, edit("local", 75), () => local.set(75));
+  const receipt = await client.push(session, local.journal.prepare(session));
+  let reconnected: ReturnType<typeof client.connect> | undefined;
+  Object.defineProperty(receipt, "toJSON", {
+    value: () => {
+      reconnected = client.connect();
+      return { ...receipt };
+    },
+  });
+  try {
+    expect
+      .soft(() => local.journal.applyResults(session, receipt, local.receive))
+      .toThrow(expect.objectContaining({ code: "update-required" }));
+  } finally {
+    await reconnected;
+  }
+  expect.soft(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+  expect.soft(local.journal.queued()[0]?.attempt?.submissionId).toBe("local");
+
+  const next = await client.connect();
+  using peer = diary(":memory:");
+  peer.journal.bind(next);
+  const page = await client.pull(next, 0);
+  try {
+    expect(() =>
+      peer.journal.applyPage(next, 0, page, (change) => {
+        peer.receive(change);
+        reconnected = client.connect();
+      }),
+    ).toThrow(expect.objectContaining({ code: "update-required" }));
+  } finally {
+    await reconnected;
+  }
+  expect(peer.get()).toBeNull();
+  expect(peer.journal.serverCopy(key)).toBeNull();
+  expect(peer.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
 });
 
 test("an unnegotiated session cannot bind a private diary", async () => {
