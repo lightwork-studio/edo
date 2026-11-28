@@ -3,7 +3,7 @@ import { type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { File } from "expo-file-system";
 import { moveAsync } from "expo-file-system/legacy";
 import { backupDatabaseAsync, deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
-import { localDay } from "./diary-view";
+import { addDays, localDay } from "./diary-view";
 import { connectionFor } from "./local-sqlite";
 
 const diaryName = "edo-diary.db";
@@ -79,12 +79,27 @@ async function openLocalDiaryConnection() {
     if (diary.listFavorites().some((id) => id.sourceId === fixture.id.sourceId)) {
       console.info("EDO_NATIVE_RECENT_FAVORITE_REOPENED");
     } else {
-      const now = new Date();
+      const day = localDay(new Date());
+      const earlier: Food = {
+        ...fixture,
+        name: "Older captured carrot juice",
+        nutrition: {
+          ...fixture.nutrition,
+          nutrients: { ...fixture.nutrition.nutrients, kcal: 80 },
+        },
+      };
+      diary.saveMeal({
+        id: "native-favorite-tokyo",
+        localDay: addDays(day, 1),
+        occurredAt: Date.parse(`${day}T16:00:00Z`),
+        utcOffsetMinutes: 540,
+        items: [createDiaryItem("native-favorite-item-tokyo", earlier, { amount: 50, unit: "g" })],
+      });
       diary.saveMeal({
         id: "native-favorite-meal",
-        localDay: localDay(now),
-        occurredAt: now.getTime(),
-        utcOffsetMinutes: -now.getTimezoneOffset(),
+        localDay: day,
+        occurredAt: Date.parse(`${addDays(day, 1)}T00:00:00Z`),
+        utcOffsetMinutes: -600,
         items: [createDiaryItem("native-favorite-item", fixture, { amount: 50, unit: "g" })],
       });
       diary.setFavorite(fixture.id, true);
