@@ -16,6 +16,8 @@ import {
   TargetRing,
 } from "./ui";
 
+const dayGap = 3;
+
 function WeightChart({ points, locale }: { points: WeightPoint[]; locale: string }) {
   const [width, setWidth] = useState(0);
   const measured = points.flatMap(({ measured, averageKg }) =>
@@ -254,7 +256,14 @@ export function ProgressScreen({
                 </Text>
               )}
             </View>
-            <ScrollView horizontal contentContainerStyle={local.week} style={local.weekScroller}>
+            <ScrollView
+              horizontal
+              contentContainerStyle={[
+                local.week,
+                { minWidth: summary.days.length * (dayWidth + dayGap) - dayGap },
+              ]}
+              style={local.weekScroller}
+            >
               {summary.days.map(({ day, nutrition, target }) => {
                 const rawKcal = nutrition?.kcal ?? null;
                 const kcal = rawKcal === null ? null : roundEnergyKcal(rawKcal);
@@ -441,7 +450,7 @@ const local = StyleSheet.create({
     justifyContent: "space-between",
   },
   day: { alignItems: "center", gap: 6, minWidth: 0 },
-  week: { flexGrow: 1, flexDirection: "row", gap: 3 },
+  week: { flexGrow: 1, flexDirection: "row", gap: dayGap },
   weekScroller: { flexGrow: 0 },
   weekDay: { flex: 1 },
   dayCaption: { ...styles.meta, fontSize: 11, maxWidth: "100%", textAlign: "center" },
