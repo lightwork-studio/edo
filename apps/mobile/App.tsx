@@ -80,7 +80,7 @@ type FoodSelection = SearchContext & { food: Food; fromCustomFoods?: boolean };
 type DeviceContext = { today: string; language: Language; locale: string };
 type Route =
   | { kind: "diary" }
-  | { kind: "sync-blockers" }
+  | { kind: "sync-blockers"; returnTo: "diary" | "progress" }
   | { kind: "progress" }
   | { kind: "weigh-in" }
   | { kind: "targets" }
@@ -196,10 +196,19 @@ function DiaryApp({
   const t = strings[language];
   const { diary } = connection;
   const cachedProducts = packagedCache.value === "error" ? null : packagedCache.value?.cache;
-  const syncNotice = useMemo(
-    () => (route.kind === "diary" ? syncBlockerNotice(diary.sync.journal) : "clear"),
-    [diary, route.kind],
+  const reviewFrom = route.kind === "diary" || route.kind === "progress" ? route.kind : null;
+  const syncNoticeState = useMemo(
+    () => (reviewFrom ? syncBlockerNotice(diary.sync.journal) : "clear"),
+    [diary, reviewFrom],
   );
+  const syncNotice =
+    reviewFrom && syncNoticeState !== "clear" ? (
+      <SyncBlockerNotice
+        state={syncNoticeState}
+        language={language}
+        onOpen={() => setRoute({ kind: "sync-blockers", returnTo: reviewFrom })}
+      />
+    ) : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Favorite writes invalidate the SQLite read.
   const favorites = useMemo(() => {
     if (route.kind !== "my-foods" && route.kind !== "add") return null;
@@ -284,6 +293,8 @@ function DiaryApp({
       });
     } else if (route.kind === "fddb-import") {
       setRoute({ kind: "archive" });
+    } else if (route.kind === "sync-blockers") {
+      setRoute({ kind: route.returnTo });
     } else if (route.kind === "weigh-in" || route.kind === "targets" || route.kind === "archive") {
       setRoute({ kind: "progress" });
     } else {
@@ -314,13 +325,7 @@ function DiaryApp({
         meals={meals}
         kcalTarget={readTarget(diary, day)?.target.kcal ?? null}
         feedback={feedback?.day === day ? t[feedback.kind] : null}
-        syncNotice={
-          <SyncBlockerNotice
-            state={syncNotice}
-            language={language}
-            onOpen={() => setRoute({ kind: "sync-blockers" })}
-          />
-        }
+        syncNotice={syncNotice}
         onDay={chooseDay}
         onWeek={(offset) => {
           const next = addDays(day, offset);
@@ -382,6 +387,7 @@ function DiaryApp({
         t={t}
         range={progressRange}
         savedDay={savedWeightDay}
+        syncNotice={syncNotice}
         onRange={setProgressRange}
         onBack={goBack}
         onTargets={() => setRoute({ kind: "targets" })}
