@@ -1,0 +1,54 @@
+name: FDDB iOS native build verification
+
+on:
+  push:
+    branches: [verify/native-fddb-ios-build]
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: Compile the iOS FDDB picker and verify its reader
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate iOS and install pods
+        working-directory: apps/mobile
+        run: |
+          pnpm exec expo prebuild --platform ios --no-install
+          pod install --project-directory=ios
+      - name: Boot an iPhone simulator
+        run: |
+          device=$(xcrun simctl list devices available -j | node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const { devices } = JSON.parse(readFileSync(0, "utf8"));
+            const model = devices["com.apple.CoreSimulator.SimRuntime.iOS-26-5"]
+              ?.find(({ name }) => name === "iPhone 17");
+            if (!model) throw new Error("No iPhone 17 running iOS 26.5");
+            console.log(model.udid);
+          ')
+          xcrun simctl bootstatus "$device" -b
+          echo "EDO_SIMULATOR=$device" >> "$GITHUB_ENV"
+      - name: Build the iOS simulator app
+        working-directory: apps/mobile/ios
+        run: |
+          xcodebuild -quiet -workspace Edo.xcworkspace -scheme Edo \
+            -configuration Release -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$EDO_SIMULATOR" \
+            -derivedDataPath "$RUNNER_TEMP/edo-ios" build
+      - name: Exercise the Swift document reader
+        run: |
+          module=apps/mobile/modules/edo-archive-picker
+          xcrun swiftc "$module/ios/BoundedArchiveReader.swift" "$module/tests/ios/main.swift" \
+            -o "$RUNNER_TEMP/edo-bounded-file-reader"
+          "$RUNNER_TEMP/edo-bounded-file-reader"
