@@ -1,4 +1,4 @@
-import { installSyncJournal } from "@edo/sync";
+import { installSyncJournalV5 } from "@edo/sync/journal-schema-v5";
 import { type DiarySqliteConnection, rollback } from "./sqlite.ts";
 
 type Migration = (db: DiarySqliteConnection) => void;
@@ -80,7 +80,7 @@ export const diaryMigrations: readonly Migration[] = [
       ) WITHOUT ROWID, STRICT;
     `);
   },
-  installSyncJournal,
+  installSyncJournalV5,
 ];
 
 function storageVersion(db: DiarySqliteConnection): number {

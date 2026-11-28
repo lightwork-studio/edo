@@ -1,0 +1,183 @@
+{
+  "format": "edo-diary",
+  "formatVersion": 2,
+  "meals": [
+    {
+      "id": "meal-1",
+      "localDay": "2026-10-31",
+      "occurredAt": 1793500200000,
+      "utcOffsetMinutes": -240,
+      "items": [
+        {
+          "id": "item-1",
+          "portion": {
+            "amount": 50,
+            "unit": "ml"
+          },
+          "food": {
+            "id": {
+              "provider": "open-food-facts",
+              "sourceId": "00012345"
+            },
+            "name": "Soy drink",
+            "release": "catalog-1",
+            "preparation": "as-sold",
+            "nutrition": {
+              "basis": "per-100-ml",
+              "nutrients": {
+                "kcal": 80,
+                "proteinG": 7,
+                "availableCarbohydratesG": 0,
+                "fatG": 3,
+                "fiberG": null
+              }
+            }
+          },
+          "nutrients": {
+            "kcal": 40,
+            "proteinG": 3.5,
+            "availableCarbohydratesG": 0,
+            "fatG": 1.5,
+            "fiberG": null
+          }
+        }
+      ]
+    }
+  ],
+  "customFoods": [
+    {
+      "id": {
+        "provider": "local",
+        "sourceId": "homemade-soy"
+      },
+      "name": "Homemade soy drink",
+      "release": null,
+      "preparation": "as-sold",
+      "nutrition": {
+        "basis": "per-100-ml",
+        "nutrients": {
+          "kcal": 80,
+          "proteinG": 7,
+          "availableCarbohydratesG": 0,
+          "fatG": 3,
+          "fiberG": null
+        }
+      }
+    }
+  ],
+  "recipes": [
+    {
+      "id": "recipe-1",
+      "name": "Synthetic soy recipe",
+      "ingredients": [
+        {
+          "id": "ingredient-1",
+          "portion": {
+            "amount": 240,
+            "unit": "ml"
+          },
+          "food": {
+            "id": {
+              "provider": "local",
+              "sourceId": "homemade-soy"
+            },
+            "name": "Homemade soy drink",
+            "release": null,
+            "preparation": "as-sold",
+            "nutrition": {
+              "basis": "per-100-ml",
+              "nutrients": {
+                "kcal": 80,
+                "proteinG": 7,
+                "availableCarbohydratesG": 0,
+                "fatG": 3,
+                "fiberG": null
+              }
+            }
+          },
+          "nutrients": {
+            "kcal": 192,
+            "proteinG": 16.8,
+            "availableCarbohydratesG": 0,
+            "fatG": 7.199999999999999,
+            "fiberG": null
+          }
+        }
+      ],
+      "servings": 2
+    }
+  ],
+  "mealTemplates": [
+    {
+      "id": "template-1",
+      "name": "Saved late snack",
+      "items": [
+        {
+          "id": "item-1",
+          "portion": {
+            "amount": 50,
+            "unit": "ml"
+          },
+          "food": {
+            "id": {
+              "provider": "open-food-facts",
+              "sourceId": "00012345"
+            },
+            "name": "Soy drink",
+            "release": "catalog-1",
+            "preparation": "as-sold",
+            "nutrition": {
+              "basis": "per-100-ml",
+              "nutrients": {
+                "kcal": 80,
+                "proteinG": 7,
+                "availableCarbohydratesG": 0,
+                "fatG": 3,
+                "fiberG": null
+              }
+            }
+          },
+          "nutrients": {
+            "kcal": 40,
+            "proteinG": 3.5,
+            "availableCarbohydratesG": 0,
+            "fatG": 1.5,
+            "fiberG": null
+          }
+        }
+      ]
+    }
+  ],
+  "favorites": [
+    {
+      "provider": "local",
+      "sourceId": "homemade-soy"
+    },
+    {
+      "provider": "open-food-facts",
+      "sourceId": "00012345"
+    }
+  ],
+  "weighIns": [
+    {
+      "id": "weight-1",
+      "localDay": "2026-10-31",
+      "occurredAt": 1793500200000,
+      "kg": 82.3
+    }
+  ],
+  "nutritionTargets": [
+    {
+      "id": "target-1",
+      "effectiveDay": "2026-10-31",
+      "configuredAt": 1793500200000,
+      "mode": "manual",
+      "target": {
+        "kcal": 2000,
+        "proteinG": 100,
+        "fatG": 80,
+        "availableCarbohydratesG": 220
+      }
+    }
+  ]
+}

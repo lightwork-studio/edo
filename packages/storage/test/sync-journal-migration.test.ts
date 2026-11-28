@@ -1,12 +1,16 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
-import { createDiaryItem, type DiaryMeal } from "@edo/core";
 import { type DiarySqliteConnection, type OpenDiaryOptions, openDiary } from "@edo/storage";
+import { createSyncClient, openSyncJournal } from "@edo/sync";
 import { afterEach, expect, test } from "vitest";
 import { diaryMigrations, migrateDiary } from "../src/migrations.ts";
 
+const v4Sql = readFileSync(new URL("./fixtures/diary-v4.sql", import.meta.url), "utf8");
+const v4Archive = JSON.parse(
+  readFileSync(new URL("./fixtures/diary-v4-archive.json", import.meta.url), "utf8"),
+);
 const directories: string[] = [];
 const connections: DatabaseSync[] = [];
 
@@ -26,88 +30,47 @@ function connection(db: DatabaseSync): DiarySqliteConnection {
   };
 }
 
-const meal: DiaryMeal = {
-  id: "meal-1",
-  localDay: "2026-10-31",
-  occurredAt: Date.parse("2026-11-01T02:30:00Z"),
-  utcOffsetMinutes: -240,
-  items: [
-    createDiaryItem(
-      "item-1",
-      {
-        id: { provider: "open-food-facts", sourceId: "00012345" },
-        release: "catalog-1",
-        name: "Soy drink",
-        preparation: "as-sold",
-        nutrition: {
-          basis: "per-100-ml",
-          nutrients: {
-            kcal: 80,
-            proteinG: 7,
-            availableCarbohydratesG: 0,
-            fatG: 3,
-            fiberG: null,
-          },
-        },
-      },
-      { amount: 50, unit: "ml" },
-    ),
-  ],
-};
+async function copyDatabase(sourcePath: string, copyPath: string) {
+  const source = new DatabaseSync(sourcePath, { readOnly: true });
+  try {
+    await backup(source, copyPath);
+  } finally {
+    source.close();
+  }
+}
 
-async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "edo-journal-migration-"));
-  directories.push(dir);
-  const path = join(dir, "diary.sqlite");
+function openFile(path: string, dir: string) {
   const db = new DatabaseSync(path);
   connections.push(db);
   const sqlite = connection(db);
-  await migrateDiary(
-    sqlite,
-    diaryMigrations.slice(0, 4),
-    async () => {
-      throw new Error("A new database has no prior diary to back up");
-    },
-    () => {},
-  );
-
-  sqlite.run(
-    "INSERT INTO diary_meals (id, local_day, occurred_at, utc_offset_minutes) VALUES (?, ?, ?, ?)",
-    meal.id,
-    meal.localDay,
-    meal.occurredAt,
-    meal.utcOffsetMinutes ?? null,
-  );
-  for (const [position, { id, ...snapshot }] of meal.items.entries()) {
-    sqlite.run(
-      "INSERT INTO diary_items (id, meal_id, position, snapshot) VALUES (?, ?, ?, ?)",
-      id,
-      meal.id,
-      position,
-      JSON.stringify(snapshot),
-    );
-  }
-
   const backupBeforeMigration: OpenDiaryOptions["backupBeforeMigration"] = async (
     version,
     verify,
   ) => {
-    const source = new DatabaseSync(path, { readOnly: true });
+    const destination = join(dir, `prior-v${version}-${basename(path)}`);
+    await copyDatabase(path, destination);
+    const snapshot = new DatabaseSync(destination, { readOnly: true });
     try {
-      const copy = join(dir, `prior-v${version}.sqlite`);
-      await backup(source, copy);
-      const snapshot = new DatabaseSync(copy, { readOnly: true });
-      try {
-        verify(connection(snapshot));
-      } finally {
-        snapshot.close();
-      }
+      verify(connection(snapshot));
     } finally {
-      source.close();
+      snapshot.close();
     }
   };
+  return {
+    db,
+    sqlite,
+    backupBeforeMigration,
+    open: () => openDiary({ connection: sqlite, backupBeforeMigration }),
+  };
+}
 
-  return { db, sqlite, path, dir, backupBeforeMigration };
+function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), "edo-journal-migration-"));
+  directories.push(dir);
+  const path = join(dir, "diary.sqlite");
+  const source = openFile(path, dir);
+  source.sqlite.exec(v4Sql);
+  return { ...source, path, dir };
 }
 
 function journalTables(db: DiarySqliteConnection) {
@@ -116,12 +79,10 @@ function journalTables(db: DiarySqliteConnection) {
     .map((row) => row.name);
 }
 
-test("upgrades a backed-up v4 diary with its food snapshot and journal tables intact", async () => {
-  const source = await fixture();
-  await openDiary({
-    connection: source.sqlite,
-    backupBeforeMigration: source.backupBeforeMigration,
-  });
+test("upgrades a historical v4 diary and restores the full verified backup", async () => {
+  const source = fixture();
+  const diary = await source.open();
+  expect(JSON.parse(diary.exportPrivateArchive())).toEqual(v4Archive);
   expect(journalTables(source.sqlite)).toEqual([
     "edo_sync_binding",
     "edo_sync_outbox",
@@ -130,33 +91,52 @@ test("upgrades a backed-up v4 diary with its food snapshot and journal tables in
     "edo_sync_submission_ids",
   ]);
   expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(5);
-  expect(source.sqlite.all("SELECT * FROM edo_sync_binding")).toEqual([]);
-  expect(source.sqlite.all("SELECT * FROM edo_sync_outbox")).toEqual([]);
+  const journal = openSyncJournal(source.sqlite);
+  expect(journal.history()).toBeNull();
+  expect(journal.queued()).toEqual([]);
+
+  const session = await createSyncClient({
+    origin: "https://example.test",
+    releases: [{ release: "0.1", features: ["write-records"], writableKinds: ["weigh-in"] }],
+    authorization: () => "Bearer synthetic",
+    fetch: async () =>
+      Response.json({
+        accountBinding: "account",
+        lineage: "fixture",
+        revision: 0,
+        restoredFrom: null,
+        release: "0.1",
+        features: ["write-records"],
+      }),
+  }).connect();
+  journal.bind(session);
   source.db.close();
 
-  const backup = new DatabaseSync(join(source.dir, "prior-v4.sqlite"), { readOnly: true });
-  connections.push(backup);
-  const saved = connection(backup);
-  expect(saved.get("PRAGMA user_version")?.user_version).toBe(4);
-  expect(journalTables(saved)).toEqual([]);
-  expect(saved.get("SELECT id, utc_offset_minutes FROM diary_meals")).toMatchObject({
-    id: meal.id,
-    utc_offset_minutes: -240,
-  });
-
-  const reopened = new DatabaseSync(source.path);
-  connections.push(reopened);
-  const diary = await openDiary({
-    connection: connection(reopened),
+  const reopened = openFile(source.path, source.dir);
+  const existing = await openDiary({
+    connection: reopened.sqlite,
     backupBeforeMigration: async () => {
-      throw new Error("An already upgraded diary does not need another backup");
+      throw new Error("An upgraded diary does not need a second backup");
     },
   });
-  expect(diary.getMeal(meal.id)).toEqual(meal);
+  expect(JSON.parse(existing.exportPrivateArchive())).toEqual(v4Archive);
+  expect(openSyncJournal(reopened.sqlite).history()).toMatchObject({
+    accountBinding: "account",
+    lineage: "fixture",
+    cursor: 0,
+  });
+
+  const recovery = join(source.dir, "recovered.sqlite");
+  copyFileSync(join(source.dir, "prior-v4-diary.sqlite"), recovery);
+  const recovered = openFile(recovery, source.dir);
+  expect(recovered.sqlite.get("PRAGMA user_version")?.user_version).toBe(4);
+  expect(journalTables(recovered.sqlite)).toEqual([]);
+  expect(JSON.parse((await recovered.open()).exportPrivateArchive())).toEqual(v4Archive);
+  expect(openSyncJournal(recovered.sqlite).history()).toBeNull();
 });
 
-test("rolls back the journal schema if interrupted and can retry the original upgrade", async () => {
-  const source = await fixture();
+test("rolls back the journal schema if interrupted and retries without data loss", async () => {
+  const source = fixture();
   const interrupted: DiarySqliteConnection = {
     ...source.sqlite,
     exec: (sql) => {
@@ -171,20 +151,13 @@ test("rolls back the journal schema if interrupted and can retry the original up
   expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(4);
   expect(journalTables(source.sqlite)).toEqual([]);
 
-  const diary = await openDiary({
-    connection: source.sqlite,
-    backupBeforeMigration: source.backupBeforeMigration,
-  });
-  expect(diary.getMeal(meal.id)).toEqual(meal);
+  expect(JSON.parse((await source.open()).exportPrivateArchive())).toEqual(v4Archive);
   expect(journalTables(source.sqlite)).toContain("edo_sync_outbox");
 });
 
 test("rejects a backup that drops journal rows before a subsequent migration", async () => {
-  const source = await fixture();
-  await openDiary({
-    connection: source.sqlite,
-    backupBeforeMigration: source.backupBeforeMigration,
-  });
+  const source = fixture();
+  await source.open();
   source.sqlite.run("INSERT INTO edo_sync_submission_ids (submission_id) VALUES (?)", "reserved");
 
   await expect(
@@ -193,12 +166,7 @@ test("rejects a backup that drops journal rows before a subsequent migration", a
       [...diaryMigrations, () => {}],
       async (_, verify) => {
         const copy = join(source.dir, "missing-submission.sqlite");
-        const reader = new DatabaseSync(source.path, { readOnly: true });
-        try {
-          await backup(reader, copy);
-        } finally {
-          reader.close();
-        }
+        await copyDatabase(source.path, copy);
         const incomplete = new DatabaseSync(copy);
         try {
           incomplete.exec("DELETE FROM edo_sync_submission_ids");
