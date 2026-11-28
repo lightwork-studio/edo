@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { decodeSubmission, type HelloResponse, syncScope } from "@edo/contract";
+import { decodeSubmission, type HelloResponse } from "@edo/contract";
 import { expect, it } from "vitest";
 import { applyRecordContent } from "../../../apps/sync-node/src/record-projection.ts";
 import { createHealthServer } from "../../../apps/sync-node/src/server.ts";
@@ -45,7 +45,7 @@ it("reviews a same-account restore without reviving the old upload session", asy
   });
   await expect(client.pull(old, 0)).rejects.toMatchObject({ code: "update-required" });
   await expect(client.connect(saved)).rejects.toMatchObject({ code: "lineage-changed" });
-  expect(sent).toEqual(["/team/sync/hello", "/team/sync/hello", "/team/sync/hello"]);
+  expect(sent).toEqual(["/team/sync/hello", "/team/sync/history", "/team/sync/hello"]);
   expect(features).toEqual([["write-records"], [], ["write-records"]]);
 
   reply = { ...hello, revision: 6 };
@@ -116,7 +116,7 @@ it("reads recovery against the binding present before the request", async () => 
   });
 });
 
-it("discards a recovery reply superseded by a new connection", async () => {
+it("discards a malformed recovery reply superseded by a new connection", async () => {
   const server = "https://example.test";
   let release: (reply: Response) => void = () => {};
   let announce: () => void = () => {};
@@ -143,21 +143,55 @@ it("discards a recovery reply superseded by a new connection", async () => {
   const discarded = expect(older).rejects.toMatchObject({ code: "account-changed" });
   await started;
   const connected = await client.connect(saved);
-  release(Response.json({ ...hello, features: [], lineage: "late-restore" }));
+  release(new Response("malformed reply"));
   await discarded;
   expect(connected.lineage).toBe(saved.lineage);
 });
 
-it("the real sync server refuses writes after a read-only history review", async () => {
+it("requires an updated server for history review while supporting its existing connection", async () => {
+  const server = "https://example.test";
+  const sent: string[] = [];
+  const client = createSyncClient({
+    origin: server,
+    authorization: () => "Bearer synthetic",
+    fetch: async (url) => {
+      const path = new URL(String(url)).pathname;
+      sent.push(path);
+      return path === "/sync/hello"
+        ? Response.json(hello)
+        : new Response("Not found", { status: 404 });
+    },
+  });
+  const saved = { ...hello, server };
+  await expect(client.reviewHistory(saved)).rejects.toMatchObject({ code: "update-required" });
+  expect(sent).toEqual(["/sync/history"]);
+  await expect(client.connect(saved)).resolves.toMatchObject(hello);
+});
+
+it("the real sync server keeps history review independent of the writable negotiation", async () => {
   using store = openSyncStore(":memory:", { applyContent: applyRecordContent });
   store.createAccount("account", "lineage");
+  let announce = () => {};
+  let release = () => {};
+  const started = new Promise<void>((resolve) => {
+    announce = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let holdReview = false;
+  let authChecks = 0;
   await using server = createHealthServer({
     sync: {
       store,
-      authorize: (request) =>
-        request.headers.authorization === "Bearer synthetic"
-          ? { accountBinding: "account", sessionKey: "phone" }
-          : null,
+      authorize: async (request) => {
+        if (request.headers.authorization !== "Bearer synthetic") return null;
+        if (holdReview && request.url === "/sync/history" && ++authChecks === 2) {
+          announce();
+          await waiting;
+        }
+        return { accountBinding: "account", sessionKey: "phone" };
+      },
     },
   });
   server.listen(0, "127.0.0.1");
@@ -170,14 +204,12 @@ it("the real sync server refuses writes after a read-only history review", async
     allowLoopbackHttp: true,
     authorization: () => "Bearer synthetic",
   });
-  const old = await client.connect();
   const saved = {
     server: client.server,
-    accountBinding: old.accountBinding,
-    lineage: old.lineage,
+    accountBinding: "account",
+    lineage: "lineage",
     revision: 0,
   };
-  expect(await client.reviewHistory(saved)).toMatchObject({ status: "same-history" });
   const attempt = decodeSubmission({
     kind: "weigh-in",
     id: "weight",
@@ -191,18 +223,51 @@ it("the real sync server refuses writes after a read-only history review", async
       kg: 80,
     },
   });
-  await expect(client.push(old, [attempt])).rejects.toMatchObject({ code: "update-required" });
+  expect(await client.reviewHistory(saved)).toMatchObject({ status: "same-history" });
+  const headers = { Authorization: "Bearer synthetic", "Content-Type": "application/json" };
+  const denied = await fetch(`${origin}/sync/history`, {
+    method: "POST",
+    headers: { ...headers, Authorization: "Bearer invalid" },
+    body: JSON.stringify({ releases: [hello.release], features: [] }),
+  });
+  expect(denied.status).toBe(401);
+  expect(await denied.json()).toMatchObject({ error: { code: "unauthorized" } });
+  const advertised = await fetch(`${origin}/sync/history`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ releases: [hello.release], features: hello.features }),
+  });
+  expect(await advertised.json()).toMatchObject({ features: [] });
   const refused = await fetch(`${origin}/sync/push`, {
     method: "POST",
-    headers: { Authorization: "Bearer synthetic", "Content-Type": "application/json" },
-    body: JSON.stringify({ ...syncScope(old), submissions: [attempt] }),
+    headers,
+    body: JSON.stringify({
+      accountBinding: saved.accountBinding,
+      lineage: saved.lineage,
+      release: hello.release,
+      submissions: [attempt],
+    }),
   });
-  expect(await refused.json()).toMatchObject({ error: { code: "write-disabled" } });
+  expect(await refused.json()).toMatchObject({ error: { code: "update-required" } });
   expect(store.history("account")?.revision).toBe(0);
-  const connected = await client.connect(saved);
-  expect((await client.push(connected, [attempt])).results).toEqual([
-    { status: "accepted", submissionId: "weigh-in", revision: 1 },
-  ]);
+
+  const old = await client.connect(saved);
+  holdReview = true;
+  const discarded = expect(client.reviewHistory(saved)).rejects.toMatchObject({
+    code: "account-changed",
+  });
+  try {
+    await started;
+    await expect(client.push(old, [attempt])).rejects.toMatchObject({ code: "update-required" });
+    const connected = await client.connect(saved);
+    release();
+    await discarded;
+    expect((await client.push(connected, [attempt])).results).toEqual([
+      { status: "accepted", submissionId: "weigh-in", revision: 1 },
+    ]);
+  } finally {
+    release();
+  }
 });
 
 it("fences old in-flight replies and keeps a negotiated authorization pinned to that connection", async () => {

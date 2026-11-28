@@ -175,7 +175,7 @@ export function createSyncClient({
   }
 
   async function post(
-    path: "hello" | "push" | "pull",
+    path: "hello" | "history" | "push" | "pull",
     body: unknown,
     options: { authorization: string; isCurrent: () => boolean; signal?: AbortSignal },
   ) {
@@ -196,13 +196,22 @@ export function createSyncClient({
         credentials: "omit",
         redirect: "error",
       });
+      if (!isCurrent() || (path === "history" && response.status === 404)) {
+        void response.body?.cancel().catch(() => {});
+        assertCurrent(isCurrent);
+        throw new SyncWireError(
+          "update-required",
+          "This server needs an update to review sync history",
+        );
+      }
       payload = await readResponse(response);
       assertCurrent(isCurrent);
     } catch (error) {
+      assertCurrent(isCurrent);
       if (signal?.aborted || error instanceof SyncWireError) throw error;
       return unavailable("Could not read a response from the sync server");
     }
-    if (path === "hello" && response.status === 426) {
+    if ((path === "hello" || path === "history") && response.status === 426) {
       decodeNegotiationRefused(payload);
       throw new SyncWireError("update-required", "No compatible account sync release is available");
     }
@@ -235,9 +244,14 @@ export function createSyncClient({
     return () => generation === attempt;
   }
 
-  async function requestHello(isCurrent: () => boolean, signal?: AbortSignal, request = hello) {
+  async function requestHello(
+    path: "hello" | "history",
+    isCurrent: () => boolean,
+    signal?: AbortSignal,
+    request = hello,
+  ) {
     const header = await authorization();
-    const reply = await post("hello", request, { authorization: header, isCurrent, signal });
+    const reply = await post(path, request, { authorization: header, isCurrent, signal });
     return { header, reply };
   }
 
@@ -251,7 +265,7 @@ export function createSyncClient({
           "The saved diary belongs to a different sync server",
         );
       }
-      const { header, reply } = await requestHello(isCurrent, signal);
+      const { header, reply } = await requestHello("hello", isCurrent, signal);
       assertCurrent(isCurrent);
       const session = acceptHello(hello, reply, previous, releases);
       serversBySession.set(session, base);
@@ -267,7 +281,7 @@ export function createSyncClient({
         throw new SyncWireError("invalid-request", "Invalid saved account revision");
       }
       const request: HelloRequest = { releases: hello.releases, features: [] };
-      const { reply } = await requestHello(isCurrent, signal, request);
+      const { reply } = await requestHello("history", isCurrent, signal, request);
       assertCurrent(isCurrent);
       const observed = acceptHello(request, reply, undefined, releases);
       if (observed.accountBinding !== accountBinding) {

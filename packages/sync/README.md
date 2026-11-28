@@ -31,6 +31,7 @@ after the user reviews its deletion. Other deleted records need a new ID. The ap
 the attached-account flow and grouped conflict review before it can offer this candidate to users.
 
 Call `reviewHistory` to detect a changed endpoint locally. For the saved endpoint, it can
-report a same-account restore, lineage change or regressed revision from an authenticated
-read-only hello. Reviewing invalidates the client session.
+report a same-account restore, lineage change or regressed revision through the authenticated
+`POST /sync/history` endpoint. Reviewing invalidates the local client session and leaves server
+negotiations alone. Older servers require an update for history review.
 The later recovery flow can use the result to decide whether to reconnect or show a prompt.
