@@ -15,6 +15,7 @@ import {
   localDay,
   mondayOf,
   nextMidnight,
+  nutritionTargetProgress,
   readAmount,
   saveFood,
   totalNutrition,
@@ -33,6 +34,23 @@ test("captures primary Foods logging at selection and preserves an existing hist
     utcOffsetMinutes: -after.getTimezoneOffset() || 0,
   });
   expect(foodLibraryEntryTime(historical, false, after)).toEqual(historical);
+});
+
+test("keeps goal progress bounded and formats the original ratio without double rounding", () => {
+  expect(nutritionTargetProgress(1064, 2150)).toEqual({
+    fraction: 1064 / 2150,
+    ratio: 1064 / 2150,
+  });
+  expect(nutritionTargetProgress(2240, 2150)).toEqual({
+    fraction: 1,
+    ratio: 2240 / 2150,
+  });
+  expect(nutritionTargetProgress(0, 0)).toEqual({ fraction: 0, ratio: null });
+  expect(nutritionTargetProgress(2.75, 0)).toEqual({ fraction: 1, ratio: null });
+  const ratio = nutritionTargetProgress(145, 1000)?.ratio;
+  expect(ratio && new Intl.NumberFormat("en-US", { style: "percent" }).format(ratio)).toBe("15%");
+  expect(nutritionTargetProgress(null, 150)).toBeNull();
+  expect(nutritionTargetProgress(0, null)).toBeNull();
 });
 
 function syntheticCatalog() {

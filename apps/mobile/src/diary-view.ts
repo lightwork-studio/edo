@@ -115,6 +115,15 @@ export function totalNutrition(meals: readonly DiaryMeal[]): Nutrients | null {
   }
 }
 
+export function nutritionTargetProgress(logged: number | null, target: number | null) {
+  if (logged === null || target === null) return null;
+  const ratio = target > 0 ? logged / target : Number(logged > 0);
+  return {
+    fraction: Math.min(ratio, 1),
+    ratio: target > 0 && Number.isFinite(ratio) ? ratio : null,
+  };
+}
+
 export type FoodEntry =
   | ({
       kind: "add";
