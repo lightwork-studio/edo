@@ -157,7 +157,11 @@ async function openLocalDiaryConnection() {
           name: "Captured account oats recipe",
           servings: 1.875,
           ingredients: [
-            { ...item, portion: { amount: 89.625, unit: "g" }, nutrients: { ...nutrients, kcal: null } },
+            {
+              ...item,
+              portion: { amount: 89.625, unit: "g" },
+              nutrients: { ...nutrients, kcal: null, proteinG: 0, availableCarbohydratesG: null },
+            },
           ],
         },
       };

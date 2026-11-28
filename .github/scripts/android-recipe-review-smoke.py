@@ -139,6 +139,8 @@ def review_saved_records():
     reveal("Cooked weight unknown")
     reveal("89.625 g", fragments=True)
     reveal("Energy unknown", fragments=True)
+    reveal("Carbs unknown", fragments=True)
+    reveal("Protein 0 g", fragments=True)
     tap("Back")
     find("A saved change needs sync review.")
 
