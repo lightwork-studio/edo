@@ -1,4 +1,6 @@
-# USDA Foundation Foods import preview
+# USDA import previews
+
+## Foundation Foods
 
 Download the October 2026 **Foundation Foods JSON** ZIP from
 [USDA FoodData Central](https://fdc.nal.usda.gov/download-datasets/). The preview
@@ -15,7 +17,20 @@ Carbohydrate by difference includes fiber, so it is recorded separately from ava
 carbohydrate. The latter is left null for the fallback review. A negative calculated
 residual is kept in the source measurements and mapped to null.
 
-The preview covers Foundation Foods. SR Legacy, German regional equivalents and app
-selection remain separate work. USDA publishes the data under
-[CC0 1.0](https://fdc.nal.usda.gov/api-guide/). Nutrient definitions come from the
-[Foundation Foods documentation](https://fdc.nal.usda.gov/Foundation_Foods_Documentation/).
+## SR Legacy
+
+Download the April 2018 **SR Legacy CSV** ZIP from
+[USDA FoodData Central](https://fdc.nal.usda.gov/download-datasets/).
+
+```sh
+pnpm --silent --filter @edo/usda-import preview:legacy /path/to/sr-legacy.zip > sr-legacy-preview.json
+```
+
+The preview retains the FDC ID, original NDB number and source publication date. It
+joins nutrient units and derivation codes from the release's supporting tables.
+The shared nutrient mapping keeps available carbohydrate unset in both previews.
+
+German regional equivalents and app selection remain open. USDA publishes the data
+under [CC0 1.0](https://fdc.nal.usda.gov/api-guide/). See the
+[USDA data documentation](https://fdc.nal.usda.gov/data-documentation/) for the
+datasets' definitions.
