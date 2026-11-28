@@ -3,6 +3,7 @@ import {
   compatibleCatalog,
 } from "../../packages/catalog-import/src/manifest.ts";
 import {
+  decodePackagedFood,
   normalizeOpenFoodFactsBarcode,
   type PackagedFood,
 } from "../../packages/core/src/packaged-food.ts";
@@ -19,8 +20,6 @@ interface StoredObject {
   size: number;
   arrayBuffer(): Promise<ArrayBuffer>;
 }
-type StoredProduct = Omit<PackagedFood, "release">;
-
 export interface CatalogEnvironment {
   CATALOGS: { get(key: string): Promise<StoredObject | null> };
 }
@@ -126,9 +125,24 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
   if (!Array.isArray(candidates) || candidates.length === 0) {
     throw new Error("Invalid barcode candidates");
   }
-  const products = (candidates as StoredProduct[])
-    .map((product) => ({ ...product, release: manifest.source.release }))
-    .sort((left, right) => Number(right.barcode === code) - Number(left.barcode === code));
+  const products: PackagedFood[] = [];
+  const sourceIds = new Set<string>();
+  for (const candidate of candidates as unknown[]) {
+    const product =
+      candidate !== null && typeof candidate === "object"
+        ? decodePackagedFood({ ...candidate, release: manifest.source.release })
+        : null;
+    if (
+      !product ||
+      normalizeOpenFoodFactsBarcode(product.barcode) !== key ||
+      sourceIds.has(product.id.sourceId)
+    ) {
+      throw new Error("Invalid barcode product");
+    }
+    sourceIds.add(product.id.sourceId);
+    products.push(product);
+  }
+  products.sort((left, right) => Number(right.barcode === code) - Number(left.barcode === code));
   return json(
     {
       status: "found",

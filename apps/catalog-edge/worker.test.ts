@@ -122,6 +122,48 @@ test("distinguishes a missing barcode from malformed candidates in a registered 
   expect(await response.json()).toEqual({ status: "not-found" });
 });
 
+test("rejects an entire barcode list containing an invalid or duplicate product", async () => {
+  const { env, files, put, release } = await prepare();
+  const second = { ...sample, id: { ...sample.id, sourceId: "1234" }, barcode: "1234" };
+  const invalidLists = [
+    [null],
+    [sample, {}],
+    [sample, { ...second, barcode: "9999" }],
+    [sample, { ...second, id: sample.id }],
+    [sample, { ...second, nutrition: { basis: "bad-basis" } }],
+  ];
+  const request = new Request(`${origin}/${prefix}/barcodes/1234`);
+  const responseFor = async (products: unknown[]) => {
+    const shard = encoder.encode(JSON.stringify({ [sample.barcode]: products })).buffer;
+    const digest = await sha256(shard);
+    files.set(`${prefix}/shards/${digest}.json`, shard);
+    await put(`${prefix}/lookup/${release}.json`, { [shardFor(sample.barcode)]: digest });
+    return worker.fetch(request, env);
+  };
+  for (const invalid of invalidLists) {
+    const response = await responseFor(invalid);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ status: "unavailable" });
+  }
+  const response = await responseFor([sample, second]);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    products: [
+      { ...second, release: "fixture" },
+      { ...sample, release: "fixture" },
+    ],
+  });
+  const largeGroup = Array.from({ length: 101 }, (_, index) => {
+    const barcode = `${"0".repeat(index)}1234`;
+    return { ...sample, barcode, id: { ...sample.id, sourceId: barcode } };
+  });
+  const large = await responseFor(largeGroup);
+  expect(large.status).toBe(200);
+  expect(await large.json()).toMatchObject({
+    products: largeGroup.map((entry) => ({ ...entry, release: "fixture" })),
+  });
+});
+
 test("serves immutable files with their digest as ETag", async () => {
   const { env, files, put } = await prepare();
   const path = `bls/artifacts/${sha}.sqlite`;
