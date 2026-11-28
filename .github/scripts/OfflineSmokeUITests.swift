@@ -37,7 +37,13 @@ final class OfflineSmokeUITests: XCTestCase {
         let input = fields.firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 20), app.debugDescription)
         input.tap()
-        input.typeText(query)
+        var typed = ""
+        for character in query {
+            input.typeText(String(character))
+            typed.append(character)
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", typed), object: input)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, app.debugDescription)
+        }
     }
 
     private func verifyMeal() throws {
