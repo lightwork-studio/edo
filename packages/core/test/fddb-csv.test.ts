@@ -1,8 +1,50 @@
-import { previewFddbDiaryCsv } from "@edo/core";
+import { FddbCsvRecordLimitError, previewFddbDiaryCsv } from "@edo/core";
 import { expect, test } from "vitest";
 
 const header =
   "datum_tag_monat_jahr_stunde_minute;bezeichnung;interne_id;kj;kj_aktivitaeten;fett_g;kh_g;protein_g";
+
+test("counts blank, activity and invalid records without counting the final line break twice", () => {
+  const file = [header, "", "27.11.2026 08:00;Walking;;;200;;;", "invalid;Bread;;;;;;", ""].join(
+    "\n",
+  );
+  expect(previewFddbDiaryCsv(file, 3)).toMatchObject({
+    activityRows: 1,
+    issues: [{ line: 4, code: "invalid-timestamp" }],
+  });
+  expect(() => previewFddbDiaryCsv(file, 2)).toThrow(FddbCsvRecordLimitError);
+});
+
+test("scans past a wide row without treating its quoted line breaks as records", () => {
+  const wide = `27.11.2026 08:00;Wide;;;;;;;${";".repeat(50_000)}"extra\r\nfield"`;
+  const input = `${header}\n${wide}\n27.11.2026 08:00;Soup;;418,4;0;0;0;0`;
+  expect(previewFddbDiaryCsv(input, 2)).toMatchObject({
+    issues: [{ line: 2, code: "wrong-column-count" }],
+    rows: [{ line: 4, name: "Soup" }],
+  });
+});
+
+test("reports overlong bounded fields before unescaping them and retains the next row", () => {
+  const escapes = '""'.repeat(5_000);
+  const input = `${header}\n27.11.2026 08:00;"${escapes}";;418,4;0;0;0;0\n27.11.2026 09:00;Soup;;418,4;0;0;0;0`;
+  expect(previewFddbDiaryCsv(input, 2)).toMatchObject({
+    issues: [{ line: 2, code: "field-too-long" }],
+    rows: [{ line: 3, name: "Soup" }],
+  });
+  expect(previewFddbDiaryCsv(input).rows[0]?.name).toHaveLength(5_000);
+});
+
+test("rejects non-text control characters before archiving rows and preserves tab and newline", () => {
+  const input = [
+    header,
+    `27.11.2026 08:00;A\u0001B;;418,4;0;0;0;0`,
+    '27.11.2026 09:00;"A\tB\r\nC";;418,4;0;0;0;0',
+  ].join("\n");
+  expect(previewFddbDiaryCsv(input, 2)).toMatchObject({
+    issues: [{ line: 2, code: "non-text-control" }],
+    rows: [{ line: 3, name: "A\tB\r\nC" }],
+  });
+});
 
 test("previews German FDDB export rows without inventing a timezone or missing nutrients", () => {
   const input = [

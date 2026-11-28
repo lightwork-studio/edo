@@ -2,16 +2,19 @@ import type { PrivateArchiveStore } from "@edo/storage";
 import { useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { shareArchive } from "./archive-files";
+import { fddbPickerAvailable } from "./diary-file-picker";
 import type { Strings } from "./strings";
 import { DetailHeader, Notice, styles } from "./ui";
 
 export function ArchiveScreen({
   t,
   archive,
+  onFddbImport,
   onBack,
 }: {
   t: Strings;
   archive: Pick<PrivateArchiveStore, "exportPrivateArchive">;
+  onFddbImport: () => void;
   onBack: () => void;
 }) {
   const sharing = useRef(false);
@@ -48,6 +51,17 @@ export function ArchiveScreen({
           >
             <Text style={styles.actionText}>{t.shareDiaryArchive}</Text>
           </Pressable>
+          {fddbPickerAvailable && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: busy }}
+              disabled={busy}
+              style={styles.action}
+              onPress={onFddbImport}
+            >
+              <Text style={styles.actionText}>{t.fddbImport}</Text>
+            </Pressable>
+          )}
         </View>
         {busy && <Notice text={t.loading} pending />}
         {failed && (
