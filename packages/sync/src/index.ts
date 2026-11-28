@@ -5,6 +5,6 @@ export {
   openSyncJournal,
   type StagedMealChange,
 } from "./journal.ts";
-export { installSyncJournal } from "./journal-schema-v7.ts";
+export { installSyncJournal } from "./journal-schema-v8.ts";
 export * from "./outbox.ts";
 export { mealItemIds, type StagedMealClaims } from "./staged-meal-claims.ts";
