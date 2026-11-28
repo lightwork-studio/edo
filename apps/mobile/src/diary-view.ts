@@ -7,6 +7,7 @@ import {
   updateDiaryPortion,
 } from "@edo/core";
 import type { DiaryMeal, DiaryStore } from "@edo/storage";
+import type { Strings } from "./strings";
 
 export function localDay(date: Date): string {
   const year = String(date.getFullYear()).padStart(4, "0");
@@ -93,6 +94,39 @@ export function readAmount(text: string): number | null {
   if (!/^(?:\d+(?:[.,]\d+)?|[.,]\d+)$/.test(trimmed)) return null;
   const amount = Number(trimmed.replace(",", "."));
   return amount > 0 && amount <= Number.MAX_SAFE_INTEGER ? amount : null;
+}
+
+export function displayNumber(value: number, locale: string, precision = 1): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: precision }).format(value);
+}
+
+export function displayAmount(value: number, locale: string): string {
+  return new Intl.NumberFormat(locale, {
+    useGrouping: false,
+    maximumSignificantDigits: 17,
+    numberingSystem: "latn",
+  }).format(value);
+}
+
+export function nutrientValue(value: number | null, locale: string, unit: "g" | "kcal"): string {
+  return value === null ? "—" : `${displayNumber(value, locale, unit === "kcal" ? 0 : 1)} ${unit}`;
+}
+
+export function foodDetailActionLabel(
+  portion: Portion | null,
+  kcal: number | null,
+  editing: boolean,
+  locale: string,
+  t: Strings,
+): string {
+  if (!portion) return editing ? t.save : t.add;
+  const amount = displayAmount(portion.amount, locale);
+  const quantity =
+    portion.unit === "portion"
+      ? t.foodDetailPortions(amount, portion.amount)
+      : `${amount} ${portion.unit}`;
+  const detail = kcal === null ? quantity : `${quantity} · ${nutrientValue(kcal, locale, "kcal")}`;
+  return editing ? t.foodDetailSave(detail) : t.foodDetailAdd(detail);
 }
 
 export function defaultFoodPortion(food: Food): Portion {

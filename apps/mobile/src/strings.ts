@@ -116,6 +116,7 @@ export const strings = {
     foodDetailPortions: (amount: string, count: number) =>
       `${amount} ${count === 1 ? "portion" : "portions"}`,
     foodDetailAdd: (portion: string) => `Add ${portion}`,
+    foodPortionUnit: "Portion unit",
     foodDetailSave: (portion: string) => `Save ${portion}`,
     per100g: "Per 100 g",
     per100ml: "Per 100 ml",
@@ -331,6 +332,7 @@ export const strings = {
     foodDetailPortions: (amount: string, count: number) =>
       `${amount} ${count === 1 ? "Portion" : "Portionen"}`,
     foodDetailAdd: (portion: string) => `${portion} eintragen`,
+    foodPortionUnit: "Portionseinheit",
     foodDetailSave: (portion: string) => `${portion} speichern`,
     per100g: "Pro 100 g",
     per100ml: "Pro 100 ml",
