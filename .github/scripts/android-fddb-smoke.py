@@ -68,13 +68,15 @@ def open_importer():
 def choose_csv():
     tap("Choose FDDB CSV")
     label, node = find(CSV, "Show roots", "Open navigation drawer", "Downloads")
-    if label == CSV:
-        tap_node(node)
-        return
-    if label != "Downloads":
-        tap_node(node)
-        tap("Downloads")
-    tap(CSV)
+    if label != CSV:
+        if label != "Downloads":
+            tap_node(node)
+            tap("Downloads")
+        _, node = find(CSV)
+    if node.get("enabled") != "true":
+        raise AssertionError(f"Android reported the synthetic CSV as disabled: {node.attrib}")
+    tap_node(node)
+    print("Tapped the enabled CSV row in Android Downloads")
 
 
 def preview_utc():
