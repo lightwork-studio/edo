@@ -82,8 +82,24 @@ test("requires a schema, source and attribution supported by the publisher", () 
   }
 });
 
-test("the standard-input command reports stale data and rejects an oversized manifest", () => {
+test("the standard-input command accepts a fresh full export and refuses stale or oversized input", () => {
   const command = fileURLToPath(new URL("./off-source-status.ts", import.meta.url));
+  const fullManifest = {
+    ...manifest,
+    source: {
+      ...manifest.source,
+      release: "full-fixture",
+      url: openFoodFactsCatalog.sourceUrl,
+      lastModified: new Date(Date.now() - 60_000).toISOString(),
+    },
+  };
+  const fresh = spawnSync(process.execPath, [command], {
+    input: JSON.stringify(fullManifest).padEnd(maxManifestBytes, " "),
+    encoding: "utf8",
+  });
+  expect(fresh.status).toBe(0);
+  expect(JSON.parse(fresh.stdout)).toMatchObject({ status: "fresh", release: "full-fixture" });
+
   const oldManifest = {
     ...manifest,
     source: { ...manifest.source, lastModified: "2000-01-01T00:00:00.000Z" },
