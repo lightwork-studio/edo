@@ -139,5 +139,3 @@ capture("progress-days-320dp-de-150")
 scroll_until("Makros · Tagesdurchschnitt")
 capture("progress-macros-320dp-de-150")
 print("Verified historical calorie targets, macro targets, range switching, weigh-in persistence and large text offline.")
-
-
