@@ -1,5 +1,8 @@
 import { addDays, calendarDate } from "./diary-view";
 
+/** Android's formatter uses the Julian calendar for earlier dates. */
+export const firstGregorianDisplayDay = "1582-10-15";
+
 function diaryKey(date: Date): string | null {
   const year = date.getUTCFullYear();
   return year >= 0 && year <= 9999 ? date.toISOString().slice(0, 10) : null;

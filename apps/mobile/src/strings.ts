@@ -1,6 +1,8 @@
 export const strings = {
   en: {
     today: "Today",
+    foods: "Foods",
+    profile: "Profile",
     chooseDiaryDay: "Choose a day",
     cancelDatePicker: "Cancel",
     previousMonth: "Previous month",
@@ -191,6 +193,8 @@ export const strings = {
   },
   de: {
     today: "Heute",
+    foods: "Lebensmittel",
+    profile: "Profil",
     chooseDiaryDay: "Tag auswählen",
     cancelDatePicker: "Abbrechen",
     previousMonth: "Vorheriger Monat",
