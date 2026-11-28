@@ -172,6 +172,10 @@ export const strings = {
       `Average weight from ${first} kg on ${start} to ${last} kg on ${end}.`,
     weightTrendLast: (day: string, weight: string) => `Last average ${weight} kg on ${day}.`,
     progressCalories: "Calories · last 7 days",
+    progressAverage: "avg",
+    progressLoggedDays: (count: string, days: number) =>
+      days === 1 ? `${count} logged day` : `${count} logged days`,
+    progressMacroGoal: (grams: string) => `of ${grams} g`,
     caloriesOverTarget: (kcal: string) => `${kcal} kcal over target`,
     progressMacros: "Macros · daily average",
     nutritionTargets: "Targets",
@@ -366,6 +370,10 @@ export const strings = {
     weightTrendLast: (day: string, weight: string) =>
       `Letzter Durchschnitt ${weight} kg am ${day}.`,
     progressCalories: "Kalorien · letzte 7 Tage",
+    progressAverage: "Ø",
+    progressLoggedDays: (count: string, days: number) =>
+      days === 1 ? `${count} erfasster Tag` : `${count} erfasste Tage`,
+    progressMacroGoal: (grams: string) => `von ${grams} g`,
     caloriesOverTarget: (kcal: string) => `${kcal} kcal über dem Ziel`,
     progressMacros: "Makros · Tagesdurchschnitt",
     nutritionTargets: "Ziele",

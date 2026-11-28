@@ -1,10 +1,11 @@
+import { roundEnergyKcal } from "@edo/core";
 import type { DiaryProgressStore, DiaryStore } from "@edo/storage";
 import { type ReactNode, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { calendarDate } from "./diary-view";
+import { calendarDate, nutritionTargetProgress } from "./diary-view";
 import { type ProgressRange, progressSummary, type WeightPoint } from "./progress-data";
 import type { Strings } from "./strings";
-import { colors, displayNumber, IconButton, macros, Notice, Ring, styles } from "./ui";
+import { colors, displayNumber, IconButton, macros, Notice, styles, TargetRing } from "./ui";
 
 function WeightChart({ points, locale }: { points: WeightPoint[]; locale: string }) {
   const [width, setWidth] = useState(0);
@@ -41,6 +42,7 @@ function WeightChart({ points, locale }: { points: WeightPoint[]; locale: string
           </Text>
         </View>
         <View style={local.chart} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
+          <View style={local.chartMidline} />
           {width > 12 &&
             points.map((point, index) => {
               const raw = point.measured ? position(index, point.measured.kg) : null;
@@ -143,6 +145,7 @@ export function ProgressScreen({
   }
   const average = summary?.points.at(-1)?.averageKg ?? null;
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
+  const weekdayNarrow = new Intl.DateTimeFormat(locale, { weekday: "narrow", timeZone: "UTC" });
   const date = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone: "UTC" });
   const dateText = (day: string) => date.format(calendarDate(day));
   const trend =
@@ -159,11 +162,23 @@ export function ProgressScreen({
     <>
       <View style={styles.header}>
         <IconButton glyph="‹" label={t.back} onPress={onBack} />
-        <Text accessibilityRole="header" style={[styles.heading, styles.stretch]}>
+        <Text accessibilityRole="header" style={[styles.title, styles.stretch]}>
           {t.progress}
         </Text>
-        <Pressable accessibilityRole="button" onPress={onWeight} style={local.chip}>
-          <Text style={styles.actionText}>{t.addWeight}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t.addWeight}
+          onPress={onWeight}
+          style={local.weightAction}
+        >
+          <Text
+            importantForAccessibility="no"
+            accessibilityElementsHidden
+            style={styles.actionText}
+          >
+            +
+          </Text>
+          <Text style={styles.title}>{t.weight}</Text>
         </Pressable>
       </View>
       {syncNotice && <View style={local.syncNotice}>{syncNotice}</View>}
@@ -183,17 +198,22 @@ export function ProgressScreen({
                 onPress={() => onRange(days)}
                 style={[local.chip, range === days && local.selected]}
               >
-                <Text style={[styles.title, range === days && local.selectedText]}>{label}</Text>
+                <Text style={[local.rangeLabel, range === days && local.selectedText]}>
+                  {label}
+                </Text>
               </Pressable>
             ))}
           </View>
           <View style={styles.card}>
             <View style={local.spread}>
-              <Text style={styles.meta}>{t.weight}</Text>
+              <Text accessibilityRole="header" style={[styles.meta, styles.stretch]}>
+                {t.weight}
+              </Text>
               <Text style={styles.meta}>{t.sevenDayAverage}</Text>
             </View>
             <Text style={[styles.heading, local.large]} numberOfLines={1} adjustsFontSizeToFit>
-              {average === null ? "—" : `${displayNumber(average, locale, 1)} kg`}
+              {average === null ? "—" : displayNumber(average, locale, 1)}
+              {average !== null && <Text style={local.weightUnit}> kg</Text>}
             </Text>
             {latest && (
               <Text style={styles.meta}>
@@ -207,57 +227,98 @@ export function ProgressScreen({
           </View>
           <View style={styles.card}>
             <View style={local.spread}>
-              <Text style={[styles.meta, styles.stretch]}>{t.progressCalories}</Text>
+              <Text accessibilityRole="header" style={[styles.meta, styles.stretch]}>
+                {t.progressCalories}
+              </Text>
               {summary.averageCalories !== null && (
-                <Text style={[styles.body, styles.numbers]}>
-                  {displayNumber(summary.averageCalories, locale, 0)} kcal
+                <Text style={local.calorieAverage} numberOfLines={2} adjustsFontSizeToFit>
+                  {t.progressAverage}{" "}
+                  <Text style={[styles.body, styles.numbers]}>
+                    {displayNumber(roundEnergyKcal(summary.averageCalories), locale, 0)}
+                  </Text>
+                  {summary.averageTargets.kcal === null
+                    ? " kcal"
+                    : ` / ${displayNumber(roundEnergyKcal(summary.averageTargets.kcal), locale, 0)} kcal`}
                 </Text>
               )}
             </View>
             <View style={local.days}>
               {summary.days.map(({ day, nutrition, target }) => {
-                const kcal = nutrition?.kcal;
+                const rawKcal = nutrition?.kcal ?? null;
+                const kcal = rawKcal === null ? null : roundEnergyKcal(rawKcal);
+                const targetKcal = target?.target.kcal ?? null;
+                const dayDate = calendarDate(day);
+                const current = day === today;
+                const progress = nutritionTargetProgress(rawKcal, targetKcal);
                 const deviation =
-                  kcal != null && day !== today && target
-                    ? Math.round(kcal) - Math.round(target.target.kcal)
+                  kcal !== null && targetKcal !== null && !current
+                    ? kcal - roundEnergyKcal(targetKcal)
                     : 0;
-                const over = deviation > 0;
+                const difference = deviation > 0 ? displayNumber(deviation, locale, 0) : null;
                 const label =
-                  kcal == null ? t.unavailable : `${displayNumber(kcal, locale, 0)} kcal`;
-                const difference = over ? displayNumber(deviation, locale, 0) : null;
-                const accessibility = [weekday.format(calendarDate(day)), label];
+                  kcal === null ? t.unavailable : `${displayNumber(kcal, locale, 0)} kcal`;
+                const accessibility = [`${weekday.format(dayDate)}, ${dateText(day)}`, label];
                 if (difference !== null) accessibility.push(t.caloriesOverTarget(difference));
                 return (
                   <View
                     key={day}
                     accessible
                     accessibilityLabel={accessibility.join(", ")}
-                    style={local.day}
+                    style={[local.day, local.weekDay]}
                   >
-                    <Text style={styles.meta} numberOfLines={1}>
-                      {weekday.format(calendarDate(day))}
+                    <Text
+                      style={[local.dayCaption, current && local.activeDay]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {weekdayNarrow.format(dayDate)}
                     </Text>
-                    <Ring size={32} color={day === today || over ? colors.accent : colors.border}>
-                      <Text style={[styles.body, styles.numbers]}>
-                        {calendarDate(day).getUTCDate()}
+                    <TargetRing
+                      size={34}
+                      color={current ? colors.accent : colors.muted}
+                      fraction={progress?.fraction}
+                    >
+                      <Text
+                        style={[styles.body, styles.numbers]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                      >
+                        {displayNumber(Number(day.slice(-2)), locale, 0)}
                       </Text>
-                    </Ring>
-                    <Text style={styles.meta} numberOfLines={1} adjustsFontSizeToFit>
-                      {kcal == null ? "—" : displayNumber(kcal, locale, 0)}
+                    </TargetRing>
+                    <Text
+                      style={[
+                        local.dayCaption,
+                        current && local.activeDay,
+                        difference && local.excess,
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {difference
+                        ? `+${difference}`
+                        : kcal === null
+                          ? "—"
+                          : displayNumber(kcal, locale, 0)}
                     </Text>
-                    {difference !== null && (
-                      <Text style={styles.actionText} numberOfLines={1} adjustsFontSizeToFit>
-                        +{difference}
-                      </Text>
-                    )}
                   </View>
                 );
               })}
             </View>
+            {summary.completedDays > 0 && (
+              <Text style={styles.meta}>
+                {t.progressLoggedDays(
+                  displayNumber(summary.completedDays, locale, 0),
+                  summary.completedDays,
+                )}
+              </Text>
+            )}
           </View>
           <View style={styles.card}>
             <View style={local.spread}>
-              <Text style={styles.meta}>{t.progressMacros}</Text>
+              <Text accessibilityRole="header" style={[styles.meta, styles.stretch]}>
+                {t.progressMacros}
+              </Text>
               <Pressable accessibilityRole="button" style={styles.action} onPress={onTargets}>
                 <Text style={styles.actionText}>{t.nutritionTargets}</Text>
               </Pressable>
@@ -265,19 +326,23 @@ export function ProgressScreen({
             <View style={local.days}>
               {macros.map(({ label, nutrient, color }) => {
                 const value = summary.averageMacros[nutrient];
+                const goal = summary.averageTargets[nutrient];
+                const progress = nutritionTargetProgress(value, goal);
                 return (
                   <View key={nutrient} style={[local.day, styles.stretch]}>
-                    <Ring size={52} color={color}>
+                    <TargetRing size={60} color={color} fraction={progress?.fraction}>
                       <Text
-                        style={[styles.body, styles.numbers]}
+                        style={[styles.body, styles.numbers, { color }]}
                         numberOfLines={1}
                         adjustsFontSizeToFit
                       >
                         {value === null ? "—" : displayNumber(value, locale, 1)}
                       </Text>
-                    </Ring>
-                    <Text style={styles.body}>{t[label]}</Text>
-                    <Text style={styles.meta}>g</Text>
+                    </TargetRing>
+                    <Text style={local.macroLabel}>{t[label]}</Text>
+                    <Text style={styles.meta}>
+                      {goal === null ? "g" : t.progressMacroGoal(displayNumber(goal, locale, 1))}
+                    </Text>
                   </View>
                 );
               })}
@@ -320,13 +385,33 @@ const local = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: colors.border,
   },
+  chartMidline: {
+    position: "absolute",
+    top: "50%",
+    left: 0,
+    right: 0,
+    borderTopWidth: 1,
+    borderColor: colors.border,
+  },
   chip: {
     minHeight: 44,
     borderRadius: 24,
     paddingHorizontal: 12,
-    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
     justifyContent: "center",
   },
+  weightAction: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderRadius: 22,
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  rangeLabel: { ...styles.body, fontWeight: "600" },
+  weightUnit: { ...styles.body, color: colors.muted, fontWeight: "500" },
   dateAxis: {
     marginLeft: 42,
     paddingTop: 6,
@@ -334,6 +419,11 @@ const local = StyleSheet.create({
     justifyContent: "space-between",
   },
   day: { alignItems: "center", gap: 6, minWidth: 0 },
+  weekDay: { flex: 1, minWidth: 0 },
+  dayCaption: { ...styles.meta, fontSize: 11, maxWidth: "100%" },
+  activeDay: { color: colors.accent, fontWeight: "700" },
+  excess: { color: colors.text, fontWeight: "700" },
+  calorieAverage: { ...styles.meta, maxWidth: "60%", flexShrink: 1, textAlign: "right" },
   days: { flexDirection: "row", justifyContent: "space-between", gap: 3 },
   dot: {
     position: "absolute",
@@ -345,7 +435,8 @@ const local = StyleSheet.create({
   },
   large: { fontSize: 34 },
   line: { position: "absolute", borderRadius: 1, backgroundColor: colors.accent, height: 2 },
-  rangeRow: { flexDirection: "row", gap: 8 },
+  macroLabel: { ...styles.body, textAlign: "center" },
+  rangeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   selected: { backgroundColor: colors.text },
   selectedText: { color: colors.background },
   spread: { ...styles.row, justifyContent: "space-between" },

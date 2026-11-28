@@ -1,4 +1,9 @@
-import { type Nutrients, sevenDayWeightAverage, type WeighIn } from "@edo/core";
+import {
+  type DailyNutritionTarget,
+  type Nutrients,
+  sevenDayWeightAverage,
+  type WeighIn,
+} from "@edo/core";
 import type { DiaryProgressStore, DiaryStore } from "@edo/storage";
 import { addDays, calendarDate, totalNutrition } from "./diary-view.ts";
 
@@ -88,6 +93,8 @@ export function progressSummary(
   const completed = days.filter((entry) => entry.day !== today && entry.hasMeals);
   const mean = (key: keyof Nutrients) =>
     measuredMean(completed.map((entry) => entry.nutrition?.[key] ?? null));
+  const meanTarget = (key: keyof DailyNutritionTarget) =>
+    measuredMean(completed.map((entry) => entry.target?.target[key] ?? null));
   const proteinChecks = completed.flatMap(({ nutrition, target }) => {
     const grams = nutrition?.proteinG;
     return grams != null && target ? [grams >= target.target.proteinG] : [];
@@ -96,11 +103,18 @@ export function progressSummary(
     days,
     points: weightPoints(today, range, weights),
     latestWeight: latestWeightReadings(weights)[0] ?? null,
+    completedDays: completed.length,
     averageCalories: mean("kcal"),
     averageMacros: {
       proteinG: mean("proteinG"),
       availableCarbohydratesG: mean("availableCarbohydratesG"),
       fatG: mean("fatG"),
+    },
+    averageTargets: {
+      kcal: meanTarget("kcal"),
+      proteinG: meanTarget("proteinG"),
+      availableCarbohydratesG: meanTarget("availableCarbohydratesG"),
+      fatG: meanTarget("fatG"),
     },
     proteinTargetDays: proteinChecks.length,
     proteinHits: proteinChecks.filter(Boolean).length,

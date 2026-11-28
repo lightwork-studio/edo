@@ -69,16 +69,44 @@ it("uses historical targets and excludes incomplete today from completed-day sum
         effectiveDay: earlier ? calculatedEarlier : changedDay,
         configuredAt: 0,
         mode: "manual",
-        target: { kcal: 100, proteinG: earlier ? 9 : 20, availableCarbohydratesG: 10, fatG: 2 },
+        target: {
+          kcal: day === today ? 300 : earlier ? 100 : 120,
+          proteinG: earlier ? 9 : 20,
+          availableCarbohydratesG: 10,
+          fatG: 2,
+        },
       };
     },
   };
   const summary = progressSummary(diary, today, 7);
   expect(summary.days.at(-1)?.nutrition?.kcal).toBe(160);
+  expect(summary.completedDays).toBe(2);
   expect(summary.averageCalories).toBe(80);
   expect(summary.averageMacros).toEqual({ proteinG: null, availableCarbohydratesG: 12, fatG: 2 });
+  expect(summary.averageTargets).toEqual({
+    kcal: 110,
+    proteinG: 14.5,
+    availableCarbohydratesG: 10,
+    fatG: 2,
+  });
   expect(summary.proteinTargetDays).toBe(1);
   expect(summary.proteinHits).toBe(1);
+  const missingTarget = progressSummary(
+    {
+      ...diary,
+      nutritionTargetAt: (day) => (day === calculatedEarlier ? null : diary.nutritionTargetAt(day)),
+    },
+    today,
+    30,
+  );
+  expect(missingTarget.completedDays).toBe(2);
+  expect(missingTarget.averageCalories).toBe(80);
+  expect(missingTarget.averageTargets).toEqual({
+    kcal: null,
+    proteinG: null,
+    availableCarbohydratesG: null,
+    fatG: null,
+  });
 });
 
 it("validates a recorded calendar day without converting through the device time zone", () => {
