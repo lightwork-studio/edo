@@ -10,8 +10,8 @@ const runtime = "b".repeat(40);
 const committedConfig = readFileSync(new URL("../eas.json", import.meta.url), "utf8");
 const compatibleBuild = {
   appIdentifier: "studio.lightwork.edo",
-  channel: "preflight",
-  runtimeVersion: runtime,
+  updateChannel: { id: "test-channel", name: "preflight" },
+  runtime: { id: "test-runtime", version: runtime },
   distribution: "STORE",
   status: "FINISHED",
 };
@@ -22,9 +22,11 @@ type Options = {
   noAppleKey?: boolean;
   stale?: boolean;
   superseded?: boolean;
+  supersededAfterExport?: boolean;
   noRemote?: boolean;
   dirty?: boolean;
   runtime?: string;
+  previewEnv?: Record<string, string>;
 };
 
 function exercise(options: Options = {}) {
@@ -43,6 +45,10 @@ function exercise(options: Options = {}) {
     writeFileSync(config, committedConfig);
     const script = join(mobile, "scripts", "publish-preflight.sh");
     copyFileSync(new URL("../scripts/publish-preflight.sh", import.meta.url), script);
+    copyFileSync(
+      new URL("../scripts/check-preflight-env.cjs", import.meta.url),
+      join(mobile, "scripts", "check-preflight-env.cjs"),
+    );
     writeFileSync(
       join(bin, "git"),
       [
@@ -53,7 +59,9 @@ function exercise(options: Options = {}) {
         '  case "status": if (process.env.TEST_DIRTY) console.log(" M dirty.js"); break;',
         '  case "ls-remote": {',
         "    if (process.env.TEST_NO_REMOTE) process.exit(128);",
-        "    const moved = process.env.TEST_STALE || (process.env.TEST_SUPERSEDED && fs.existsSync(process.env.TEST_TIP_CHECK));",
+        "    const moved = process.env.TEST_STALE ||",
+        "      (process.env.TEST_SUPERSEDED && fs.existsSync(process.env.TEST_TIP_CHECK)) ||",
+        "      (process.env.TEST_SUPERSEDED_AFTER_EXPORT && process.env.EDO_OTA_OUTPUT);",
         '    fs.writeFileSync(process.env.TEST_TIP_CHECK, "seen");',
         '    console.log((moved ? "c".repeat(40) : process.env.TARGET) + "\\trefs/heads/main"); break;',
         "  }",
@@ -63,19 +71,36 @@ function exercise(options: Options = {}) {
       { mode: 0o700 },
     );
     writeFileSync(
-      join(bin, "npx"),
+      join(bin, "pnpm"),
       [
         "#!/usr/bin/env node",
         'const fs = require("node:fs");',
+        'const { spawnSync } = require("node:child_process");',
         "const outcome = process.argv.slice(2);",
-        'if (outcome.shift() !== "--yes" || outcome.shift() !== "eas-cli@27.11.0") process.exit(4);',
+        'if (outcome.shift() !== "exec" || outcome.shift() !== "eas") process.exit(4);',
         'if (process.env.EDO_APP_VARIANT !== "preflight" || process.env.EXPO_NO_DOTENV !== "1" ||',
         '    process.env.EXPO_PUBLIC_EDO_CATALOG_ORIGIN !== "https://edo.timweb.app") process.exit(5);',
         'fs.appendFileSync(process.env.TEST_LOG, JSON.stringify(outcome) + "\\n");',
         "switch (outcome[0]) {",
-        '  case "env:exec": console.log(JSON.stringify({runtimeVersion: process.env.TEST_RUNTIME})); break;',
+        '  case "env:exec": {',
+        '    if (outcome[1] !== "preview" || !outcome[2].startsWith("node scripts/check-preflight-env.cjs && ")) process.exit(8);',
+        '    const checked = spawnSync(process.execPath, ["scripts/check-preflight-env.cjs"], {',
+        '      env: { ...process.env, ...JSON.parse(process.env.TEST_PREVIEW_ENV) }, stdio: "inherit",',
+        "    });",
+        "    if (checked.status !== 0) process.exit(checked.status || 1);",
+        '    if (outcome[2].includes("expo-updates runtimeversion:resolve")) {',
+        "      console.log(JSON.stringify({runtimeVersion: process.env.TEST_RUNTIME}));",
+        '    } else if (outcome[2].includes("expo export --platform ios") && process.env.EDO_OTA_OUTPUT) {',
+        '      fs.writeFileSync(process.env.EDO_OTA_OUTPUT + "/metadata.json", "{}");',
+        "    } else process.exit(9);",
+        "    break;",
+        "  }",
         '  case "build:list": console.log(process.env.TEST_BUILDS); break;',
-        '  case "update": break;',
+        '  case "update": {',
+        '    const dir = outcome[outcome.indexOf("--input-dir") + 1];',
+        '    if (!outcome.includes("--skip-bundler") || !fs.existsSync(dir + "/metadata.json")) process.exit(10);',
+        "    break;",
+        "  }",
         '  case "build": {',
         '    const submit = JSON.parse(fs.readFileSync("eas.json", "utf8")).submit.preflight.ios;',
         '    if (submit.ascAppId !== "6840244969" || submit.groups[0] !== "Archive Restore" ||',
@@ -99,6 +124,7 @@ function exercise(options: Options = {}) {
         GITHUB_ACTIONS: "true",
         GITHUB_REPOSITORY: "lightwork-studio/edo",
         GITHUB_STEP_SUMMARY: join(root, "summary"),
+        RUNNER_TEMP: root,
         TARGET: sha,
         EXPO_TOKEN: "synthetic Expo credential",
         FORCE_BUILD: options.force ? "true" : "false",
@@ -110,9 +136,11 @@ function exercise(options: Options = {}) {
         TEST_STALE: options.stale ? "yes" : "",
         TEST_NO_REMOTE: options.noRemote ? "yes" : "",
         TEST_SUPERSEDED: options.superseded ? "yes" : "",
+        TEST_SUPERSEDED_AFTER_EXPORT: options.supersededAfterExport ? "yes" : "",
         TEST_DIRTY: options.dirty ? "yes" : "",
         TEST_LOG: log,
         TEST_TIP_CHECK: join(root, "tip-checked"),
+        TEST_PREVIEW_ENV: JSON.stringify(options.previewEnv ?? {}),
       },
     });
     const commands: string[][] = readFileSync(log, "utf8")
@@ -130,11 +158,16 @@ function exercise(options: Options = {}) {
 test("publishes OTA to iOS for a compatible preflight binary, even without Apple credentials", () => {
   const result = exercise({ builds: [compatibleBuild], noAppleKey: true });
   expect(result.status).toBe(0);
-  expect(result.commands.map(([command]) => command)).toEqual(["env:exec", "build:list", "update"]);
+  expect(result.commands.map(([command]) => command)).toEqual([
+    "env:exec",
+    "build:list",
+    "env:exec",
+    "update",
+  ]);
   expect(result.commands[1]).toEqual(
     expect.arrayContaining(["--runtime-version", runtime, "--channel", "preflight"]),
   );
-  expect(result.commands[2]).toEqual([
+  expect(result.commands[3]).toEqual([
     "update",
     "--channel",
     "preflight",
@@ -142,6 +175,9 @@ test("publishes OTA to iOS for a compatible preflight binary, even without Apple
     "ios",
     "--environment",
     "preview",
+    "--skip-bundler",
+    "--input-dir",
+    expect.stringContaining("/edo-ota."),
     "--message",
     "Edo Preflight aaaaaaaaaaaa",
     "--non-interactive",
@@ -150,8 +186,9 @@ test("publishes OTA to iOS for a compatible preflight binary, even without Apple
 
 test("uses a compatible queued build and ignores wrong runtimes, channels, bundles and errors", () => {
   const invalid = [
-    { ...compatibleBuild, runtimeVersion: "e".repeat(40) },
-    { ...compatibleBuild, channel: "production" },
+    { ...compatibleBuild, runtime: { version: "e".repeat(40) } },
+    { ...compatibleBuild, updateChannel: { name: "production" } },
+    { ...compatibleBuild, updateChannel: null },
     { ...compatibleBuild, appIdentifier: "another.bundle" },
     { ...compatibleBuild, status: "ERRORED" },
     { ...compatibleBuild, distribution: "INTERNAL" },
@@ -189,9 +226,30 @@ test("checks the revision again before publishing and fails if it cannot verify 
   const superseded = exercise({ builds: [compatibleBuild], superseded: true });
   expect(superseded.status).toBe(0);
   expect(superseded.commands.map(([command]) => command)).toEqual(["env:exec", "build:list"]);
+  const afterExport = exercise({ builds: [compatibleBuild], supersededAfterExport: true });
+  expect(afterExport.status).toBe(0);
+  expect(afterExport.commands.map(([command]) => command)).toEqual([
+    "env:exec",
+    "build:list",
+    "env:exec",
+  ]);
   const unavailable = exercise({ noRemote: true });
   expect(unavailable.status).not.toBe(0);
   expect(unavailable.commands).toEqual([]);
+});
+
+test("fails closed when the Expo preview environment disagrees with the committed build profile", () => {
+  for (const [name, value] of [
+    ["EDO_APP_VARIANT", "development"],
+    ["EXPO_PUBLIC_EDO_CATALOG_ORIGIN", "https://unrelated.test"],
+    ["EXPO_PUBLIC_EDO_BLS_PREVIEW_ORIGIN", "https://unrelated.test"],
+  ]) {
+    const result = exercise({ previewEnv: { [name]: value } });
+    expect(result.status).not.toBe(0);
+    expect(result.diagnostic).toContain(name);
+    expect(result.diagnostic).not.toContain(value);
+    expect(result.commands.map(([command]) => command)).toEqual(["env:exec"]);
+  }
 });
 
 test("stops on dirty source, bad fingerprint or missing Apple credentials for a native build", () => {

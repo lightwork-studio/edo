@@ -16,7 +16,11 @@ if [[ "$head" != "$TARGET" || -n "$changes" ]]; then
   exit 1
 fi
 
-eas() { npx --yes eas-cli@27.11.0 "$@"; }
+eas() { pnpm exec eas "$@"; }
+
+in_preview() {
+  eas env:exec preview "node scripts/check-preflight-env.cjs && $1" --non-interactive
+}
 
 require_current_main() {
   local remote
@@ -43,9 +47,7 @@ while IFS= read -r entry; do
 done <<< "$build_env"
 export EXPO_NO_DOTENV=1
 
-runtime="$(eas env:exec preview \
-  'pnpm exec expo-updates runtimeversion:resolve --platform ios --workflow managed' \
-  --non-interactive |
+runtime="$(in_preview 'pnpm exec expo-updates runtimeversion:resolve --platform ios --workflow managed' |
   node -e '
     const output = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
     if (!/^[a-f0-9]{40}$/.test(output.runtimeVersion ?? "")) throw new Error("Invalid runtime fingerprint");
@@ -63,8 +65,8 @@ if [[ "${FORCE_BUILD:-false}" != true ]]; then
       const usable = new Set(["NEW", "IN_QUEUE", "IN_PROGRESS", "FINISHED"]);
       console.log(builds.some((build) =>
         build.appIdentifier === "studio.lightwork.edo" &&
-        build.runtimeVersion === process.env.PREFLIGHT_RUNTIME &&
-        build.channel === "preflight" &&
+        build.runtime?.version === process.env.PREFLIGHT_RUNTIME &&
+        build.updateChannel?.name === "preflight" &&
         build.distribution === "STORE" &&
         usable.has(build.status)
       ));
@@ -73,7 +75,14 @@ fi
 
 require_current_main
 if [[ "$compatible" == true ]]; then
+  : "${RUNNER_TEMP:?The GitHub runner temporary directory is required.}"
+  export EDO_OTA_OUTPUT
+  EDO_OTA_OUTPUT="$(mktemp -d "$RUNNER_TEMP/edo-ota.XXXXXX")"
+  trap 'rm -rf -- "$EDO_OTA_OUTPUT"' EXIT
+  in_preview 'pnpm exec expo export --platform ios --dump-sourcemap --output-dir "$EDO_OTA_OUTPUT"'
+  require_current_main
   eas update --channel preflight --platform ios --environment preview \
+    --skip-bundler --input-dir "$EDO_OTA_OUTPUT" \
     --message "$message" --non-interactive
   report "$message published an OTA update for $runtime."
   exit 0

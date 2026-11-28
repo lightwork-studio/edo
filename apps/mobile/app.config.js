@@ -10,7 +10,7 @@ module.exports = ({ config }) => {
     version: "0.1.0",
     ios: {
       ...config.ios,
-      buildNumber: "1",
+      buildNumber: "2",
       infoPlist: { ...config.ios?.infoPlist, ITSAppUsesNonExemptEncryption: false },
     },
     runtimeVersion: { policy: "fingerprint" },
