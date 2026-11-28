@@ -76,7 +76,7 @@ export function ProfileScreen({
           {t.nutritionTargets}
         </Text>
         <ProfileRow
-          label={t.nutritionTargets}
+          label={t.profileNutrition}
           value={spokenTarget}
           icon={
             <View style={local.targetIcon}>
