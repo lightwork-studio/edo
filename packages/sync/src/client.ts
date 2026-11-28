@@ -35,7 +35,13 @@ export const maxSyncRequestBytes = (maxSyncEnvelopeBytes * 3) / 4;
 const serversBySession = new WeakMap<NegotiatedSync, string>();
 const responseOrigin = new WeakMap<
   PushResponse | PullResponse,
-  { session: NegotiatedSync; snapshot: string; cursor?: number; sent?: ReadonlyMap<string, string> }
+  {
+    session: NegotiatedSync;
+    snapshot: string;
+    read: () => PushResponse | PullResponse;
+    cursor?: number;
+    sent?: ReadonlyMap<string, string>;
+  }
 >();
 
 export function syncRequestBytes(serialized: string): number {
@@ -48,11 +54,20 @@ export function serverForSession(session: NegotiatedSync): string {
   return server;
 }
 
-export function assertResponseSession(
+export function authenticatedResponseSnapshot(
+  response: PushResponse,
+  session: NegotiatedSync,
+): PushResponse;
+export function authenticatedResponseSnapshot(
+  response: PullResponse,
+  session: NegotiatedSync,
+  cursor: number,
+): PullResponse;
+export function authenticatedResponseSnapshot(
   response: PushResponse | PullResponse,
   session: NegotiatedSync,
   cursor?: number,
-): void {
+): PushResponse | PullResponse {
   const origin = responseOrigin.get(response);
   if (!origin || origin.session !== session) {
     throw new SyncWireError("update-required", "The response was not issued for this connection");
@@ -63,6 +78,8 @@ export function assertResponseSession(
   if (origin.snapshot !== JSON.stringify(response)) {
     throw new SyncWireError("invalid-request", "The response changed after validation");
   }
+  // Decode from the private wire value again so the journal owns its copy.
+  return origin.read();
 }
 
 export function assertReceiptMatchesAttempt(response: PushResponse, attempt: Submission): void {
@@ -236,7 +253,12 @@ export function createSyncClient({
           JSON.stringify(submission),
         ]),
       );
-      responseOrigin.set(response, { session, sent, snapshot: JSON.stringify(response) });
+      responseOrigin.set(response, {
+        session,
+        sent,
+        snapshot: JSON.stringify(response),
+        read: () => decodePushResponse(reply, request, session),
+      });
       return response;
     },
     async pull(session: NegotiatedSync, cursor: number, limit?: number, signal?: AbortSignal) {
@@ -252,6 +274,7 @@ export function createSyncClient({
         session,
         cursor: request.cursor,
         snapshot: JSON.stringify(response),
+        read: () => decodePullResponse(reply, request, session),
       });
       return response;
     },

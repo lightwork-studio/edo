@@ -3,9 +3,7 @@ import {
   assertSession,
   type Change,
   decodeChange,
-  decodePullResponse,
   decodeSubmission,
-  decodeSubmissionResult,
   isKnownRecordKind,
   type JsonObject,
   maxSyncSubmissions,
@@ -19,7 +17,7 @@ import {
 } from "@edo/contract";
 import {
   assertReceiptMatchesAttempt,
-  assertResponseSession,
+  authenticatedResponseSnapshot,
   maxSyncRequestBytes,
   normalizeSyncServer,
   serverForSession,
@@ -237,10 +235,14 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     return requireCurrentStorage ? transact(operation, "BEGIN") : operation();
   }
 
-  function checkSession(session: NegotiatedSync) {
+  function requireActiveSession(session: NegotiatedSync) {
     if (activeSession !== session)
       throw new SyncWireError("update-required", "Bind the active connection before syncing");
     serverForSession(session);
+  }
+
+  function checkSession(session: NegotiatedSync) {
+    requireActiveSession(session);
     return verifyScope(savedBinding(db), session);
   }
 
@@ -372,12 +374,12 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       response: PushResponse,
       applyRemote: (change: Change) => undefined,
     ) {
+      requireActiveSession(session);
+      const { results } = authenticatedResponseSnapshot(response, session);
       return transact(() => {
         const binding = checkSession(session);
-        assertResponseSession(response, session);
         let revision = binding.revision;
-        for (const outcome of response.results) {
-          const result = decodeSubmissionResult(outcome);
+        for (const result of results) {
           const row = db.get(
             "SELECT * FROM edo_sync_outbox WHERE attempt_id = ?",
             result.submissionId,
@@ -423,6 +425,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             revision = Math.max(revision, result.current.revision);
         }
         db.run("UPDATE edo_sync_binding SET observed_revision = ?", revision);
+        requireActiveSession(session);
       });
     },
     applyPage(
@@ -431,12 +434,8 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       input: PullResponse,
       applyRemote: (change: Change) => undefined,
     ) {
-      assertResponseSession(input, session, requestCursor);
-      const page = decodePullResponse(
-        input,
-        { ...syncScope(session), cursor: requestCursor },
-        session,
-      );
+      requireActiveSession(session);
+      const page = authenticatedResponseSnapshot(input, session, requestCursor);
       return transact(() => {
         const binding = checkSession(session);
         if (binding.cursor !== requestCursor)
@@ -469,6 +468,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           page.cursor,
           page.cursor,
         );
+        requireActiveSession(session);
       });
     },
     retryReviewed(

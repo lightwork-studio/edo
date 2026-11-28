@@ -232,6 +232,198 @@ function candidateSession(
   }).connect();
 }
 
+test("the journal consumes the authenticated push and pull snapshots", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const change = { ...key, state: "live", revision: 1, content: edit("unused", 74).content };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/hello")) {
+        return Response.json({
+          ...scope,
+          revision: 0,
+          restoredFrom: null,
+          features: ["write-records"],
+        });
+      }
+      if (url.endsWith("/push")) {
+        return Response.json({
+          ...scope,
+          results: [
+            { submissionId: "local", status: "retryable", reason: "temporarily-unavailable" },
+          ],
+        });
+      }
+      const futureChange = {
+        ...change,
+        content: { ...change.content, futureValue: "fixture-negative-zero" },
+      };
+      const page = JSON.stringify({ ...scope, cursor: 1, hasMore: false, changes: [futureChange] });
+      return new Response(page.replace('"fixture-negative-zero"', "-0"));
+    },
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  local.journal.commitLocal(key, edit("local", 75), () => local.set(75));
+  const attempt = local.journal.prepare(session);
+  const receipt = await client.push(session, attempt);
+  Object.defineProperty(receipt.results, Symbol.iterator, {
+    *value() {
+      yield { submissionId: "local", status: "accepted", revision: 99 };
+    },
+  });
+  local.journal.applyResults(session, receipt, local.receive);
+  expect.soft(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+  expect.soft(local.journal.prepare(session)).toEqual(attempt);
+
+  // A second reader with no pending edit must project the original disk value.
+  using peer = diary(":memory:");
+  peer.journal.bind(session);
+  const page = await client.pull(session, 0);
+  const changes = page.changes;
+  Object.defineProperty(page, "changes", {
+    enumerable: true,
+    get() {
+      Object.defineProperty(page, "changes", {
+        value: [{ ...change, content: { ...change.content, kg: 98 } }],
+      });
+      return changes;
+    },
+  });
+  peer.journal.applyPage(session, 0, page, (record) => {
+    expect(record.state === "live" && Object.is(record.content.futureValue, -0)).toBe(true);
+    peer.receive(record);
+  });
+  expect(peer.get()).toBe(74);
+  expect(peer.journal.history()).toMatchObject({ revision: 1, cursor: 1 });
+});
+
+test("the journal refuses a response whose enumerable payload has changed", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) =>
+      Response.json(
+        String(input).endsWith("/hello")
+          ? { ...scope, revision: 0, restoredFrom: null, features: ["write-records"] }
+          : { ...scope, cursor: 0, hasMore: false, changes: [] },
+      ),
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  const page = await client.pull(session, 0);
+  Object.defineProperty(page, "cursor", { value: 42 });
+  expect(() => local.journal.applyPage(session, 0, page, local.receive)).toThrow(
+    expect.objectContaining({ code: "invalid-request" }),
+  );
+  expect(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+});
+
+test("the journal runs response code outside writes and rolls back when the connection changes", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/hello")) {
+        return Response.json({
+          ...scope,
+          revision: 0,
+          restoredFrom: null,
+          features: ["write-records"],
+        });
+      }
+      if (url.endsWith("/push")) {
+        return Response.json({
+          ...scope,
+          results: [{ submissionId: "local", status: "accepted", revision: 1 }],
+        });
+      }
+      const change = { ...key, state: "live", revision: 1, content: edit("unused", 74).content };
+      return Response.json({ ...scope, cursor: 1, hasMore: false, changes: [change] });
+    },
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  local.journal.commitLocal(key, edit("local", 75), () => local.set(75));
+  const attempt = local.journal.prepare(session);
+  const transactionProbe = await client.push(session, attempt);
+  Object.defineProperty(transactionProbe, "toJSON", {
+    value: () => {
+      local.sqlite.exec("COMMIT");
+      return { ...transactionProbe };
+    },
+  });
+  expect(() => local.journal.applyResults(session, transactionProbe, local.receive)).toThrow(
+    "no transaction is active",
+  );
+  expect(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+  expect(local.journal.prepare(session)).toEqual(attempt);
+
+  const receipt = await client.push(session, attempt);
+  let reconnected: ReturnType<typeof client.connect> | undefined;
+  Object.defineProperty(receipt, "toJSON", {
+    value: () => {
+      reconnected = client.connect();
+      return { ...receipt };
+    },
+  });
+  try {
+    expect
+      .soft(() => local.journal.applyResults(session, receipt, local.receive))
+      .toThrow(expect.objectContaining({ code: "update-required" }));
+  } finally {
+    await reconnected;
+  }
+  expect.soft(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+  expect.soft(local.journal.queued()[0]?.attempt?.submissionId).toBe("local");
+
+  const next = await client.connect();
+  using peer = diary(":memory:");
+  peer.journal.bind(next);
+  const page = await client.pull(next, 0);
+  try {
+    expect(() =>
+      peer.journal.applyPage(next, 0, page, (change) => {
+        peer.receive(change);
+        reconnected = client.connect();
+      }),
+    ).toThrow(expect.objectContaining({ code: "update-required" }));
+  } finally {
+    await reconnected;
+  }
+  expect(peer.get()).toBeNull();
+  expect(peer.journal.serverCopy(key)).toBeNull();
+  expect(peer.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+
+  const nextSession = await client.connect();
+  peer.journal.bind(nextSession);
+  const nextPage = await client.pull(nextSession, 0);
+  peer.sqlite.function("reconnect_fixture", () => {
+    reconnected = client.connect();
+    return null;
+  });
+  peer.sqlite.exec(`CREATE TRIGGER reconnect_on_cursor AFTER UPDATE OF cursor ON edo_sync_binding
+    BEGIN SELECT reconnect_fixture(); END`);
+  try {
+    expect(() => peer.journal.applyPage(nextSession, 0, nextPage, peer.receive)).toThrow(
+      expect.objectContaining({ code: "update-required" }),
+    );
+  } finally {
+    await reconnected;
+  }
+  expect(peer.get()).toBeNull();
+  expect(peer.journal.serverCopy(key)).toBeNull();
+  expect(peer.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+});
+
 test("an unnegotiated session cannot bind a private diary", async () => {
   using local = diary(":memory:");
   const session = await candidateSession();
