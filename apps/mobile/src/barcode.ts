@@ -23,6 +23,10 @@ const maxResponseBytes = 256 * 1024;
 const previewPath = "/catalog-preview/open-food-facts/barcodes/";
 const recentDays = 30;
 
+function isFresh(checkedAt: number, now: number): boolean {
+  return checkedAt <= now && now - checkedAt < freshnessMs;
+}
+
 /** Expand camera-identified UPC-E using GS1 General Specifications §5.2.2.4.2. */
 export function expandUpcE(code: string): string | null {
   if (!/^0[0-9]{7}$/.test(code)) return null;
@@ -89,6 +93,20 @@ export function foodForPackagedProduct(product: PackagedFood): Food {
       },
     },
   };
+}
+
+export function stalePackagedSelection(
+  food: Food,
+  cache: PackagedFoodCache | null | undefined,
+  now: number,
+): PackagedFood | null {
+  if (food.id.provider !== "open-food-facts" || !cache) return null;
+  try {
+    const [row] = cache.findByIds([food.id.sourceId], now);
+    return row && !isFresh(row.checkedAt, now) ? row.product : null;
+  } catch {
+    return null;
+  }
 }
 
 function readProducts(value: unknown, key: string): PackagedFood[] | null {
@@ -216,6 +234,18 @@ interface LookupOptions {
   request?: CatalogFetch;
 }
 
+export async function revalidatePackagedSelection(
+  product: PackagedFood,
+  options: Omit<LookupOptions, "code">,
+): Promise<Food | null> {
+  const result = await lookupCode({ ...options, code: product.barcode }, true);
+  const updated =
+    result.status === "found" && !result.cached
+      ? result.products.find(({ id }) => id.sourceId === product.id.sourceId)
+      : undefined;
+  return updated ? foodForPackagedProduct(updated) : null;
+}
+
 export async function lookupPackagedFood(
   options: LookupOptions & { alternateCode?: string },
 ): Promise<BarcodeResult> {
@@ -243,15 +273,10 @@ export async function lookupPackagedFood(
   return result;
 }
 
-async function lookupCode({
-  code,
-  origin,
-  cache,
-  keep,
-  signal,
-  now = Date.now,
-  request = fetch,
-}: LookupOptions): Promise<BarcodeResult> {
+async function lookupCode(
+  { code, origin, cache, keep, signal, now = Date.now, request = fetch }: LookupOptions,
+  revalidate = false,
+): Promise<BarcodeResult> {
   if (signal.aborted) return { status: "unavailable" };
   const cleaned = code.trim();
   const key = cleaned.length <= 64 ? normalizeOpenFoodFactsBarcode(cleaned) : null;
@@ -268,8 +293,7 @@ async function lookupCode({
     : undefined;
   if (
     cacheHit &&
-    (!origin ||
-      cached.every((row) => row.checkedAt <= checkedAt && checkedAt - row.checkedAt < freshnessMs))
+    (!origin || (!revalidate && cached.every((row) => isFresh(row.checkedAt, checkedAt))))
   )
     return cacheHit;
   if (!origin || signal.aborted) return { status: "unavailable" };
