@@ -114,6 +114,7 @@ export interface SyncStoreOptions {
 }
 
 export interface SyncStore extends Disposable {
+  isReady(): boolean;
   createAccount(accountBinding: string, lineage: string): AuthenticatedHistory;
   history(accountBinding: string): AuthenticatedHistory | null;
   push(accountBinding: string, session: NegotiatedSync, input: unknown): PushResponse;
@@ -135,10 +136,16 @@ function transaction<T>(db: DatabaseSync, begin: "BEGIN" | "BEGIN IMMEDIATE", fn
   }
 }
 
+function databaseFormat(db: DatabaseSync) {
+  return {
+    version: db.prepare("PRAGMA main.user_version").get()?.user_version,
+    id: db.prepare("PRAGMA main.application_id").get()?.application_id,
+  };
+}
+
 function initialize(db: DatabaseSync) {
   transaction(db, "BEGIN IMMEDIATE", () => {
-    const version = db.prepare("PRAGMA user_version").get()?.user_version;
-    const id = db.prepare("PRAGMA application_id").get()?.application_id;
+    const { id, version } = databaseFormat(db);
     if (id === applicationId && version === schemaVersion) return;
     if (id === applicationId && version === 1) {
       db.exec(mealItemOwnershipSchema);
@@ -490,6 +497,25 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
     }
 
     return {
+      isReady() {
+        if (!db.isOpen) return false;
+        try {
+          const { id, version } = databaseFormat(db);
+          if (id !== applicationId || version !== schemaVersion) return false;
+          return (
+            db
+              .prepare(`
+            SELECT count(*) AS count FROM main.sqlite_schema
+            WHERE type = 'table' AND name IN (
+              'sync_accounts', 'sync_records', 'sync_receipts', 'sync_meal_item_owners'
+            )
+          `)
+              .get()?.count === 4
+          );
+        } catch {
+          return false;
+        }
+      },
       createAccount(accountBinding, lineage) {
         const account = historyFrom({
           release: syncCandidate.release,

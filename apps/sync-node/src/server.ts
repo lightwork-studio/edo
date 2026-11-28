@@ -20,8 +20,20 @@ export function createHealthServer({
       response.end(JSON.stringify({ status: "ok" }));
       return;
     }
-
     try {
+      if ((request.method === "GET" || request.method === "HEAD") && request.url === "/ready") {
+        const ready = syncOptions?.store.isReady() ?? false;
+        response.writeHead(ready ? 200 : 503, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        });
+        response.end(
+          request.method === "HEAD"
+            ? undefined
+            : JSON.stringify({ status: ready ? "ready" : "unavailable" }),
+        );
+        return;
+      }
       if (sync && (await sync(request, response))) return;
       if (
         catalogRoot &&
