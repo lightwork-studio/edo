@@ -590,6 +590,7 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
     const maxStoredReadBytes = maxSyncEnvelopeBytes * (textDecoder.encoding === "utf-8" ? 1 : 2);
     const currentPrivateRecord = db.prepare(`
       SELECT record.revision, record.kind, record.record_id,
+        record.account_binding AS record_account, account.account_binding AS joined_account,
         typeof(record.content) AS content_type,
         CASE WHEN octet_length(record.content) <= ? THEN CAST(record.content AS BLOB) END AS content,
         account.revision AS account_revision
@@ -637,15 +638,21 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       if (!isRecordId(accountBinding) || !isRecordId(id) || id.length > maxSyncEnvelopeBytes) {
         return null;
       }
-      const [row, duplicate] = currentPrivateRecord.all(
-        maxStoredReadBytes,
-        accountBinding,
-        kind,
-        id,
-      );
-      if (!row) return null;
       try {
-        if (duplicate) throw new TypeError("Ambiguous stored record");
+        const [row, duplicate] = currentPrivateRecord.all(
+          maxStoredReadBytes,
+          accountBinding,
+          kind,
+          id,
+        );
+        if (!row) return null;
+        if (
+          duplicate ||
+          row.record_account !== accountBinding ||
+          row.joined_account !== accountBinding
+        ) {
+          throw new TypeError("Invalid stored account identity");
+        }
         if (row.content_type === "null" && row.content === null) return null;
         const { content, content_type, revision, account_revision } = row;
         if (
@@ -658,10 +665,14 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
         ) {
           throw new TypeError("Invalid stored representation");
         }
+        const decoded = textDecoder.decode(content);
+        if (Buffer.byteLength(decoded, "utf8") > maxSyncEnvelopeBytes) {
+          throw new TypeError("Invalid stored record size");
+        }
         const change = storedChange({
           ...row,
           revision: Number(revision),
-          content: textDecoder.decode(content),
+          content: decoded,
         });
         if (change.state !== "live" || change.kind !== kind || change.id !== id) {
           throw new TypeError("Invalid stored identity");

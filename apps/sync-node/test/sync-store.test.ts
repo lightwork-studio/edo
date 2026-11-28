@@ -1202,3 +1202,75 @@ test("reads a supported UTF-16 store even when the captured text uses more physi
   ]);
   expect(store.readMeal("alpha", id)).toEqual({ ...meal, revision: 1 });
 });
+
+test("refuses a current record when an incompatible store coerces its account binding", () => {
+  using store = openSyncStore(filename);
+  const first = sessionFor(store.createAccount("1", "first-lineage"));
+  store.createAccount("01", "second-lineage");
+  const id = "scoped-meal";
+  const meal = capturedMeal(id, "First account meal");
+  expect(push(store, first, put(id, "first-meal", null, meal)).results).toMatchObject([
+    { status: "accepted", revision: 1 },
+  ]);
+  expect(store.readMeal("01", id)).toBeNull();
+
+  using fixture = new DatabaseSync(filename);
+  fixture.exec(`
+    ALTER TABLE main.sync_records RENAME TO original_records;
+    CREATE TABLE main.sync_records (
+      account_binding INTEGER, revision INTEGER, kind TEXT, record_id TEXT, content TEXT
+    ) STRICT;
+    INSERT INTO main.sync_records
+      SELECT CAST(account_binding AS INTEGER), revision, kind, record_id, content FROM main.original_records;
+  `);
+  const before = readFileSync(filename);
+  expect(() => store.readMeal("01", id)).toThrowError(/^Invalid stored meal$/);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test("keeps SQLite query diagnostics out of meal and weigh-in results", () => {
+  using store = openSyncStore(filename);
+  store.createAccount("alpha", "alpha-lineage");
+  using fixture = new DatabaseSync(filename);
+  fixture.exec(`
+    ALTER TABLE main.sync_records RENAME TO original_records;
+    CREATE VIEW main.sync_records AS SELECT * FROM main.synthetic_missing_object;
+  `);
+  expect(() => store.readMeal("alpha", "fixture-meal")).toThrowError(/^Invalid stored meal$/);
+  expect(() => store.readWeighIn("alpha", "fixture-weight")).toThrowError(
+    /^Invalid stored weigh-in$/,
+  );
+});
+
+test.each(["UTF-16le", "UTF-16be"])(
+  "enforces the same decoded byte limit in a %s store",
+  (encoding) => {
+    writeFileSync(filename, "", { mode: 0o600, flag: "wx" });
+    {
+      using db = new DatabaseSync(filename);
+      db.exec(`PRAGMA encoding = '${encoding}'; CREATE TABLE marker (value); DROP TABLE marker;`);
+    }
+    using store = openSyncStore(filename);
+    const alpha = sessionFor(store.createAccount("alpha", "alpha-history"));
+    const id = "oversized-decoded";
+    const meal = capturedMeal(id, "Baked oats");
+    expect(push(store, alpha, put(id, "normal-size", null, meal)).results).toMatchObject([
+      { status: "accepted", revision: 1 },
+    ]);
+    expect(store.readMeal("alpha", id)).toEqual({ ...meal, revision: 1 });
+
+    const oversized = JSON.stringify({
+      ...meal,
+      synthetic: "界".repeat(Math.ceil(maxSyncEnvelopeBytes / 3)),
+    });
+    expect(Buffer.byteLength(oversized, "utf8")).toBeGreaterThan(maxSyncEnvelopeBytes);
+    expect(Buffer.byteLength(oversized, "utf16le")).toBeLessThan(maxSyncEnvelopeBytes);
+    using fixture = new DatabaseSync(filename);
+    fixture
+      .prepare("UPDATE main.sync_records SET content = ? WHERE record_id = ?")
+      .run(oversized, id);
+    const before = readFileSync(filename);
+    expect(() => store.readMeal("alpha", id)).toThrowError(/^Invalid stored meal$/);
+    expect(readFileSync(filename)).toEqual(before);
+  },
+);
