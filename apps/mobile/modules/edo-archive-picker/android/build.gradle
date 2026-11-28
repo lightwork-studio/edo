@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'studio.lightwork.edo'
+version = '1.0.0'
+
+android {
+  namespace 'studio.lightwork.edo.archive'
+  defaultConfig {
+    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+  }
+}
+
+dependencies {
+  implementation 'androidx.activity:activity:1.10.1'
+  testImplementation 'junit:junit:4.13.2'
+  androidTestImplementation 'androidx.test:runner:1.7.0'
+  androidTestImplementation 'junit:junit:4.13.2'
+}

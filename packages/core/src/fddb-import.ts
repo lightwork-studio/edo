@@ -54,12 +54,16 @@ function resolveWallTime(
 /** Prepare diary snapshots for FDDB food rows without saving any records. */
 export async function planFddbDiaryImport(
   source: string,
-  { timeZone, sha256 }: { timeZone: string; sha256: (text: string) => Promise<string> },
+  {
+    timeZone,
+    sha256,
+    maxRecords,
+  }: { timeZone: string; sha256: (text: string) => Promise<string>; maxRecords?: number },
 ): Promise<FddbDiaryImportPlan> {
   if (typeof timeZone !== "string" || !timeZone.trim()) {
     throw new RangeError("Choose the source time zone for the FDDB export");
   }
-  const preview = previewFddbDiaryCsv(source);
+  const preview = previewFddbDiaryCsv(source, maxRecords);
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
     calendar: "gregory",

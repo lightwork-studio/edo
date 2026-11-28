@@ -53,6 +53,7 @@ import {
 } from "./src/diary-view";
 import { FavoriteFoodList } from "./src/favorite-food-list";
 import { foodKey } from "./src/favorite-foods";
+import { FddbImportScreen } from "./src/fddb-import-screen";
 import { FoodDetail } from "./src/food-detail";
 import { openLocalCatalog } from "./src/local-catalog";
 import { openLocalDiary } from "./src/local-diary";
@@ -82,6 +83,7 @@ type Route =
   | { kind: "targets" }
   | { kind: "save-meal-template"; day: string; templateId: string; options: MealTemplateOption[] }
   | { kind: "archive" }
+  | { kind: "fddb-import" }
   | ({ kind: "search" } & SearchContext)
   | ({ kind: "barcode"; state: BarcodeState } & SearchContext)
   | ({ kind: "my-foods" } & SearchContext)
@@ -273,6 +275,8 @@ function DiaryApp({
         utcOffsetMinutes,
         query,
       });
+    } else if (route.kind === "fddb-import") {
+      setRoute({ kind: "archive" });
     } else if (route.kind === "weigh-in" || route.kind === "targets" || route.kind === "archive") {
       setRoute({ kind: "progress" });
     } else {
@@ -365,7 +369,24 @@ function DiaryApp({
     );
   }
   if (route.kind === "archive") {
-    return <ArchiveScreen t={t} archive={diary} onBack={goBack} />;
+    return (
+      <ArchiveScreen
+        t={t}
+        archive={diary}
+        onBack={goBack}
+        onFddbImport={() => setRoute({ kind: "fddb-import" })}
+      />
+    );
+  }
+  if (route.kind === "fddb-import") {
+    return (
+      <FddbImportScreen
+        t={t}
+        diary={diary}
+        onBack={goBack}
+        onImported={() => setRefresh((revision) => revision + 1)}
+      />
+    );
   }
   if (route.kind === "weigh-in") {
     return (
