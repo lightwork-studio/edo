@@ -1,0 +1,194 @@
+name: Publish Edo iOS Preflight
+
+on:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        required: true
+      force_build:
+        type: boolean
+        required: true
+    secrets:
+      EXPO_TOKEN:
+        required: true
+      ASC_API_KEY_P8:
+        required: true
+      ASC_API_KEY_ID:
+        required: true
+      ASC_API_ISSUER_ID:
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  testflight:
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/preflight-testflight.yml
+    secrets:
+      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+    with:
+      revision: ${{ inputs.revision }}
+
+  expo:
+    needs: testflight
+    if: needs.testflight.outputs.evidence != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    environment: edo-preflight
+    outputs:
+      action: ${{ steps.ready.outputs.action || steps.release.outputs.action }}
+      build: ${{ steps.ready.outputs.build }}
+      runtime: ${{ steps.release.outputs.runtime }}
+      ota_artifact: ${{ steps.ota_bundle.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          node-version-file: .node-version
+      - if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Read native handoffs from the approved workflow
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        working-directory: apps/mobile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.revision }}
+        run: bash scripts/load-preflight-native-handoffs.sh > "$RUNNER_TEMP/edo-preflight-native-ids.json"
+      - name: Export OTA or queue the exact native build
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        id: release
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          TARGET: ${{ inputs.revision }}
+          FORCE_BUILD: ${{ inputs.force_build }}
+          TESTFLIGHT_EVIDENCE: ${{ needs.testflight.outputs.evidence }}
+          PREFLIGHT_TRUSTED_FILE: ${{ runner.temp }}/edo-preflight-native-ids.json
+          PREFLIGHT_NATIVE_FILE: ${{ runner.temp }}/native-archive.json
+          PREFLIGHT_OTA_DIR: ${{ runner.temp }}/edo-preflight-ota
+        run: bash scripts/publish-preflight.sh expo
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.release.outputs.new_archive == 'true'
+        with:
+          name: edo-preflight-native-${{ inputs.revision }}
+          path: ${{ runner.temp }}/native-archive.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.release.outputs.action == 'ota'
+        id: ota_bundle
+        with:
+          name: edo-preflight-ota-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/edo-preflight-ota
+          if-no-files-found: error
+          retention-days: 1
+      - name: Wait for the recorded signed archive
+        if: steps.release.outputs.action == 'native' && vars.EDO_PREFLIGHT_ENABLED == 'true'
+        id: ready
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          TARGET: ${{ inputs.revision }}
+          PREFLIGHT_NATIVE: ${{ steps.release.outputs.native }}
+        run: bash scripts/publish-preflight.sh await
+
+  refresh_testflight:
+    needs: expo
+    if: needs.expo.outputs.action == 'ota' && needs.expo.outputs.ota_artifact != ''
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/preflight-testflight.yml
+    secrets:
+      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+    with:
+      revision: ${{ inputs.revision }}
+
+  ota:
+    needs: [expo, refresh_testflight]
+    if: needs.refresh_testflight.outputs.evidence != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: edo-preflight
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          node-version-file: .node-version
+      - if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          artifact-ids: ${{ needs.expo.outputs.ota_artifact }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/edo-preflight-ota
+      - name: Publish the selected iOS bundle
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          TARGET: ${{ inputs.revision }}
+          TESTFLIGHT_EVIDENCE: ${{ needs.refresh_testflight.outputs.evidence }}
+          PREFLIGHT_OTA_RUNTIME: ${{ needs.expo.outputs.runtime }}
+          PREFLIGHT_OTA_DIR: ${{ runner.temp }}/edo-preflight-ota
+        run: bash scripts/publish-preflight.sh ota
+
+  submit:
+    needs: expo
+    if: needs.expo.outputs.action == 'submit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: edo-preflight
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          node-version-file: .node-version
+      - if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Submit or verify the exact native build
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          TARGET: ${{ inputs.revision }}
+          PREFLIGHT_BUILD: ${{ needs.expo.outputs.build }}
+        run: bash scripts/publish-preflight.sh submit

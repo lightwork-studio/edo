@@ -7,6 +7,7 @@
     "start": "expo start",
     "export:ios": "expo export --platform ios --output-dir dist-ios",
     "export:android": "expo export --platform android --output-dir dist-android",
+    "eas-build-post-install": "if [ \"$EAS_BUILD_PROFILE\" = preflight ]; then node scripts/check-preflight-env.cjs; fi",
     "typecheck": "tsc -p . && tsc -p test"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "expo-sharing": "~58.0.24",
     "expo-sqlite": "~58.0.18",
     "expo-system-ui": "~58.0.7",
+    "expo-updates": "~58.0.23",
     "react": "19.3.0",
     "react-native": "0.88.1",
     "react-native-safe-area-context": "~5.11.1"
