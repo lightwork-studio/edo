@@ -278,7 +278,10 @@ test("rebases the latest blocked draft only against a verified newer server copy
   });
   const session = await client.connect();
   local.journal.bind(session);
-  local.journal.applyPage(session, 0, await client.pull(session, 0), local.receive);
+  local.journal.applyPage(session, 0, await client.pull(session, 0), (change) => {
+    local.receive(change);
+    if (change.state === "live") (change.content as Record<string, JsonValue>).kg = 77;
+  });
   local.journal.commitLocal(key, edit("first-edit", 75), () => local.set(75));
   const attempt = local.journal.prepare(session);
   local.journal.commitLocal(key, edit("newer-edit", 76), () => local.set(76));
@@ -563,11 +566,15 @@ test("a late receipt atomically applies a newer remote copy already delivered du
   ).toThrow("transaction canceled");
   expect(local.get()).toBe(75);
   expect(local.journal.requiredRelease()).toBe("0.1");
-  local.journal.applyResults(session, ack, local.receive);
+  local.journal.applyResults(session, ack, (change) => {
+    local.receive(change);
+    if (change.state === "live") (change.content as Record<string, JsonValue>).kg = 99;
+  });
   expect(local.get()).toBe(81);
   expect(local.journal.queued()).toEqual([]);
   expect(local.journal.history()).toMatchObject({ cursor: 3, revision: 3 });
   local.journal.commitLocal(key, edit("next", 82), () => local.set(82));
+  expect(local.journal.queued()[0]?.base).toMatchObject({ revision: 3, content: { kg: 81 } });
   expect(local.journal.prepare(session)).toMatchObject([{ baseRevision: 3 }]);
 });
 

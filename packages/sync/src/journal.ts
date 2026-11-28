@@ -410,8 +410,9 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             remote.state !== "unavailable" &&
             remote.revision >= (next.baseRevision ?? 0)
           ) {
+            const projected = createOutboxRecord(remote, remote);
             requireSynchronousWrite(applyRemote(remote));
-            saveRecord(db, createOutboxRecord(remote, remote));
+            saveRecord(db, projected);
           } else {
             saveRecord(db, next, release);
           }
@@ -459,8 +460,9 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             continue;
           }
           if (change.revision < (record.baseRevision ?? 0)) continue;
+          const projected = createOutboxRecord(change, change);
           requireSynchronousWrite(applyRemote(change));
-          saveRecord(db, createOutboxRecord(change, change));
+          saveRecord(db, projected);
         }
         db.run(
           "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
