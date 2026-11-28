@@ -10,6 +10,6 @@
   Rubner-Institut's BLS 4.0 dataset under [CC BY 4.0](LICENSES/CC-BY-4.0.txt). The
   [catalog import documentation](packages/bls-import/README.md#attribution) records the changes.
 - The bundled [Inter fonts](apps/mobile/assets/fonts/) are from the Inter
-  Project Authors and uses the [SIL Open Font License 1.1](LICENSES/OFL-1.1.txt).
+  Project Authors and use the [SIL Open Font License 1.1](LICENSES/OFL-1.1.txt).
 
 Third-party dependencies and materials retain their own licenses.

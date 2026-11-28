@@ -1,4 +1,5 @@
 import type { Nutrients } from "@edo/core";
+import { isRunningInExpoGo } from "expo";
 import type { ReactNode } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -19,6 +20,7 @@ export const colors = {
 
 /** Android's oldest supported releases only distinguish normal and bold inside one family. */
 export function fontFace(weight: "400" | "500" | "600" | "700" = "400") {
+  if (isRunningInExpoGo()) return { fontWeight: weight };
   return Platform.OS === "android"
     ? { fontFamily: `Inter ${weight}`, fontWeight: "normal" as const }
     : { fontFamily: "Inter Variable", fontWeight: weight };

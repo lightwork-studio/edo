@@ -131,7 +131,11 @@ export function TodayScreen({
                 {weekday.format(date)}
               </Text>
               <TargetRing size={34} color={color} fraction={progress?.fraction}>
-                <Text style={[styles.body, styles.numbers, selected && styles.actionText]}>
+                <Text
+                  style={[styles.body, styles.numbers, selected && styles.actionText]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
                   {date.getUTCDate()}
                 </Text>
               </TargetRing>
