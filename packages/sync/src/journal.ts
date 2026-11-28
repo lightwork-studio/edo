@@ -273,6 +273,38 @@ function pulledMealProjection(change: Change | null): StoredMealProjection | nul
     : null;
 }
 
+function clearAcceptedWeighIn(db: JournalSqlite, id: string, revision: number): void {
+  db.run("DELETE FROM edo_sync_weigh_in_projections WHERE id = ? AND revision <= ?", id, revision);
+}
+
+function rememberAcceptedWeighIn(db: JournalSqlite, attempt: Submission, revision: number): void {
+  let content: string | null = null;
+  if (attempt.op === "put") {
+    const { id, localDay, occurredAt, kg } = attempt.content;
+    if (
+      id !== attempt.id ||
+      typeof localDay !== "string" ||
+      typeof occurredAt !== "number" ||
+      !Number.isSafeInteger(occurredAt) ||
+      typeof kg !== "number" ||
+      kg <= 0
+    ) {
+      clearAcceptedWeighIn(db, attempt.id, revision);
+      return;
+    }
+    // The local writer stores these fields. Opaque account data stays in the pulled copy.
+    content = JSON.stringify({ id, localDay, occurredAt, kg });
+  }
+  db.run(
+    `INSERT INTO edo_sync_weigh_in_projections VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, content = excluded.content
+    WHERE excluded.revision >= edo_sync_weigh_in_projections.revision`,
+    attempt.id,
+    revision,
+    content,
+  );
+}
+
 function localRecord(db: JournalSqlite, key: RecordKey) {
   const row = db.get("SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?", key.kind, key.id);
   if (row) return storedRecord(row);
@@ -588,6 +620,8 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             saveRecord(db, projected);
             if (record.key.kind === "meal") {
               writeMealProjection(db, record.key.id, pulledMealProjection(projected.base));
+            } else if (record.key.kind === "weigh-in") {
+              clearAcceptedWeighIn(db, record.key.id, remote.revision);
             }
           } else {
             saveRecord(db, withBase, release);
@@ -600,6 +634,8 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
                   ? { revision: result.revision, origin: "accepted", content }
                   : null;
               writeMealProjection(db, record.key.id, projection);
+            } else if (result.status === "accepted" && record.key.kind === "weigh-in") {
+              rememberAcceptedWeighIn(db, record.attempt, result.revision);
             }
           }
           if (result.status !== "retryable")
@@ -652,6 +688,8 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           saveRecord(db, projected);
           if (projected.key.kind === "meal") {
             writeMealProjection(db, projected.key.id, pulledMealProjection(projected.base));
+          } else if (projected.key.kind === "weigh-in") {
+            clearAcceptedWeighIn(db, projected.key.id, change.revision);
           }
         }
         db.run(
@@ -809,6 +847,33 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           .filter(hasLocalWork),
       ),
     serverCopy: (key: RecordKey) => inspect(() => remoteRecord(db, key)),
+    /** Read a confirmed local weigh-in value for the current expected revision. */
+    acceptedWeighIn(id: string): { revision: number; content: JsonObject | null } | null {
+      return transact(() => {
+        const { record } = localRecord(db, { kind: "weigh-in", id });
+        const { baseRevision } = record;
+        if (baseRevision === null) return null;
+        const row = db.get(
+          "SELECT content FROM edo_sync_weigh_in_projections WHERE id = ? AND revision = ?",
+          id,
+          baseRevision,
+        );
+        if (!row) return null;
+        if (row.content === null) return { revision: baseRevision, content: null };
+        if (typeof row.content !== "string") throw new Error("Invalid stored weigh-in projection");
+        const change = decodeChange({
+          id,
+          kind: "weigh-in",
+          revision: baseRevision,
+          state: "live",
+          content: JSON.parse(row.content),
+        });
+        if (change.state !== "live" || change.content.id !== id) {
+          throw new Error("Invalid stored weigh-in projection identity");
+        }
+        return { revision: baseRevision, content: change.content };
+      }, "BEGIN");
+    },
     /** Compare with SQLite before using this evidence. Accepted content need not equal the server copy. */
     mealProjection(id: string): MealProjection | null {
       return transact(() => {

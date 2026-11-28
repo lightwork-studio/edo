@@ -340,6 +340,98 @@ test("a partial pull preserves evidence that the account is ahead of the cursor"
   }
 });
 
+test("records the accepted weigh-in without replacing a newer device edit or the raw server copy", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "edo-accepted-weigh-in-"));
+  try {
+    const filename = join(directory, "device.sqlite");
+    using store = openSyncStore(":memory:", {
+      applyContent: (input) => ({ ...applyRecordContent(input), future: "retained by the server" }),
+    });
+    store.createAccount("account", "fixture");
+    await using server = createHealthServer({
+      sync: {
+        store,
+        authorize(request) {
+          const token = request.headers.authorization;
+          return token ? { accountBinding: "account", sessionKey: token } : null;
+        },
+      },
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing sync test port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const client = createSyncClient({
+      origin,
+      allowLoopbackHttp: true,
+      authorization: () => "Bearer phone",
+    });
+    const forbidProjection = () => {
+      throw new Error("The device draft must stay visible");
+    };
+    {
+      using local = diary(filename);
+      const session = await client.connect();
+      local.journal.bind(session);
+      local.journal.commitLocal(key, edit("first", 80), () => local.set(80));
+      const accepted = await client.push(session, local.journal.prepare(session));
+      local.journal.commitLocal(key, edit("second", 81), () => local.set(81));
+      local.journal.applyPage(session, 0, await client.pull(session, 0), forbidProjection);
+      local.sqlite.exec(
+        "CREATE TRIGGER interrupt_projection BEFORE INSERT ON edo_sync_weigh_in_projections BEGIN SELECT RAISE(ABORT, 'evidence failed'); END",
+      );
+      expect(() => local.journal.applyResults(session, accepted, forbidProjection)).toThrow(
+        "evidence failed",
+      );
+      expect(local.journal.acceptedWeighIn(key.id)).toBeNull();
+      expect(local.journal.prepare(session)).toMatchObject([{ submissionId: "first" }]);
+      local.sqlite.exec("DROP TRIGGER interrupt_projection");
+      local.journal.applyResults(session, accepted, forbidProjection);
+      local.journal.applyResults(session, accepted, forbidProjection);
+      expect(local.get()).toBe(81);
+    }
+
+    using local = diary(filename, false);
+    const history = local.journal.history();
+    const session = await client.connect(history ?? undefined);
+    local.journal.bind(session);
+    expect(local.journal.acceptedWeighIn(key.id)).toEqual({
+      revision: 1,
+      content: edit("first", 80).content,
+    });
+    expect(local.journal.serverCopy(key)).toMatchObject({
+      revision: 1,
+      content: { kg: 80, future: "retained by the server" },
+    });
+    expect(local.journal.queued()).toMatchObject([{ pending: { submissionId: "second" } }]);
+    expect(local.get()).toBe(81);
+    const updated = await client.push(session, local.journal.prepare(session));
+    local.journal.applyResults(session, updated, forbidProjection);
+    expect(local.journal.acceptedWeighIn(key.id)).toEqual({
+      revision: 2,
+      content: edit("second", 81).content,
+    });
+    local.journal.applyPage(session, 1, await client.pull(session, 1), local.receive);
+    expect(local.journal.acceptedWeighIn(key.id)).toBeNull();
+    expect(local.journal.serverCopy(key)).toMatchObject({ revision: 2, content: { kg: 81 } });
+
+    const deleteLocal = (): undefined => {
+      local.connection.run("DELETE FROM diary_fixture WHERE id = ?", key.id);
+    };
+    local.journal.commitLocal(key, { op: "delete", submissionId: "removed" }, deleteLocal);
+    const removed = await client.push(session, local.journal.prepare(session));
+    local.journal.applyResults(session, removed, forbidProjection);
+    expect(local.journal.acceptedWeighIn(key.id)).toEqual({ revision: 3, content: null });
+    local.journal.applyPage(session, 2, await client.pull(session, 2), deleteLocal);
+    expect(local.journal.acceptedWeighIn(key.id)).toBeNull();
+    expect(local.journal.serverCopy(key)).toMatchObject({ revision: 3, state: "deleted" });
+    expect(local.get()).toBeNull();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("local edits roll back with failed queue writes", async () => {
   using local = diary(":memory:");
   const session = await candidateSession();
