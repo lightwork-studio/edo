@@ -197,8 +197,16 @@ async function lookupFiles(
     files.push({ key: `${off}/shards/${hash}.json`, path: file });
   }
   const indexFile = join(scratch, "lookup.json");
-  await writeFile(indexFile, JSON.stringify(index));
-  return { files, index: { key: `${off}/lookup/${releaseHash}.json`, path: indexFile } };
+  const indexBody = JSON.stringify(index);
+  await writeFile(indexFile, indexBody);
+  return {
+    files,
+    index: {
+      key: `${off}/lookup/${releaseHash}.json`,
+      path: indexFile,
+      sha256: digest(indexBody),
+    },
+  };
 }
 
 export async function publishCatalogToR2(
@@ -227,6 +235,7 @@ export async function publishCatalogToR2(
   const release = join(base, "releases", `${releaseHash}.json`);
   await verifyFile(artifact, manifest.artifact);
   await verifyFile(release, { sha256: releaseHash });
+  let barcodeIndex: string | undefined;
   if (provider === off) {
     await validateCatalogSnapshot(artifact, manifest);
     const lookup = await lookupFiles(artifact, manifest, releaseHash, scratch);
@@ -238,6 +247,7 @@ export async function publishCatalogToR2(
       );
     }
     await publishImmutable(r2, lookup.index.key, lookup.index.path, scratch);
+    barcodeIndex = lookup.index.sha256;
     if (manifest.source.url === "https://static.openfoodfacts.org/data/delta/index.txt") {
       const key = `delta-sources/${manifest.source.sha256}.json`;
       const receipt = join(base, key);
@@ -257,6 +267,9 @@ export async function publishCatalogToR2(
   const state: CatalogState = {
     active: releaseHash,
     releases: { ...current?.state.releases, [releaseHash]: manifest.artifact.sha256 },
+    ...(barcodeIndex && {
+      barcodeIndexes: { ...current?.state.barcodeIndexes, [releaseHash]: barcodeIndex },
+    }),
   };
   const stateText = JSON.stringify(state);
   if (Buffer.byteLength(stateText) > maxStateBytes)

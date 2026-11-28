@@ -92,6 +92,10 @@ fails the job, so GitHub Actions failure notifications can surface stalled publi
 job runs. If nightly runs stop appearing, check whether GitHub disabled the schedule after
 repository inactivity. Re-enable the workflow and dispatch it on the current `main`.
 
+Each new Open Food Facts publication also records the SHA-256 of its barcode lookup index in
+the same publication state. The Worker checks registered index bytes before reading barcode
+shards. Existing releases created before this metadata remain readable.
+
 The Worker serves the current manifests, immutable artifacts, and barcode lookups under
 `/catalog-preview/` at `edo.timweb.app`. Deploy the staging Worker with
 `wrangler deploy --config apps/catalog-edge/wrangler.jsonc --env staging` and verify its active
