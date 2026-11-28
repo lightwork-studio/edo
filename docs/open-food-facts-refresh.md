@@ -103,8 +103,9 @@ manifest, SQLite digest, and a known barcode. After those checks, deploy the pro
 configuration without `--env staging` to attach the custom domain. Keep previous releases in R2
 so they can be republished if an update fails.
 
-The staging configuration also binds a live barcode lookup. It contacts Open Food Facts only
-after the active snapshot reports a miss. One named Durable Object reserves up to ten product
+The staging configuration also binds a live barcode lookup. It contacts Open Food Facts after
+an index with a registered digest reports a miss. Older releases continue serving the snapshot.
+One named Durable Object reserves up to ten product
 reads per rolling minute and honors the provider's `Retry-After` delay. The object persists
 reservation times and the retry deadline across restarts. The lookup identifies Edo and omits
 incoming cookies and authorization. An invalid barcode or unavailable snapshot stops before

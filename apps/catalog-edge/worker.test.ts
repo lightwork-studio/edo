@@ -85,7 +85,7 @@ test("serves the catalog barcode contract and distinguishes an unavailable shard
 });
 
 test("calls the live lookup on a verified snapshot miss only", async () => {
-  const { env, files, shardKey } = await prepare();
+  const { env, files, put, release, shardKey } = await prepare();
   const live = vi.fn(async () => Response.json({ status: "rate-limited" }, { status: 429 }));
   const getByName = vi.fn(() => ({ fetch: live }));
   const request = (code: string) => new Request(`${origin}/${prefix}/barcodes/${code}`);
@@ -93,12 +93,24 @@ test("calls the live lookup on a verified snapshot miss only", async () => {
 
   expect((await worker.fetch(request("1234"), withLive)).status).toBe(200);
   expect((await worker.fetch(request("invalid"), withLive)).status).toBe(400);
-  expect((await worker.fetch(request("5678"), env)).status).toBe(404);
+  expect((await worker.fetch(request("5678"), withLive)).status).toBe(404);
   expect(live).not.toHaveBeenCalled();
+  const indexKey = `${prefix}/lookup/${release}.json`;
+  const index = files.get(indexKey);
+  if (!index) throw new Error("Expected the fixture index");
+  await put(`${prefix}/state.json`, {
+    active: release,
+    releases: { [release]: sha },
+    barcodeIndexes: { [release]: await sha256(index) },
+  });
+  expect((await worker.fetch(request("1234"), withLive)).status).toBe(200);
   expect((await worker.fetch(request("5678"), withLive)).status).toBe(429);
   expect(getByName).toHaveBeenCalledExactlyOnceWith("open-food-facts");
-  expect(live).toHaveBeenCalledExactlyOnceWith("https://off-live.internal/5678");
+  expect(live).toHaveBeenCalledExactlyOnceWith("https://off-live.internal/00005678");
 
+  files.set(indexKey, encoder.encode("{}").buffer);
+  expect((await worker.fetch(request("1234"), withLive)).status).toBe(503);
+  files.set(indexKey, index);
   files.delete(shardKey);
   expect((await worker.fetch(request("1234"), withLive)).status).toBe(503);
   expect(live).toHaveBeenCalledTimes(1);

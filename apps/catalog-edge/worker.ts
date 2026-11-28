@@ -149,7 +149,11 @@ export class OpenFoodFactsLive {
   }
 }
 
-async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
+async function lookup(
+  bucket: CatalogEnvironment["CATALOGS"],
+  code: string,
+  live: CatalogEnvironment["OFF_LIVE"],
+) {
   const key = code.length <= 64 ? normalizeOpenFoodFactsBarcode(code) : null;
   if (!key) return json({ status: "invalid" }, 400);
   const prefix = "open-food-facts";
@@ -185,8 +189,12 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
   ) {
     throw new Error("Invalid barcode index");
   }
+  const missing = () =>
+    expectedIndex !== undefined && live
+      ? live.getByName("open-food-facts").fetch(`https://off-live.internal/${key}`)
+      : json({ status: "not-found" }, 404);
   const shardDigest = (index as Record<string, string>)[shardFor(key)];
-  if (shardDigest === undefined) return json({ status: "not-found" }, 404);
+  if (shardDigest === undefined) return missing();
 
   const shard = await readJson(bucket, `${prefix}/shards/${shardDigest}.json`, 8 * 1024 * 1024);
   if (
@@ -198,7 +206,7 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
     throw new Error("Invalid barcode shard");
   }
   const candidates = (shard.value as Record<string, StoredProduct[] | undefined>)[key];
-  if (!candidates?.length) return json({ status: "not-found" }, 404);
+  if (!candidates?.length) return missing();
   const products = candidates
     .map((product) => ({ ...product, release: manifest.source.release }))
     .sort((left, right) => Number(right.barcode === code) - Number(left.barcode === code));
@@ -293,14 +301,7 @@ export default {
         route.startsWith("barcodes/") &&
         request.method === "GET"
       ) {
-        const code = route.slice("barcodes/".length);
-        const snapshot = await lookup(CATALOGS, code);
-        if (snapshot.status === 404 && OFF_LIVE) {
-          return await OFF_LIVE.getByName("open-food-facts").fetch(
-            `https://off-live.internal/${code}`,
-          );
-        }
-        return snapshot;
+        return await lookup(CATALOGS, route.slice("barcodes/".length), OFF_LIVE);
       }
       return await asset(request, CATALOGS, provider, route);
     } catch {
