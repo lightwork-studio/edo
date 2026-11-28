@@ -1,7 +1,9 @@
+import { createDiaryItem, type Food } from "@edo/core";
 import { type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { File } from "expo-file-system";
 import { moveAsync } from "expo-file-system/legacy";
 import { backupDatabaseAsync, deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
+import { localDay } from "./diary-view";
 import { connectionFor } from "./local-sqlite";
 
 const diaryName = "edo-diary.db";
@@ -64,6 +66,29 @@ async function openLocalDiaryConnection() {
   const db = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
     const diary = await openDiary({ connection: connectionFor(db), backupBeforeMigration });
+    const fixture: Food = {
+      id: { provider: "open-food-facts", sourceId: "synthetic-recent-favorite" },
+      name: "Fallback carrot juice",
+      release: "native-fixture",
+      preparation: "as-sold",
+      nutrition: {
+        basis: "per-100-g",
+        nutrients: { kcal: 123, proteinG: 0, availableCarbohydratesG: 2, fatG: 1, fiberG: null },
+      },
+    };
+    if (diary.listFavorites().some((id) => id.sourceId === fixture.id.sourceId)) {
+      console.info("EDO_NATIVE_RECENT_FAVORITE_REOPENED");
+    } else {
+      const now = new Date();
+      diary.saveMeal({
+        id: "native-favorite-meal",
+        localDay: localDay(now),
+        occurredAt: now.getTime(),
+        utcOffsetMinutes: -now.getTimezoneOffset(),
+        items: [createDiaryItem("native-favorite-item", fixture, { amount: 50, unit: "g" })],
+      });
+      diary.setFavorite(fixture.id, true);
+    }
     return {
       diary,
       newId() {
