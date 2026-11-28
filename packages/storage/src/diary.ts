@@ -1,6 +1,6 @@
 import type { Change, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import type { DiaryItem, DiaryMeal } from "@edo/core";
-import { openSyncJournal } from "@edo/sync";
+import { openSyncJournal, type RemoteProjectionContext } from "@edo/sync";
 import { type DiaryProgressStore, diaryProgress, verifyDiaryProgress } from "./diary-progress.ts";
 import {
   type DiaryBackup,
@@ -143,38 +143,109 @@ function writeMeal(
   }
 }
 
-function applyRemoteMeal(db: DiarySqliteConnection, change: Change): undefined {
+function prepareRemoteMeal(change: Change): ReturnType<typeof prepareMeal> | null {
   if (change.kind !== "meal") {
     throw new TypeError("This diary writer can only apply sync meal records");
   }
   const id = diaryId(change.id, "meal ID");
-  if (change.state === "deleted") {
-    db.run("DELETE FROM diary_meals WHERE id = ?", id);
-    return;
-  }
+  if (change.state === "deleted") return null;
   if (change.state !== "live") throw new TypeError("Unavailable meal cannot be applied");
   const { content } = change;
   if (content.id !== id || !Array.isArray(content.items)) {
     throw new TypeError("The synced meal content does not match its identity");
   }
   if (content.utcOffsetMinutes === null) throw new TypeError("Invalid synced meal UTC offset");
-  writeMeal(
-    db,
-    {
-      id,
-      localDay: readDay(content.localDay),
-      occurredAt: readInstant(content.occurredAt),
-      utcOffsetMinutes: readUtcOffset(content.utcOffsetMinutes) ?? null,
-      items: content.items.map((item: unknown) => {
-        if (!item || typeof item !== "object" || !("id" in item)) {
-          throw new TypeError("Invalid synced meal item");
-        }
-        return { id: diaryId(item.id, "item ID"), snapshot: JSON.stringify(readSnapshot(item)) };
-      }),
-    },
-    "remote",
-  );
+  const items = content.items.map((item: unknown) => {
+    if (!item || typeof item !== "object" || !("id" in item)) {
+      throw new TypeError("Invalid synced meal item");
+    }
+    return { id: diaryId(item.id, "item ID"), snapshot: JSON.stringify(readSnapshot(item)) };
+  });
+  if (new Set(items.map((item) => item.id)).size !== items.length) {
+    throw new TypeError("Duplicate synced meal item ID");
+  }
+  return {
+    id,
+    localDay: readDay(content.localDay),
+    occurredAt: readInstant(content.occurredAt),
+    utcOffsetMinutes: readUtcOffset(content.utcOffsetMinutes) ?? null,
+    items,
+  };
 }
+
+function priorOwners(
+  db: DiarySqliteConnection,
+  meal: ReturnType<typeof prepareMeal>,
+  revision: number,
+  context: RemoteProjectionContext,
+): { itemId: string; mealId: string }[] | null {
+  const transfers: { itemId: string; mealId: string }[] = [];
+  for (const item of meal.items) {
+    const owner = db.get(
+      `SELECT items.meal_id, items.position, items.snapshot,
+        meals.local_day, meals.occurred_at, meals.utc_offset_minutes
+      FROM diary_items AS items JOIN diary_meals AS meals ON meals.id = items.meal_id
+      WHERE items.id = ? AND items.meal_id <> ?`,
+      item.id,
+      meal.id,
+    );
+    if (!owner) continue;
+    const mealId = diaryId(owner.meal_id, "meal ID");
+    const record = context.trackedRecord({ kind: "meal", id: mealId });
+    if (
+      !record ||
+      record.pending ||
+      record.attempt ||
+      record.blocked ||
+      record.base?.state !== "live" ||
+      record.base.revision !== record.baseRevision ||
+      record.base.revision >= revision
+    ) {
+      return null;
+    }
+    const prior = prepareRemoteMeal(record.base);
+    const oldItem = prior?.items[Number(owner.position)];
+    if (
+      !prior ||
+      oldItem?.id !== item.id ||
+      oldItem.snapshot !== owner.snapshot ||
+      prior.localDay !== owner.local_day ||
+      prior.occurredAt !== owner.occurred_at ||
+      prior.utcOffsetMinutes !== owner.utc_offset_minutes
+    ) {
+      return null;
+    }
+    transfers.push({ itemId: item.id, mealId });
+  }
+  return transfers;
+}
+
+function applyRemoteMeal(
+  db: DiarySqliteConnection,
+  change: Change,
+  context: RemoteProjectionContext,
+): undefined | "deferred" {
+  const meal = prepareRemoteMeal(change);
+  if (!meal) {
+    db.run("DELETE FROM diary_meals WHERE id = ?", change.id);
+    return;
+  }
+  // A newer verified claim can release a clean, older copy. Keep any local edit
+  // or newer ownership intact and let the journal retry this snapshot later.
+  const owners = priorOwners(db, meal, change.revision, context);
+  if (!owners) return "deferred";
+  for (const { itemId, mealId } of owners) {
+    db.run("DELETE FROM diary_items WHERE id = ? AND meal_id = ?", itemId, mealId);
+  }
+  writeMeal(db, meal, "remote");
+}
+
+const mealProjection = {
+  deferredKind: "meal",
+  validate(change: Change): undefined {
+    prepareRemoteMeal(change);
+  },
+};
 
 function readMeal(db: DiarySqliteConnection, id: string): DiaryMeal | null {
   return (
@@ -273,9 +344,20 @@ export async function openDiary({
         });
       },
       applyMealPage: (session, cursor, response) =>
-        journal.applyPage(session, cursor, response, (change) => applyRemoteMeal(db, change)),
+        journal.applyPage(
+          session,
+          cursor,
+          response,
+          (change, context) => applyRemoteMeal(db, change, context),
+          mealProjection,
+        ),
       applyMealResults: (session, response) =>
-        journal.applyResults(session, response, (change) => applyRemoteMeal(db, change)),
+        journal.applyResults(
+          session,
+          response,
+          (change, context) => applyRemoteMeal(db, change, context),
+          mealProjection,
+        ),
     },
     getMeal: (id) => inCurrentDiary(db, "BEGIN", () => readMeal(db, diaryId(id, "meal ID"))),
     listMeals: (localDay) =>

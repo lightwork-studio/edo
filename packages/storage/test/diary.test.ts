@@ -124,7 +124,7 @@ const revisedTarget: NutritionTargetRecord = {
 
 const mealSyncScope = { accountBinding: "account", lineage: "fixture", release: "0.1" };
 
-function mealSyncClient(response?: (url: string) => unknown) {
+function mealSyncClient(response?: (url: string) => unknown, revision = 0) {
   return createSyncClient({
     origin: "https://example.test",
     releases: [{ release: "0.1", features: ["write-records"], writableKinds: ["meal"] }],
@@ -132,7 +132,7 @@ function mealSyncClient(response?: (url: string) => unknown) {
     fetch: async (input) =>
       Response.json(
         String(input).endsWith("/hello")
-          ? { ...mealSyncScope, revision: 0, restoredFrom: null, features: ["write-records"] }
+          ? { ...mealSyncScope, revision, restoredFrom: null, features: ["write-records"] }
           : response?.(String(input)),
       ),
   });
@@ -140,6 +140,10 @@ function mealSyncClient(response?: (url: string) => unknown) {
 
 function mealSyncSession() {
   return mealSyncClient().connect();
+}
+
+function mealChange(snapshot: DiaryMeal, revision: number) {
+  return { kind: "meal", state: "live", id: snapshot.id, revision, content: snapshot };
 }
 
 test("queues the actual persisted meal and preserves an in-flight edit over a restart", async () => {
@@ -285,13 +289,14 @@ test("retains the local meal during upload and applies a newer staged remote cop
   const item = meal.items[0];
   if (!item) throw new Error("Expected a fixture item");
   const remote = { ...meal, items: [updateDiaryPortion(item, { amount: 150, unit: "ml" })] };
+  let incoming = { ...remote, id: "mismatched-id" };
   const client = mealSyncClient((url) =>
     String(url).endsWith("/pull")
       ? {
           ...mealSyncScope,
           cursor: 3,
           hasMore: false,
-          changes: [{ kind: "meal", state: "live", id: remote.id, revision: 3, content: remote }],
+          changes: [{ ...mealChange(remote, 3), content: incoming }],
         }
       : {
           ...mealSyncScope,
@@ -302,6 +307,14 @@ test("retains the local meal during upload and applies a newer staged remote cop
   diary.sync.journal.bind(session);
   diary.sync.saveMeal(meal, "edit-outgoing");
   const pending = diary.sync.journal.prepare(session);
+  const invalid = await client.pull(session, 0);
+  expect(() => diary.sync.applyMealPage(session, 0, invalid)).toThrow(
+    /does not match its identity/,
+  );
+  expect(diary.sync.journal.history()?.cursor).toBe(0);
+  expect(diary.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toBeNull();
+  expect(diary.sync.journal.queued()[0]?.attempt?.submissionId).toBe("edit-outgoing");
+  incoming = remote;
   diary.sync.applyMealPage(session, 0, await client.pull(session, 0));
   expect(diary.getMeal(meal.id)).toEqual(meal);
   expect(diary.sync.journal.history()?.cursor).toBe(3);
@@ -312,6 +325,130 @@ test("retains the local meal during upload and applies a newer staged remote cop
   expect(diary.getMeal(meal.id)).toEqual(remote);
   expect(diary.sync.journal.queued()).toEqual([]);
   expect(diary.sync.journal.history()?.cursor).toBe(3);
+});
+
+test("applies server item transfers even when the current destination arrives on an earlier page", async () => {
+  const db = createDatabase();
+  const diary = await db.start();
+  const another = {
+    ...meal,
+    id: "meal-second",
+    items: [createDiaryItem("other-item", sourceFood, { amount: 50, unit: "ml" })],
+  };
+  const destination = { ...another, items: meal.items };
+  const source = { ...meal, items: another.items };
+  let page = {
+    ...mealSyncScope,
+    cursor: 2,
+    hasMore: true,
+    changes: [mealChange(meal, 1), mealChange(another, 2)],
+  };
+  let client = mealSyncClient(() => page);
+  let session = await client.connect();
+  diary.sync.journal.bind(session);
+  diary.sync.applyMealPage(session, 0, await client.pull(session, 0));
+  page = { ...page, cursor: 5, changes: [mealChange(destination, 5)] };
+  diary.sync.applyMealPage(session, 2, await client.pull(session, 2));
+  expect(diary.getMeal(another.id)).toEqual(destination);
+  expect(diary.getMeal(meal.id)?.items).toEqual([]);
+
+  db.db.close();
+  const reopened = await createDatabase().start();
+  client = mealSyncClient(() => page, 6);
+  session = await client.connect();
+  reopened.sync.journal.bind(session);
+  page = { ...page, cursor: 6, hasMore: false, changes: [mealChange(source, 6)] };
+  reopened.sync.applyMealPage(session, 5, await client.pull(session, 5));
+  expect(reopened.getMeal(meal.id)).toEqual(source);
+  expect(reopened.getMeal(another.id)).toEqual(destination);
+  expect(reopened.sync.journal.history()?.cursor).toBe(6);
+  expect(reopened.sync.journal.queued()).toEqual([]);
+});
+
+test("stages a move across restart while the old owner has a prepared local edit", async () => {
+  const db = createDatabase();
+  const diary = await db.start();
+  const item = meal.items[0];
+  if (!item) throw new Error("Expected a fixture item");
+  const locallyEdited = { ...meal, items: [updateDiaryPortion(item, { amount: 150, unit: "ml" })] };
+  const destination = { ...meal, id: "meal-destination", items: locallyEdited.items };
+  const removed = { ...meal, items: [] };
+  let page = { ...mealSyncScope, cursor: 1, hasMore: true, changes: [mealChange(meal, 1)] };
+  const response = (url: string) =>
+    url.endsWith("/pull")
+      ? page
+      : {
+          ...mealSyncScope,
+          results: [{ status: "accepted", submissionId: "owner-edit", revision: 2 }],
+        };
+  let client = mealSyncClient(response);
+  let session = await client.connect();
+  diary.sync.journal.bind(session);
+  diary.sync.applyMealPage(session, 0, await client.pull(session, 0));
+  diary.sync.saveMeal(locallyEdited, "owner-edit");
+  const prepared = diary.sync.journal.prepare(session);
+  // The server's release of the item at revision 3 is superseded by A's current revision 5.
+  page = { ...page, cursor: 4, changes: [mealChange(destination, 4)] };
+  diary.sync.applyMealPage(session, 1, await client.pull(session, 1));
+  expect(diary.getMeal(meal.id)).toEqual(locallyEdited);
+  expect(diary.getMeal(destination.id)).toBeNull();
+  expect(diary.sync.journal.history()?.cursor).toBe(4);
+  expect(diary.sync.journal.serverCopy({ kind: "meal", id: destination.id })).toMatchObject({
+    content: destination,
+  });
+
+  db.db.close();
+  const reopened = await createDatabase().start();
+  client = mealSyncClient(response, 5);
+  session = await client.connect();
+  reopened.sync.journal.bind(session);
+  expect(reopened.sync.journal.prepare(session)).toEqual(prepared);
+  page = { ...page, cursor: 5, hasMore: false, changes: [mealChange(removed, 5)] };
+  reopened.sync.applyMealPage(session, 4, await client.pull(session, 4));
+  expect(reopened.getMeal(meal.id)).toEqual(locallyEdited);
+  expect(reopened.getMeal(destination.id)).toBeNull();
+
+  reopened.sync.applyMealResults(session, await client.push(session, prepared));
+  expect(reopened.getMeal(meal.id)).toEqual(removed);
+  expect(reopened.getMeal(destination.id)).toEqual(destination);
+  expect(reopened.sync.journal.history()?.cursor).toBe(5);
+  expect(reopened.sync.journal.queued()).toEqual([]);
+});
+
+test("does not replay an older staged ownership claim while a pull is still paginating", async () => {
+  const diary = await createDatabase().start();
+  const original = { ...meal, items: [] };
+  const destination = { ...meal, id: "temporary-owner" };
+  const emptyDestination = { ...destination, items: [] };
+  let page = { ...mealSyncScope, cursor: 2, hasMore: true, changes: [mealChange(meal, 2)] };
+  const client = mealSyncClient((url) =>
+    url.endsWith("/pull")
+      ? page
+      : {
+          ...mealSyncScope,
+          results: [{ status: "accepted", submissionId: "original", revision: 1 }],
+        },
+  );
+  const session = await client.connect();
+  diary.sync.journal.bind(session);
+  diary.sync.saveMeal(original, "original");
+  const prepared = diary.sync.journal.prepare(session);
+  diary.sync.applyMealPage(session, 0, await client.pull(session, 0));
+  page = { ...page, cursor: 4, changes: [mealChange(destination, 4)] };
+  diary.sync.applyMealPage(session, 2, await client.pull(session, 2));
+  expect(diary.getMeal(destination.id)).toEqual(destination);
+  page = { ...page, cursor: 6, changes: [mealChange(emptyDestination, 6)] };
+  diary.sync.applyMealPage(session, 4, await client.pull(session, 4));
+  diary.sync.applyMealResults(session, await client.push(session, prepared));
+  expect(diary.getMeal(meal.id)).toEqual(original);
+  expect(diary.getMeal(destination.id)).toEqual(emptyDestination);
+  expect(diary.sync.journal.queued()).toEqual([]);
+
+  page = { ...page, cursor: 7, hasMore: false, changes: [mealChange(original, 7)] };
+  diary.sync.applyMealPage(session, 6, await client.pull(session, 6));
+  expect(diary.getMeal(meal.id)).toEqual(original);
+  expect(diary.getMeal(destination.id)).toEqual(emptyDestination);
+  expect(diary.sync.journal.history()?.cursor).toBe(7);
 });
 
 test("reopens locally, preserving the event day, stable IDs and nutrition after a catalog refresh", async () => {
