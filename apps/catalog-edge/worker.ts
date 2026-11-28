@@ -120,9 +120,13 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
   ) {
     throw new Error("Invalid barcode shard");
   }
-  const candidates = (shard.value as Record<string, StoredProduct[] | undefined>)[key];
-  if (!candidates?.length) return json({ status: "not-found" }, 404);
-  const products = candidates
+  const entries = shard.value as Record<string, unknown>;
+  if (!Object.hasOwn(entries, key)) return json({ status: "not-found" }, 404);
+  const candidates = entries[key];
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    throw new Error("Invalid barcode candidates");
+  }
+  const products = (candidates as StoredProduct[])
     .map((product) => ({ ...product, release: manifest.source.release }))
     .sort((left, right) => Number(right.barcode === code) - Number(left.barcode === code));
   return json(
