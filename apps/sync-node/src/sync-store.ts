@@ -24,7 +24,8 @@ import {
   syncCandidate,
   syncScope,
 } from "@edo/contract";
-import type { WeighIn } from "@edo/core";
+import type { DiaryMeal, WeighIn } from "@edo/core";
+import { readMealSnapshot } from "@edo/storage";
 import { isLocalDay, isOccurredAt, isPositiveNumber, isRecordId } from "./record-values.ts";
 
 const applicationId = 0x45444f53;
@@ -121,6 +122,8 @@ export interface SyncStoreOptions {
 export interface SyncStore extends Disposable {
   createAccount(accountBinding: string, lineage: string): AuthenticatedHistory;
   history(accountBinding: string): AuthenticatedHistory | null;
+  /** The caller supplies the account binding from its trusted access context. */
+  readMeal(accountBinding: string, id: string): (DiaryMeal & { readonly revision: number }) | null;
   /** The caller supplies the account binding from its trusted access context. */
   readWeighIn(accountBinding: string, id: string): (WeighIn & { readonly revision: number }) | null;
   push(accountBinding: string, session: NegotiatedSync, input: unknown): PushResponse;
@@ -683,6 +686,17 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
         return account;
       },
       history,
+      readMeal(accountBinding, id) {
+        const change = readCurrentRecord("meal", accountBinding, id);
+        if (!change) return null;
+        try {
+          const meal = readMealSnapshot(change.content);
+          if (meal.id !== id) throw new TypeError("Invalid stored meal identity");
+          return { ...meal, revision: change.revision };
+        } catch {
+          throw new Error("Invalid stored meal");
+        }
+      },
       readWeighIn(accountBinding, id) {
         const change = readCurrentRecord("weigh-in", accountBinding, id);
         if (!change) return null;

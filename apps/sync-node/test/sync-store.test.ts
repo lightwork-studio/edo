@@ -1082,3 +1082,122 @@ test("gives a stale writer the current record even if the old payload fails proj
     { status: "rejected", code: "invalid-content" },
   ]);
 });
+
+const capturedMealNutrients = {
+  kcal: 76.125,
+  proteinG: 0,
+  availableCarbohydratesG: null,
+  fatG: 0.75,
+  fiberG: 2,
+};
+
+function capturedMeal(id: string, name: string) {
+  return {
+    id,
+    localDay: "2026-11-04",
+    occurredAt: Date.UTC(2026, 10, 5, 0, 30, 0, 3),
+    items: [
+      {
+        id: "captured-item",
+        portion: { amount: 75, unit: "g" },
+        food: {
+          id: { provider: "bls", sourceId: "fixture-baked-oats" },
+          name,
+          release: "fixture-release",
+          preparation: "cooked",
+          nutrition: { basis: "per-100-g", nutrients: capturedMealNutrients },
+        },
+        nutrients: capturedMealNutrients,
+      },
+    ],
+  };
+}
+
+test("reads only a current live meal in the exact account and preserves captured fields", () => {
+  const id = "same-meal";
+  const alphaMeal = { ...capturedMeal(id, "Alpha baked oats"), utcOffsetMinutes: -240 };
+  const upperMeal = capturedMeal(id, "Uppercase account baked oats");
+  {
+    using store = openSyncStore(filename);
+    const alpha = sessionFor(store.createAccount("alpha", "alpha-lineage"));
+    const upper = sessionFor(store.createAccount("ALPHA", "uppercase-lineage"));
+    const opaque = {
+      ...alphaMeal,
+      revision: 9999,
+      internal: "server-only metadata",
+      items: alphaMeal.items.map((item) => ({ ...item, internal: "nested metadata" })),
+    };
+    expect(push(store, alpha, put(id, "alpha-meal", null, opaque)).results).toMatchObject([
+      { status: "accepted", revision: 1 },
+    ]);
+    expect(push(store, upper, put(id, "upper-meal", null, upperMeal)).results).toMatchObject([
+      { status: "accepted", revision: 1 },
+    ]);
+    const original = readFileSync(filename);
+    expect(store.readMeal("alpha", id)).toEqual({ ...alphaMeal, revision: 1 });
+    expect(store.readMeal("ALPHA", id)).toEqual({ ...upperMeal, revision: 1 });
+    expect(store.readMeal("Alpha", id)).toBeNull();
+    expect(store.readMeal("alpha", "SAME-MEAL")).toBeNull();
+    expect(store.readMeal("alpha", "missing")).toBeNull();
+    expect(store.readMeal("alpha", "bad\0id")).toBeNull();
+    expect(store.readWeighIn("alpha", id)).toBeNull();
+    expect(readFileSync(filename)).toEqual(original);
+    expect(pull(store, alpha).changes[0]).toMatchObject({ content: opaque });
+    expect(
+      push(store, sessionFor(store.history("alpha")), remove(id, "remove-meal", 1)).results,
+    ).toMatchObject([{ status: "accepted", revision: 2 }]);
+  }
+  using reopened = openSyncStore(filename);
+  expect(reopened.readMeal("alpha", id)).toBeNull();
+  expect(reopened.readMeal("ALPHA", id)).toEqual({ ...upperMeal, revision: 1 });
+});
+
+test.each([
+  [
+    "invalid calendar day",
+    (meal: ReturnType<typeof capturedMeal>) => ({ ...meal, localDay: "2026-02-30" }),
+  ],
+  ["mismatched ID", (meal: ReturnType<typeof capturedMeal>) => ({ ...meal, id: "another-meal" })],
+  [
+    "oversized artifact",
+    (meal: ReturnType<typeof capturedMeal>) => ({
+      ...meal,
+      internal: "x".repeat(maxSyncEnvelopeBytes),
+    }),
+  ],
+])("rejects a stored meal with %s without reading its opaque fields", (_label, malformed) => {
+  using store = openSyncStore(filename);
+  const alpha = sessionFor(store.createAccount("alpha", "alpha-lineage"));
+  const id = "stored-corrupt-meal";
+  const meal = capturedMeal(id, "Original baked oats");
+  expect(push(store, alpha, put(id, "create-meal", null, meal)).results).toMatchObject([
+    { status: "accepted", revision: 1 },
+  ]);
+  using db = new DatabaseSync(filename);
+  db.prepare(
+    "UPDATE main.sync_records SET content = ? WHERE account_binding = ? AND record_id = ?",
+  ).run(JSON.stringify(malformed(meal)), "alpha", id);
+  const before = readFileSync(filename);
+  expect(() => store.readMeal("alpha", id)).toThrow("Invalid stored meal");
+  expect(store.readMeal("another-account", id)).toBeNull();
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test("reads a supported UTF-16 store even when the captured text uses more physical bytes", () => {
+  {
+    using db = new DatabaseSync(filename);
+    db.exec("PRAGMA encoding = 'UTF-16be'; CREATE TABLE marker (value); DROP TABLE marker;");
+  }
+  using store = openSyncStore(filename);
+  const alpha = sessionFor(store.createAccount("alpha", "alpha-lineage"));
+  const id = "historical-encoding";
+  const meal = capturedMeal(id, "Baked oats 🍎");
+  const opaque = {
+    ...meal,
+    internal: "x".repeat(Math.floor((maxSyncEnvelopeBytes * 3) / 4)),
+  };
+  expect(push(store, alpha, put(id, "utf16-meal", null, opaque)).results).toMatchObject([
+    { status: "accepted", revision: 1 },
+  ]);
+  expect(store.readMeal("alpha", id)).toEqual({ ...meal, revision: 1 });
+});

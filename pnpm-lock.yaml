@@ -87,6 +87,9 @@ importers:
       '@edo/off-import':
         specifier: workspace:*
         version: link:../../packages/off-import
+      '@edo/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
 
   packages/bls-import:
     dependencies:
