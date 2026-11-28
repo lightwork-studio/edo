@@ -29,17 +29,20 @@ final class ArchiveSmokeUITests: XCTestCase {
         let exporter = XCUIApplication(bundleIdentifier: "studio.lightwork.edo.smoke-fixtures")
         exporter.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         exporter.launch()
-        try tap("Export fixtures", in: [exporter])
-        if element(["On My iPhone"], in: [exporter], timeout: 4, hittable: false, picker: true) == nil {
-            let browse = try locate(["Browse", "Locations"], in: [exporter], hittable: false, picker: true)
-            tapPickerElement(browse)
+        for name in ["Edo-valid-smoke", "Edo-conflict-smoke", "Edo-malformed-smoke", "Edo-oversized-smoke"] {
+            try tap("Export " + name, in: [exporter])
+            if element(["On My iPhone"], in: [exporter], timeout: 4, hittable: false, picker: true) == nil {
+                let browse = try locate(["Browse", "Locations"], in: [exporter], hittable: false, picker: true)
+                tapPickerElement(browse)
+            }
+            let local = try locate(["On My iPhone"], in: [exporter], hittable: false, picker: true)
+            tapPickerElement(local)
+            let save = exporter.buttons["Save"].firstMatch
+            XCTAssertTrue(save.waitForExistence(timeout: 20), exporter.debugDescription)
+            tapPickerElement(save)
+            try waitFor("Exported " + name, in: [exporter])
+            print("Saved fixture " + name + " through the iOS export picker")
         }
-        let local = try locate(["On My iPhone"], in: [exporter], hittable: false, picker: true)
-        tapPickerElement(local)
-        let save = exporter.buttons["Save"].firstMatch
-        XCTAssertTrue(save.waitForExistence(timeout: 20), exporter.debugDescription)
-        tapPickerElement(save)
-        try waitFor("Exported four fixtures", in: [exporter])
         print("Saved the synthetic archives through the iOS export picker")
     }
 
