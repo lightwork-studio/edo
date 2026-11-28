@@ -38,8 +38,14 @@ test("publishes and verifies catalog objects before the conditional active write
         expect(bodyFlag).toBe("--body");
         if (!path) throw new Error("test upload body is missing");
         if (key === active && condition === "--if-match") {
-          expect(etag).toBe('"stale-object"');
-          throw Object.assign(new Error("PreconditionFailed"), { stderr: "(PreconditionFailed)" });
+          if (etag !== '"saved-object"') {
+            throw Object.assign(new Error("PreconditionFailed"), {
+              stderr: "(PreconditionFailed)",
+            });
+          }
+          objects.set(key, await readFile(path));
+          writes.push(key);
+          return { ETag: '"saved-object"' };
         }
         if (objects.has(key)) {
           throw Object.assign(new Error("PreconditionFailed"), { stderr: "(PreconditionFailed)" });
@@ -101,6 +107,38 @@ test("publishes and verifies catalog objects before the conditional active write
       Buffer.from(JSON.stringify({ ...state, releases: { [sha]: "f".repeat(64) } })),
     );
     expect((await worker.fetch(request(), env)).status).toBe(503);
+
+    objects.set(active, activeObject);
+    await writeFile(
+      inputPath,
+      gzipSync(
+        JSON.stringify({
+          code: "10000001",
+          countries_tags: ["en:germany"],
+          product_name: "Next fixture",
+        }),
+      ),
+    );
+    await publishOpenFoodFactsCatalog({ root, release: "next-fixture", inputPath });
+    const next = await publishCatalogToR2(
+      fakeR2,
+      root,
+      "open-food-facts",
+      { etag: '"saved-object"', state },
+      root,
+    );
+    expect(next).not.toBe(sha);
+    const nextState = objects.get(active);
+    const nextIndex = objects.get(`open-food-facts/lookup/${next}.json`);
+    if (!nextState || !nextIndex) throw new Error("Expected the next publication");
+    expect(JSON.parse(nextState.toString("utf8"))).toMatchObject({
+      active: next,
+      releases: state.releases,
+      barcodeIndexes: {
+        [sha]: state.barcodeIndexes[sha],
+        [next]: createHash("sha256").update(nextIndex).digest("hex"),
+      },
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
