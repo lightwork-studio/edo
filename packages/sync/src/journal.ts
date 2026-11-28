@@ -7,6 +7,7 @@ import {
   decodeSubmission,
   decodeSubmissionResult,
   isKnownRecordKind,
+  type JsonObject,
   maxSyncSubmissions,
   type NegotiatedSync,
   type PullResponse,
@@ -191,6 +192,24 @@ function reserveLocalEdit(db: JournalSqlite, key: RecordKey, submissionId: strin
 }
 
 type ProjectedEdit = { op: "put"; content: unknown } | { op: "delete" };
+
+interface StalePutEvidence {
+  readonly base: JsonObject;
+  readonly draft: JsonObject;
+  readonly server: JsonObject;
+}
+
+function orderedJson(content: JsonObject): string {
+  return JSON.stringify(content, (_key, value: unknown) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const fields = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(fields)
+        .sort()
+        .map((name) => [name, fields[name]]),
+    );
+  });
+}
 
 function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
@@ -391,8 +410,9 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             remote.state !== "unavailable" &&
             remote.revision >= (next.baseRevision ?? 0)
           ) {
+            const projected = createOutboxRecord(remote, remote);
             requireSynchronousWrite(applyRemote(remote));
-            saveRecord(db, createOutboxRecord(remote, remote));
+            saveRecord(db, projected);
           } else {
             saveRecord(db, next, release);
           }
@@ -440,8 +460,9 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             continue;
           }
           if (change.revision < (record.baseRevision ?? 0)) continue;
+          const projected = createOutboxRecord(change, change);
           requireSynchronousWrite(applyRemote(change));
-          saveRecord(db, createOutboxRecord(change, change));
+          saveRecord(db, projected);
         }
         db.run(
           "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
@@ -470,6 +491,76 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         const retried = retryBlockedOutbox(record, server, submissionId);
         decodeSubmission({ ...retried.pending, ...key, baseRevision: retried.baseRevision });
         saveRecord(db, retried);
+      });
+    },
+    /** Rebase a blocked put and commit its merged diary value as one local transaction. */
+    tryRebaseStalePut(
+      session: NegotiatedSync,
+      key: RecordKey,
+      submissionId: string,
+      resolve: (evidence: StalePutEvidence) => JsonObject | null,
+      writeMerged: (content: JsonObject) => undefined,
+    ): boolean {
+      return transact(() => {
+        checkSession(session);
+        assertSession(session, true);
+        if (!isKnownRecordKind(key.kind) || !session.writableKinds.includes(key.kind)) return false;
+
+        const { record } = localRecord(db, key);
+        const { base, blocked } = record;
+        const draft = record.pending ?? blocked?.submission;
+        const server = remoteRecord(db, key);
+        if (
+          record.attempt ||
+          !blocked ||
+          blocked.result.status !== "conflict" ||
+          blocked.result.reason !== "stale" ||
+          blocked.submission.op !== "put" ||
+          draft?.op !== "put" ||
+          base?.state !== "live" ||
+          server?.state !== "live" ||
+          base.revision !== record.baseRevision ||
+          base.revision !== blocked.submission.baseRevision ||
+          server.revision <= base.revision
+        ) {
+          return false;
+        }
+        const current = blocked.result.current;
+        if (!current || current.state === "deleted" || server.revision < current.revision)
+          return false;
+        if (
+          current.revision === server.revision &&
+          current.state === "live" &&
+          orderedJson(current.content) !== orderedJson(server.content)
+        ) {
+          return false;
+        }
+
+        const rebased = createOutboxRecord(key, server);
+        const content = resolve({
+          base: base.content,
+          draft: draft.content,
+          server: server.content,
+        });
+        if (content === null) return false;
+        const replacement = decodeSubmission({
+          ...key,
+          op: "put",
+          content,
+          submissionId,
+          baseRevision: server.revision,
+        });
+        const bytes = syncRequestBytes(
+          JSON.stringify({ ...syncScope(session), submissions: [replacement] }),
+        );
+        if (bytes > maxSyncRequestBytes) return false;
+
+        requireUnusedId(db, submissionId);
+        const queued = queueOutboxEdit(rebased, replacement);
+        if (queued.pending?.op !== "put") throw new Error("Expected a rebased put");
+        requireSynchronousWrite(writeMerged(queued.pending.content));
+        saveRecord(db, queued);
+        return true;
       });
     },
     queued: () =>
