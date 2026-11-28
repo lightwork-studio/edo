@@ -5,7 +5,9 @@ const iosBundle = "studio.lightwork.edo";
 const preflightChannel = "preflight";
 const appStoreApp = "6840244969";
 const preflightGroup = "Archive Restore";
+const preflightGroupId = "cea7ca9a-9d7a-4089-9d81-46be7dbe9ac9";
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+const maxReceiptAgeMs = 5 * 60_000;
 
 type ExpoBuild = {
   readonly id: string;
@@ -24,16 +26,20 @@ type ExpoBuild = {
 type ExpoSubmission = {
   readonly status: string;
   readonly platform: string;
+  readonly app?: { readonly id?: string };
+  readonly iosConfig?: { readonly ascAppIdentifier?: string };
   readonly submittedBuild?: { readonly id?: string } | null;
 };
 
 type TestFlightBuild = {
+  readonly id: string;
   readonly marketingVersion: string;
   readonly buildNumber: string;
   readonly platform: string;
   readonly processingState: string;
   readonly internalBuildState: string;
   readonly expired: boolean;
+  readonly expirationDate: string;
 };
 
 type DeliveryEvidence = {
@@ -43,25 +49,37 @@ type DeliveryEvidence = {
   readonly testFlight: {
     readonly appStoreAppId: string;
     readonly group: string;
+    readonly groupId: string;
+    readonly isInternalGroup: boolean;
+    readonly observedAt: number;
+    readonly memberBuildIds: readonly string[];
     readonly builds: readonly TestFlightBuild[];
   };
 };
 
-/** A runtime can receive OTA once its signed binary is available to the intended testers. */
+/** Match fresh provider responses fetched by the authenticated release jobs. */
 export function findDeliveredPreflightBuild(evidence: DeliveryEvidence) {
   const { runtime, builds, submissions, testFlight } = evidence;
+  const now = Date.now();
   if (
     typeof runtime !== "string" ||
     !/^[0-9a-f]{40}$/.test(runtime) ||
     testFlight?.appStoreAppId !== appStoreApp ||
     testFlight.group !== preflightGroup ||
+    testFlight.groupId !== preflightGroupId ||
+    testFlight.isInternalGroup !== true ||
+    !Number.isFinite(testFlight.observedAt) ||
+    testFlight.observedAt > now + 30_000 ||
+    now - testFlight.observedAt > maxReceiptAgeMs ||
     !Array.isArray(builds) ||
     !Array.isArray(submissions) ||
+    !Array.isArray(testFlight.memberBuildIds) ||
     !Array.isArray(testFlight.builds)
   ) {
     throw new Error("Invalid Edo Preflight delivery evidence.");
   }
 
+  const members = new Set(testFlight.memberBuildIds);
   for (const build of builds) {
     if (
       build?.status !== "FINISHED" ||
@@ -75,9 +93,9 @@ export function findDeliveredPreflightBuild(evidence: DeliveryEvidence) {
       typeof build.id !== "string" ||
       !uuid.test(build.id) ||
       typeof build.appVersion !== "string" ||
-      !build.appVersion ||
+      !/^\d+\.\d+\.\d+$/.test(build.appVersion) ||
       typeof build.appBuildVersion !== "string" ||
-      !build.appBuildVersion
+      !/^\d+(?:\.\d+){0,2}$/.test(build.appBuildVersion)
     ) {
       continue;
     }
@@ -86,14 +104,21 @@ export function findDeliveredPreflightBuild(evidence: DeliveryEvidence) {
       (submission) =>
         submission?.status === "FINISHED" &&
         submission.platform === "IOS" &&
+        submission.app?.id === expoProject &&
+        submission.iosConfig?.ascAppIdentifier === appStoreApp &&
         submission.submittedBuild?.id === build.id,
     );
     const available = testFlight.builds.some(
       (receipt) =>
         receipt?.platform === "IOS" &&
+        typeof receipt.id === "string" &&
+        uuid.test(receipt.id) &&
+        members.has(receipt.id) &&
         receipt.processingState === "VALID" &&
         receipt.internalBuildState === "IN_BETA_TESTING" &&
         receipt.expired === false &&
+        typeof receipt.expirationDate === "string" &&
+        Date.parse(receipt.expirationDate) > now &&
         receipt.marketingVersion === build.appVersion &&
         receipt.buildNumber === build.appBuildVersion,
     );
