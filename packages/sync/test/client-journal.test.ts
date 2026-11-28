@@ -3,8 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Change } from "@edo/contract";
-import { expect, test } from "vitest";
+import type { Change, JsonValue } from "@edo/contract";
+import { expect, test, vi } from "vitest";
 import { applyRecordContent } from "../../../apps/sync-node/src/record-projection.ts";
 import { createHealthServer } from "../../../apps/sync-node/src/server.ts";
 import { openSyncStore } from "../../../apps/sync-node/src/sync-store.ts";
@@ -243,6 +243,170 @@ test("an unnegotiated session cannot bind a private diary", async () => {
   expect(local.journal.history()).toMatchObject({ accountBinding: "account" });
 });
 
+test("rebases the latest blocked draft only against a verified newer server copy", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const base = { ...key, state: "live", revision: 1, content: edit("unused", 74).content };
+  const server = { ...base, revision: 3, content: { ...base.content, serverNote: "preserved" } };
+  let page = { ...scope, cursor: 1, hasMore: false, changes: [base] };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/hello")) {
+        return Response.json({
+          ...scope,
+          features: ["write-records"],
+          revision: 0,
+          restoredFrom: null,
+        });
+      }
+      if (url.endsWith("/pull")) return Response.json(page);
+      return Response.json({
+        ...scope,
+        results: [
+          {
+            status: "conflict",
+            reason: "stale",
+            submissionId: "first-edit",
+            current: { ...key, state: "unavailable", revision: 2 },
+          },
+        ],
+      });
+    },
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  local.journal.applyPage(session, 0, await client.pull(session, 0), (change) => {
+    local.receive(change);
+    if (change.state === "live") (change.content as Record<string, JsonValue>).kg = 77;
+  });
+  local.journal.commitLocal(key, edit("first-edit", 75), () => local.set(75));
+  const attempt = local.journal.prepare(session);
+  local.journal.commitLocal(key, edit("newer-edit", 76), () => local.set(76));
+  const conflict = await client.push(session, attempt);
+  local.journal.applyResults(session, conflict, local.receive);
+
+  const resolve = vi.fn<Parameters<typeof local.journal.tryRebaseStalePut>[3]>(
+    ({ base: original, draft, server: latest }) => {
+      expect(original.kg).toBe(74);
+      expect(draft.kg).toBe(76);
+      expect(latest).toEqual(server.content);
+      if (typeof draft.kg !== "number") throw new Error("Invalid fixture weight");
+      const updated = latest as Record<string, JsonValue>;
+      updated.kg = draft.kg;
+      return updated;
+    },
+  );
+  expect(local.journal.tryRebaseStalePut(session, key, "rebased", resolve, () => undefined)).toBe(
+    false,
+  );
+  expect(resolve).not.toHaveBeenCalled();
+  page = { ...page, cursor: 3, changes: [server] };
+  local.journal.applyPage(session, 1, await client.pull(session, 1), local.receive);
+  const before = local.journal.queued();
+  expect(
+    local.journal.tryRebaseStalePut(
+      session,
+      key,
+      "rebased",
+      () => null,
+      () => undefined,
+    ),
+  ).toBe(false);
+  expect(
+    local.journal.tryRebaseStalePut(
+      session,
+      key,
+      "rebased",
+      () => ({ extra: "x".repeat(1_100_000) }),
+      () => undefined,
+    ),
+  ).toBe(false);
+  expect(() =>
+    local.journal.tryRebaseStalePut(session, key, "rebased", resolve, () => {
+      local.set(80);
+      throw new Error("diary write interrupted");
+    }),
+  ).toThrow(/write interrupted/);
+  expect(local.get()).toBe(76);
+  expect(local.journal.queued()).toEqual(before);
+  expect(
+    local.journal.tryRebaseStalePut(session, key, "rebased", resolve, (content) => {
+      expect(content).toMatchObject({ kg: 76, serverNote: "preserved" });
+      expect(Object.isFrozen(content)).toBe(true);
+      return local.set(76);
+    }),
+  ).toBe(true);
+  expect(local.journal.queued()[0]?.base).toEqual(server);
+  expect(local.journal.serverCopy(key)).toEqual(server);
+  local.journal.applyResults(session, conflict, local.receive);
+  expect(local.journal.prepare(session)).toMatchObject([
+    {
+      op: "put",
+      baseRevision: 3,
+      submissionId: "rebased",
+      content: { kg: 76, serverNote: "preserved" },
+    },
+  ]);
+  expect(local.journal.history()?.cursor).toBe(3);
+});
+
+test("accepts same-revision live evidence with reordered JSON members", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const base = { ...key, state: "live", revision: 1, content: edit("unused", 74).content };
+  const pulled = {
+    ...base,
+    revision: 2,
+    content: { ...base.content, extra: { first: 1, second: 2 } },
+  };
+  const current = { ...pulled, content: { extra: { second: 2, first: 1 }, ...base.content } };
+  let page = { ...scope, cursor: 1, hasMore: false, changes: [base] };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/hello"))
+        return Response.json({
+          ...scope,
+          features: ["write-records"],
+          revision: 0,
+          restoredFrom: null,
+        });
+      if (url.endsWith("/pull")) return Response.json(page);
+      return Response.json({
+        ...scope,
+        results: [{ status: "conflict", reason: "stale", submissionId: "edit", current }],
+      });
+    },
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  local.journal.applyPage(session, 0, await client.pull(session, 0), local.receive);
+  local.journal.commitLocal(key, edit("edit", 75), () => local.set(75));
+  const rejected = await client.push(session, local.journal.prepare(session));
+  local.journal.applyResults(session, rejected, local.receive);
+  page = { ...page, cursor: 2, changes: [pulled] };
+  local.journal.applyPage(session, 1, await client.pull(session, 1), local.receive);
+
+  expect(
+    local.journal.tryRebaseStalePut(
+      session,
+      key,
+      "replacement",
+      ({ server }) => ({ ...server, kg: 75 }),
+      () => local.set(75),
+    ),
+  ).toBe(true);
+  expect(local.journal.queued()[0]?.base).toEqual(pulled);
+  expect(local.journal.prepare(session)).toMatchObject([
+    { baseRevision: 2, submissionId: "replacement", content: { kg: 75 } },
+  ]);
+});
+
 test("rolls back a diary write when a callback returns a thenable", async () => {
   using local = diary(":memory:");
   local.journal.bind(await candidateSession());
@@ -402,11 +566,15 @@ test("a late receipt atomically applies a newer remote copy already delivered du
   ).toThrow("transaction canceled");
   expect(local.get()).toBe(75);
   expect(local.journal.requiredRelease()).toBe("0.1");
-  local.journal.applyResults(session, ack, local.receive);
+  local.journal.applyResults(session, ack, (change) => {
+    local.receive(change);
+    if (change.state === "live") (change.content as Record<string, JsonValue>).kg = 99;
+  });
   expect(local.get()).toBe(81);
   expect(local.journal.queued()).toEqual([]);
   expect(local.journal.history()).toMatchObject({ cursor: 3, revision: 3 });
   local.journal.commitLocal(key, edit("next", 82), () => local.set(82));
+  expect(local.journal.queued()[0]?.base).toMatchObject({ revision: 3, content: { kg: 81 } });
   expect(local.journal.prepare(session)).toMatchObject([{ baseRevision: 3 }]);
 });
 
