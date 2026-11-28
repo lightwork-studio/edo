@@ -75,7 +75,18 @@ def capture(name):
 
 
 def scroll():
-    adb("shell", "input", "swipe", "300", "1150", "300", "540", "360")
+    adb("shell", "uiautomator", "dump", UI_PATH)
+    tree = ElementTree.fromstring(adb("shell", "cat", UI_PATH))
+    vertical = [
+        tuple(map(int, re.findall(r"\d+", node.attrib["bounds"])))
+        for node in tree.iter("node")
+        if node.get("scrollable") == "true" and node.get("class") == "android.widget.ScrollView"
+    ]
+    left, top, right, bottom = max(vertical, key=lambda bounds: bounds[3] - bounds[1])
+    x = str(left + max(1, (right - left) // 25))
+    source = str(bottom - (bottom - top) // 5)
+    target = str(top + (bottom - top) // 3)
+    adb("shell", "input", "swipe", x, source, x, target, "360")
 
 
 def scroll_until(label, fragments=False):
