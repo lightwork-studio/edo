@@ -192,6 +192,15 @@ function markVerified(db: SqliteConnection, sourceId: string): void {
   );
 }
 
+function markVerifiedBatch(db: SqliteConnection, sourceIds: readonly string[]): void {
+  if (!sourceIds.length) return;
+  db.run(
+    `UPDATE main.packaged_food SET validation_pending = 0 WHERE validation_pending = 1
+     AND source_id IN (SELECT value FROM json_each(?))`,
+    JSON.stringify(sourceIds),
+  );
+}
+
 function cacheRowId(row: SqlRow): string {
   if (typeof row.row_id !== "string") throw new Error("Cache row is missing its SQLite identity");
   return row.row_id;
@@ -199,6 +208,14 @@ function cacheRowId(row: SqlRow): string {
 
 function removeRow(db: SqliteConnection, row: SqlRow): void {
   db.run("DELETE FROM main.packaged_food WHERE rowid = CAST(? AS INTEGER)", cacheRowId(row));
+}
+
+function removeRows(db: SqliteConnection, rowIds: readonly string[]): void {
+  if (!rowIds.length) return;
+  db.run(
+    "DELETE FROM main.packaged_food WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))",
+    JSON.stringify(rowIds),
+  );
 }
 
 function payloadBytes(value: unknown): number {
@@ -296,13 +313,7 @@ function saveCompleteProducts(
     batch,
     budget,
   );
-  const corrupt = previous.filter((row) => !readCachedRow(row)).map(cacheRowId);
-  if (corrupt.length) {
-    db.run(
-      "DELETE FROM main.packaged_food WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))",
-      JSON.stringify(corrupt),
-    );
-  }
+  removeRows(db, previous.filter((row) => !readCachedRow(row)).map(cacheRowId));
   db.run(
     `${barcodeSaveCandidates} ${insertProducts}
      SELECT source_id, barcode, lookup_code, name, alternate_name, payload, ?, ?
@@ -323,8 +334,11 @@ function saveCompleteProducts(
 
 function evict(db: SqliteConnection, byteBudget: number, retainedIds: readonly string[]): void {
   db.exec("CREATE TEMP TABLE retained_packaged_food (source_id TEXT PRIMARY KEY NOT NULL)");
-  for (const id of retainedIds) {
-    db.run("INSERT OR IGNORE INTO temp.retained_packaged_food VALUES (?)", id);
+  if (retainedIds.length) {
+    db.run(
+      "INSERT OR IGNORE INTO temp.retained_packaged_food SELECT value FROM json_each(?)",
+      JSON.stringify(retainedIds),
+    );
   }
   const ordinary = "source_id NOT IN (SELECT source_id FROM temp.retained_packaged_food)";
   const totals = db.get(`SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) AS bytes,
@@ -337,24 +351,26 @@ function evict(db: SqliteConnection, byteBudget: number, retainedIds: readonly s
     const rows =
       db.all(`SELECT ${productColumns}, length(CAST(payload AS BLOB)) AS payload_bytes FROM main.packaged_food
       WHERE validation_pending = 1 AND ${ordinary}`);
+    const verified: string[] = [];
+    const corrupt: string[] = [];
     for (const row of rows) {
       const validated = readCachedRow(row);
-      if (validated) markVerified(db, validated.product.id.sourceId);
+      if (validated) verified.push(validated.product.id.sourceId);
       else {
-        removeRow(db, row);
+        corrupt.push(cacheRowId(row));
         used -= payloadBytes(row.payload_bytes);
       }
     }
+    markVerifiedBatch(db, verified);
+    removeRows(db, corrupt);
     if (largest > byteBudget) {
       const oversized = db.all(
         `SELECT CAST(rowid AS TEXT) AS row_id, length(CAST(payload AS BLOB)) AS payload_bytes
         FROM main.packaged_food WHERE ${ordinary} AND length(CAST(payload AS BLOB)) > ?`,
         byteBudget,
       );
-      for (const row of oversized) {
-        removeRow(db, row);
-        used -= payloadBytes(row.payload_bytes);
-      }
+      for (const row of oversized) used -= payloadBytes(row.payload_bytes);
+      removeRows(db, oversized.map(cacheRowId));
     }
     while (used > byteBudget) {
       const oldest =
@@ -363,11 +379,13 @@ function evict(db: SqliteConnection, byteBudget: number, retainedIds: readonly s
         ORDER BY accessed_at, source_id DESC LIMIT 32`);
       if (oldest.length === 0)
         throw new Error("The catalog cache budget does not match its contents");
+      const evicted: string[] = [];
       for (const row of oldest) {
-        removeRow(db, row);
+        evicted.push(cacheRowId(row));
         used -= payloadBytes(row.payload_bytes);
         if (used <= byteBudget) break;
       }
+      removeRows(db, evicted);
     }
   }
   db.exec("DROP TABLE temp.retained_packaged_food");
@@ -436,19 +454,15 @@ function touch(
     );
   }
   if (results.length) {
-    const ids = JSON.stringify(results.map(({ product }) => product.id.sourceId));
+    const ids = results.map(({ product }) => product.id.sourceId);
     db.run(
       `UPDATE main.packaged_food SET accessed_at = ? WHERE accessed_at < ?
        AND source_id IN (SELECT value FROM json_each(?))`,
       accessedAt,
       accessedAt,
-      ids,
+      JSON.stringify(ids),
     );
-    db.run(
-      `UPDATE main.packaged_food SET validation_pending = 0 WHERE validation_pending = 1
-       AND source_id IN (SELECT value FROM json_each(?))`,
-      ids,
-    );
+    markVerifiedBatch(db, ids);
   }
   return results;
 }
