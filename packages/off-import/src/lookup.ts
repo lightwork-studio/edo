@@ -90,6 +90,7 @@ async function openVerifiedCatalog(
   if (!immutableManifest.equals(text))
     throw new Error("Open Food Facts release manifest does not match activation");
 
+  signal?.throwIfAborted();
   const source = join(artifactDirectory, `${manifest.artifact.sha256}.sqlite`);
   const scratch = await mkdtemp(join(tmpdir(), "edo-off-reader-"));
   const snapshot = join(scratch, "catalog.sqlite");
@@ -163,7 +164,7 @@ export function createBarcodeLookup(
 
   async function adoptActiveRelease() {
     const manifest = await readActiveManifest(providerRoot);
-    if (!manifest) return;
+    if (!manifest || closed) return;
     const candidate = manifest.sha256;
     if (current === candidate || (rejected?.manifest === candidate && now() < rejected.retryAt)) {
       return;

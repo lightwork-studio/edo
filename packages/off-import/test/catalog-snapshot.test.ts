@@ -1,6 +1,6 @@
 import { copyFile, lstat, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { gzipSync } from "node:zlib";
 import { publishCatalog } from "@edo/catalog-import";
@@ -27,10 +27,11 @@ let inputPath: string;
 let snapshots: string[];
 
 beforeEach(async () => {
-  snapshots = [];
+  const caseSnapshots: string[] = [];
+  snapshots = caseSnapshots;
   vi.mocked(mkdtemp).mockImplementation(async (prefix, options) => {
     const path = await realFs.mkdtemp(prefix, options);
-    if (String(prefix).endsWith("edo-off-reader-")) snapshots.push(path);
+    if (String(prefix).endsWith("edo-off-reader-")) caseSnapshots.push(path);
     return path;
   });
   directory = await mkdtemp(join(tmpdir(), "edo-reader-test-"));
@@ -307,3 +308,36 @@ it("releases a staged snapshot when the service closes during a cold lookup", as
   await expect(pending).resolves.toEqual({ status: "unavailable" });
   await expectSnapshotRemoved(0);
 });
+
+it.each(["active manifest", "immutable manifest"] as const)(
+  "does not allocate a catalog snapshot after closing during the %s read",
+  async (pauseAt) => {
+    await publish("Original", "release-1");
+    using lookup = createBarcodeLookup(root, { liveLookup: null });
+    const providerRoot = join(root, provider);
+    const opened = deferred();
+    const resume = deferred();
+    vi.mocked(open).mockImplementation(async (name, flags, mode) => {
+      const file = await realFs.open(name, flags, mode);
+      const paused =
+        pauseAt === "active manifest"
+          ? name === join(providerRoot, "active.json")
+          : dirname(String(name)) === join(providerRoot, "releases");
+      if (paused) {
+        opened.resolve();
+        await resume.promise;
+      }
+      return file;
+    });
+
+    const pending = lookup.lookupBarcode(code);
+    await opened.promise;
+    try {
+      lookup[Symbol.dispose]();
+    } finally {
+      resume.resolve();
+    }
+    await expect(pending).resolves.toEqual({ status: "unavailable" });
+    expect(snapshots).toEqual([]);
+  },
+);
