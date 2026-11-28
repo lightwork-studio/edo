@@ -2,7 +2,7 @@ import { searchBls } from "@edo/catalog-import/bls-search";
 import { type Food, roundNutritionForDisplay } from "@edo/core";
 import type { PackagedFoodCache } from "@edo/storage";
 import type { SQLiteDatabase } from "expo-sqlite";
-import { useEffect, useState } from "react";
+import { type ComponentRef, useEffect, useRef, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { openFoodFactsLicenseUrl } from "./barcode";
 import { SourceLink } from "./catalog-source-link";
@@ -41,6 +41,7 @@ export function SearchScreen({
 }) {
   const [credit, setCredit] = useState(false);
   const [focused, setFocused] = useState(false);
+  const searchInput = useRef<ComponentRef<typeof TextInput>>(null);
 
   return (
     <>
@@ -62,6 +63,7 @@ export function SearchScreen({
               <View style={local.lensHandle} />
             </View>
             <TextInput
+              ref={searchInput}
               accessibilityLabel={t.search}
               placeholder={t.searchPlaceholder}
               placeholderTextColor={colors.muted}
@@ -78,7 +80,10 @@ export function SearchScreen({
               <Pressable
                 accessibilityLabel={t.clearSearch}
                 accessibilityRole="button"
-                onPress={() => onQuery("")}
+                onPress={() => {
+                  onQuery("");
+                  searchInput.current?.focus();
+                }}
                 style={local.clear}
               >
                 <Text style={local.clearText}>×</Text>
@@ -249,7 +254,6 @@ function Results({
             <Text accessibilityRole="header" style={local.groupText}>
               {t.databaseFoods}
             </Text>
-            <Text style={styles.meta}>kcal</Text>
           </View>
         ) : undefined
       }
@@ -277,7 +281,16 @@ function Results({
                 {source} · {basis}
               </Text>
             </View>
-            <Text style={[styles.body, styles.numbers, local.energy]}>{energy ?? "—"}</Text>
+            <Text style={[energy === null ? styles.meta : styles.body, local.energy]}>
+              {energy === null ? (
+                t.unavailable
+              ) : (
+                <>
+                  <Text style={styles.numbers}>{energy}</Text>
+                  <Text style={styles.meta}> kcal</Text>
+                </>
+              )}
+            </Text>
             <View
               importantForAccessibility="no-hide-descendants"
               accessibilityElementsHidden
@@ -357,10 +370,6 @@ const local = StyleSheet.create({
   actionLabel: { color: colors.text, fontSize: 14, fontWeight: "600" },
   results: { padding: 16 },
   groupTitle: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 7,
@@ -380,7 +389,7 @@ const local = StyleSheet.create({
   },
   finalResult: { borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
   name: { color: colors.text, fontSize: 16, fontWeight: "600", marginBottom: 3 },
-  energy: { flexShrink: 1, maxWidth: "28%", textAlign: "right" },
+  energy: { flexShrink: 1, maxWidth: "32%", textAlign: "right" },
   pick: {
     width: 34,
     height: 34,
