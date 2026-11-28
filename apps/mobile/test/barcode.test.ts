@@ -619,3 +619,105 @@ it("reports that an expanded-code lookup is rate-limited after a printed-code mi
     }),
   ).resolves.toEqual({ status: "rate-limited" });
 });
+
+it("offers the last captured favorite after the disposable catalog cache is lost", async () => {
+  using privateDb = new DatabaseSync(":memory:");
+  using cacheDb = new DatabaseSync(":memory:");
+  const options = {
+    connection: testConnection(privateDb),
+    async backupBeforeMigration() {
+      throw new Error("The test diary is blank or current");
+    },
+  };
+  const diary = await openDiary(options);
+  const today = "2026-11-27";
+  const prior = foodForPackagedProduct(product);
+  const latest = {
+    ...prior,
+    name: "Last logged carrot juice",
+    release: "captured-later",
+    nutrition: {
+      ...prior.nutrition,
+      nutrients: { ...prior.nutrition.nutrients, kcal: 47.5 },
+    },
+  };
+  const olderFavorite = { ...prior, id: { ...prior.id, sourceId: "older-favorite" } };
+  const unrelated = { ...prior, id: { ...prior.id, sourceId: "not-a-favorite" } };
+  for (const [id, localDay, hour, food] of [
+    ["first", today, 10, prior],
+    ["later", today, 12, latest],
+    ["outside-window", "2026-10-28", 12, olderFavorite],
+    ["another-product", today, 14, unrelated],
+  ] as const) {
+    diary.saveMeal({
+      id,
+      localDay,
+      occurredAt: Date.parse(`${localDay}T${hour}:00:00Z`),
+      items: [createDiaryItem(`item-${id}`, food, { amount: 150, unit: "ml" })],
+    });
+  }
+  for (const id of [latest.id, olderFavorite.id]) diary.setFavorite(id, true);
+  const before = diary.exportPrivateArchive();
+  const reopened = await openDiary(options);
+  const cache = openPackagedFoodCache(testConnection(cacheDb));
+  const args = {
+    ids: reopened.listFavorites(),
+    localFoods: [],
+    catalog: null,
+    cache,
+    language: "en" as const,
+    accessedAt: 100,
+    recentDiary: { diary: reopened, today },
+  };
+  const key = foodKey(latest.id);
+  const fromCapturedMeal = await resolveFavoriteFoods(args);
+  expect(fromCapturedMeal.byId).toEqual(new Map([[key, latest]]));
+  expect(fromCapturedMeal.fromDiary).toEqual(new Set([key]));
+  expect(fromCapturedMeal.failedProviders).toEqual(new Set());
+  expect(reopened.exportPrivateArchive()).toBe(before);
+  expect(cache.findByIds([latest.id.sourceId], 100)).toEqual([]);
+
+  const updated = { ...product, name: "Current cached carrot juice", release: "current-cache" };
+  cache.save([updated], 100, []);
+  const fromCache = await resolveFavoriteFoods(args);
+  expect(fromCache.byId.get(key)).toEqual(foodForPackagedProduct(updated));
+  expect(fromCache.fromDiary).toEqual(new Set());
+});
+
+it("can use a favorite from a readable diary day when another day and the cache fail", async () => {
+  const food = foodForPackagedProduct(product);
+  const fromDiary = {
+    diary: {
+      listMeals(day: string) {
+        if (day === "2026-11-29") throw new Error("Unreadable synthetic day");
+        return day === "2026-11-27"
+          ? [
+              {
+                id: "meal",
+                localDay: day,
+                occurredAt: 0,
+                items: [createDiaryItem("item", food, { amount: 100, unit: "ml" })],
+              },
+            ]
+          : [];
+      },
+    },
+    today: "2026-11-27",
+  };
+  const resolved = await resolveFavoriteFoods({
+    ids: [food.id, { provider: "open-food-facts", sourceId: "missing" }],
+    localFoods: [],
+    catalog: null,
+    cache: {
+      findByIds() {
+        throw new Error("Unreadable synthetic cache");
+      },
+    },
+    language: "de",
+    accessedAt: 100,
+    recentDiary: fromDiary,
+  });
+  expect(resolved.byId.get(foodKey(food.id))).toEqual(food);
+  expect(resolved.fromDiary).toEqual(new Set([foodKey(food.id)]));
+  expect(resolved.failedProviders.has("open-food-facts")).toBe(true);
+});
