@@ -202,19 +202,19 @@ export function TargetRing({
   size,
   color,
   fraction,
+  baseline = 0,
   children,
 }: {
   size: number;
   color: string;
   fraction: number | undefined;
+  baseline?: number;
   children: ReactNode;
 }) {
   const rim = size >= 100 ? 13 : size >= 40 ? 4 : 3;
   const circle = { width: size, height: size, borderRadius: size / 2, borderWidth: rim };
   const amount = fraction ?? 0;
-  const radians = amount * 2 * Math.PI;
-  const radius = (size - rim) / 2;
-  const partial = amount > 0 && amount < 1;
+  const start = Math.min(baseline, amount);
   return (
     <View style={[ringStyles.shell, { width: size, height: size }]}>
       <View
@@ -222,61 +222,75 @@ export function TargetRing({
         accessibilityElementsHidden
         style={StyleSheet.absoluteFill}
       >
-        <View
-          style={[circle, ringStyles.paint, { borderColor: amount >= 1 ? color : colors.field }]}
-        />
-        {/* Each clipped half advances clockwise from its own start point. */}
-        {partial &&
-          [
-            { left: size / 2, offset: -size / 2, degrees: Math.min(amount, 0.5) * 360 - 135 },
-            ...(amount > 0.5 ? [{ left: 0, offset: 0, degrees: (amount - 0.5) * 360 + 45 }] : []),
-          ].map(({ left, offset, degrees }) => (
-            <View key={left} style={[ringStyles.clip, { left, width: size / 2, height: size }]}>
-              <View
-                style={[
-                  circle,
-                  ringStyles.paint,
-                  {
-                    left: offset,
-                    borderTopColor: color,
-                    borderRightColor: color,
-                    transform: [{ rotate: `${degrees}deg` }],
-                  },
-                ]}
-              />
-            </View>
-          ))}
-        {partial && (
-          <>
-            <View
-              style={[
-                ringStyles.cap,
-                {
-                  width: rim,
-                  height: rim,
-                  borderRadius: rim / 2,
-                  backgroundColor: color,
-                  left: radius,
-                },
-              ]}
-            />
-            <View
-              style={[
-                ringStyles.cap,
-                {
-                  width: rim,
-                  height: rim,
-                  borderRadius: rim / 2,
-                  backgroundColor: color,
-                  left: radius + Math.sin(radians) * radius,
-                  top: radius - Math.cos(radians) * radius,
-                },
-              ]}
-            />
-          </>
+        <View style={[circle, ringStyles.paint, { borderColor: colors.field }]} />
+        {start > 0 && <TargetArc size={size} rim={rim} color={color} amount={start} dim />}
+        {amount > start && (
+          <TargetArc size={size} rim={rim} color={color} amount={amount - start} start={start} />
         )}
       </View>
       {children}
+    </View>
+  );
+}
+
+function TargetArc({
+  size,
+  rim,
+  color,
+  amount,
+  start = 0,
+  dim = false,
+}: {
+  size: number;
+  rim: number;
+  color: string;
+  amount: number;
+  start?: number;
+  dim?: boolean;
+}) {
+  const circle = { width: size, height: size, borderRadius: size / 2, borderWidth: rim };
+  const opacity = dim ? 0.35 : 1;
+  if (amount >= 1) {
+    return <View style={[circle, ringStyles.paint, { borderColor: color, opacity }]} />;
+  }
+  const radians = amount * 2 * Math.PI;
+  const radius = (size - rim) / 2;
+  const cap = { width: rim, height: rim, borderRadius: rim / 2, backgroundColor: color };
+  return (
+    <View
+      style={[StyleSheet.absoluteFill, { opacity, transform: [{ rotate: `${start * 360}deg` }] }]}
+    >
+      {/* Each clipped half advances clockwise from its own start point. */}
+      {[
+        { left: size / 2, offset: -size / 2, degrees: Math.min(amount, 0.5) * 360 - 135 },
+        ...(amount > 0.5 ? [{ left: 0, offset: 0, degrees: (amount - 0.5) * 360 + 45 }] : []),
+      ].map(({ left, offset, degrees }) => (
+        <View key={left} style={[ringStyles.clip, { left, width: size / 2, height: size }]}>
+          <View
+            style={[
+              circle,
+              ringStyles.paint,
+              {
+                left: offset,
+                borderTopColor: color,
+                borderRightColor: color,
+                transform: [{ rotate: `${degrees}deg` }],
+              },
+            ]}
+          />
+        </View>
+      ))}
+      <View style={[ringStyles.cap, cap, { left: radius }]} />
+      <View
+        style={[
+          ringStyles.cap,
+          cap,
+          {
+            left: radius + Math.sin(radians) * radius,
+            top: radius - Math.cos(radians) * radius,
+          },
+        ]}
+      />
     </View>
   );
 }

@@ -358,6 +358,50 @@ test("keeps individual entries usable if their combined nutrients overflow", () 
   expect(totalNutrition([{ ...meal, items: items.slice(0, 1) }])?.kcal).toBe(1e308);
 });
 
+test("uses the other captured items when previewing an edited portion for the day", () => {
+  const food: Food = {
+    id: { provider: "local", sourceId: "synthetic-preview" },
+    release: null,
+    name: "Synthetic food",
+    preparation: "unknown",
+    nutrition: {
+      basis: "per-100-g",
+      nutrients: { kcal: 80, proteinG: null, availableCarbohydratesG: 3, fatG: 2, fiberG: 0 },
+    },
+  };
+  const other = {
+    ...food,
+    nutrition: {
+      ...food.nutrition,
+      nutrients: { ...food.nutrition.nutrients, kcal: 120, proteinG: 7 },
+    },
+  };
+  const portion = { amount: 100, unit: "g" } as const;
+  const meals = [
+    {
+      id: "first",
+      localDay: "2026-11-27",
+      occurredAt: 0,
+      items: [createDiaryItem("edit", food, portion)],
+    },
+    {
+      id: "second",
+      localDay: "2026-11-27",
+      occurredAt: 1,
+      items: [createDiaryItem("keep", other, portion)],
+    },
+  ];
+  expect(totalNutrition(meals)).toMatchObject({ kcal: 200, proteinG: null });
+  expect(totalNutrition(meals, { mealId: "first", itemId: "edit" })).toMatchObject({
+    kcal: 120,
+    proteinG: 7,
+  });
+  expect(totalNutrition(meals, { mealId: "second", itemId: "edit" })).toMatchObject({
+    kcal: 200,
+    proteinG: null,
+  });
+});
+
 test("uses the first supported device language and keeps its regional locale", () => {
   expect(
     appLocale([

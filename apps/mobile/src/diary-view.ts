@@ -102,9 +102,18 @@ export function defaultFoodPortion(food: Food): Portion {
   }
 }
 
-export function totalNutrition(meals: readonly DiaryMeal[]): Nutrients | null {
+export function totalNutrition(
+  meals: readonly DiaryMeal[],
+  omit?: { readonly mealId: string; readonly itemId: string },
+): Nutrients | null {
   try {
-    return sumNutrition(meals.flatMap((meal) => meal.items.map((item) => item.nutrients)));
+    return sumNutrition(
+      meals.flatMap((meal) =>
+        meal.items
+          .filter((item) => !omit || meal.id !== omit.mealId || item.id !== omit.itemId)
+          .map((item) => item.nutrients),
+      ),
+    );
   } catch (error) {
     if (error instanceof RangeError) return null;
     throw error;
