@@ -28,7 +28,7 @@ print("A stalled archive stream released its reader after cancellation")
 func readFixture(_ source: String, maxBytes: Int, requireArchiveObject: Bool) throws -> String? {
     let fixture = Pipe()
     defer { try? fixture.fileHandleForReading.close() }
-    try fixture.fileHandleForWriting.write(contentsOf: source.utf8)
+    try fixture.fileHandleForWriting.write(contentsOf: Data(source.utf8))
     try fixture.fileHandleForWriting.close()
     return try readArchive(
         from: fixture.fileHandleForReading,
