@@ -126,7 +126,11 @@ function diarySyncSession() {
   return createSyncClient({
     origin: "https://example.test",
     releases: [
-      { release: "0.1", features: ["write-records"], writableKinds: ["meal", "weigh-in"] },
+      {
+        release: "0.1",
+        features: ["write-records"],
+        writableKinds: ["meal", "weigh-in", "nutrition-target"],
+      },
     ],
     authorization: () => "Bearer synthetic",
     fetch: async () =>
@@ -253,6 +257,43 @@ test("commits a bound weigh-in and its pending tombstone with the private diary"
   expect(reopened.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([]);
   expect(reopened.sync.journal.queued()).toMatchObject([
     { attempt, pending: { op: "delete", submissionId: "delete-weight" } },
+  ]);
+});
+
+test("queues immutable bound target revisions and restores the previous target after deletion", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  diary.saveNutritionTarget(target);
+  expect(diary.sync.journal.queued()).toEqual([]);
+
+  const session = await diarySyncSession();
+  diary.sync.journal.bind(session);
+  diary.sync.saveNutritionTarget(revisedTarget, "save-target");
+  expect(diary.nutritionTargetAt(target.effectiveDay)).toEqual(revisedTarget);
+  const [attempt] = diary.sync.journal.prepare(session);
+  if (attempt?.op !== "put") throw new Error("Expected a nutrition target submission");
+  expect(
+    applyRecordContent({
+      key: attempt,
+      release: session.release,
+      current: null,
+      submitted: attempt.content,
+    }),
+  ).toEqual(revisedTarget);
+  expect(() =>
+    diary.sync.saveNutritionTarget(
+      { ...revisedTarget, configuredAt: revisedTarget.configuredAt + 1 },
+      "target-deletion",
+    ),
+  ).toThrow(/requires a new revision ID/);
+  expect(diary.sync.journal.queued()).toMatchObject([{ attempt, pending: null }]);
+
+  diary.sync.deleteNutritionTarget(revisedTarget.id, "target-deletion");
+  source.db.close();
+  const reopened = await createDatabase().start();
+  expect(reopened.nutritionTargetAt(target.effectiveDay)).toEqual(target);
+  expect(reopened.sync.journal.queued()).toMatchObject([
+    { attempt, pending: { op: "delete", submissionId: "target-deletion" } },
   ]);
 });
 

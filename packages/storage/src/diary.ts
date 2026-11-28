@@ -3,9 +3,13 @@ import { openSyncJournal } from "@edo/sync";
 import {
   type DiaryProgressStore,
   diaryProgress,
+  type NutritionTargetRecord,
+  prepareNutritionTarget,
   prepareWeighIn,
+  readNutritionTarget,
   readWeighIn,
   verifyDiaryProgress,
+  writeNutritionTarget,
   writeWeighIn,
 } from "./diary-progress.ts";
 import {
@@ -63,6 +67,8 @@ export interface SyncDiaryStore extends SyncMealStore {
   readonly sync: SyncMealStore["sync"] & {
     saveWeighIn(entry: WeighIn, submissionId: string): void;
     deleteWeighIn(id: string, submissionId: string): void;
+    saveNutritionTarget(entry: NutritionTargetRecord, submissionId: string): void;
+    deleteNutritionTarget(id: string, submissionId: string): void;
   };
 }
 
@@ -260,6 +266,30 @@ export async function openDiary({
           db.run("DELETE FROM diary_weigh_ins WHERE id = ?", readingId);
           return { op: "delete" };
         });
+      },
+      saveNutritionTarget: (entry, submissionId) => {
+        const target = prepareNutritionTarget(entry);
+        journal.commitLocalProjection(
+          { kind: "nutrition-target", id: target.id },
+          submissionId,
+          () => {
+            writeNutritionTarget(db, target);
+            const row = db.get("SELECT * FROM diary_targets WHERE id = ?", target.id);
+            if (!row) throw new Error("Could not read the saved nutrition target for sync");
+            return { op: "put", content: readNutritionTarget(row) };
+          },
+        );
+      },
+      deleteNutritionTarget: (id, submissionId) => {
+        const targetId = diaryId(id, "target ID");
+        journal.commitLocalProjection(
+          { kind: "nutrition-target", id: targetId },
+          submissionId,
+          () => {
+            db.run("DELETE FROM diary_targets WHERE id = ?", targetId);
+            return { op: "delete" };
+          },
+        );
       },
     },
     getMeal: (id) => inCurrentDiary(db, "BEGIN", () => readMeal(db, diaryId(id, "meal ID"))),

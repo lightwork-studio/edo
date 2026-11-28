@@ -74,6 +74,19 @@ export function readNutritionTarget(row: SqlRow): NutritionTargetRecord {
   };
 }
 
+export function prepareNutritionTarget(entry: NutritionTargetRecord): NutritionTargetRecord {
+  return readNutritionTarget({
+    id: entry.id,
+    effective_day: entry.effectiveDay,
+    configured_at: entry.configuredAt,
+    mode: entry.mode,
+    kcal: entry.target.kcal,
+    protein_g: entry.target.proteinG,
+    fat_g: entry.target.fatG,
+    carbohydrate_g: entry.target.availableCarbohydratesG,
+  });
+}
+
 export function validateTargetBudget(target: DailyNutritionTarget): void {
   const expected = manualNutritionTarget(target);
   if (target.availableCarbohydratesG !== expected.availableCarbohydratesG) {
@@ -109,6 +122,19 @@ function insertNutritionTarget(db: DiarySqliteConnection, record: NutritionTarge
     record.target.fatG,
     record.target.availableCarbohydratesG,
   );
+}
+
+export function writeNutritionTarget(
+  db: DiarySqliteConnection,
+  record: NutritionTargetRecord,
+): void {
+  const existing = db.get("SELECT * FROM diary_targets WHERE id = ?", record.id);
+  if (existing) {
+    if (JSON.stringify(readNutritionTarget(existing)) === JSON.stringify(record)) return;
+    throw new Error("Changing a nutrition target requires a new revision ID");
+  }
+  validateTargetBudget(record.target);
+  insertNutritionTarget(db, record);
 }
 
 export function readDiaryProgressRecords(db: DiarySqliteConnection) {
@@ -159,25 +185,8 @@ export function diaryProgress(db: DiarySqliteConnection): DiaryProgressStore {
       );
     },
     saveNutritionTarget(entry) {
-      const record = readNutritionTarget({
-        id: entry.id,
-        effective_day: entry.effectiveDay,
-        configured_at: entry.configuredAt,
-        mode: entry.mode,
-        kcal: entry.target.kcal,
-        protein_g: entry.target.proteinG,
-        fat_g: entry.target.fatG,
-        carbohydrate_g: entry.target.availableCarbohydratesG,
-      });
-      inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
-        const existing = db.get("SELECT * FROM diary_targets WHERE id = ?", record.id);
-        if (existing) {
-          if (JSON.stringify(readNutritionTarget(existing)) === JSON.stringify(record)) return;
-          throw new Error("Changing a nutrition target requires a new revision ID");
-        }
-        validateTargetBudget(record.target);
-        insertNutritionTarget(db, record);
-      });
+      const record = prepareNutritionTarget(entry);
+      inCurrentDiary(db, "BEGIN IMMEDIATE", () => writeNutritionTarget(db, record));
     },
     nutritionTargetAt(day) {
       const selected = readDay(day);
