@@ -62,7 +62,7 @@ def app_locale(locale):
 
 
 def search(add_food, field, query, result):
-    tap(add_food)
+    tap(add_food, fragments=True)
     tap(field)
     adb("shell", "input", "text", query.replace(" ", "%s"))
     find(result, fragments=True)
