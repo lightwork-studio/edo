@@ -184,3 +184,65 @@ test("bounds an unresponsive extractor and never retries or starts catalog work"
     vi.useRealTimers();
   }
 });
+
+test("links whole phrases without overlapping, repeated, or split Unicode spans", async () => {
+  const transcript = "🍎 Apfel, danach ein pineapple, Mu\u0308sli und zwei Bananen, plus Tee.";
+  const item = (name: string, quote: string) => ({ name, quote, portion: null, confidence: 0.5 });
+  const catalog = { getAllAsync: vi.fn(async () => []) };
+  const candidates = [
+    item("Apfel", "Apfel"),
+    item("Apple", "apple"),
+    item("Müsli", "Mu"),
+    item("Müsli", "Mu\u0308sli"),
+    item("Banane", "zwei Bananen"),
+    item("Banane", "Bananen"),
+    item("Tee", "Tee"),
+    item("Tee", "Tee"),
+  ];
+  const draft = await draftFromTranscript(catalog, async () => candidates, {
+    language: "de",
+    transcript,
+  });
+  expect(draft.state).toBe("ready");
+  if (draft.state !== "ready") throw new Error("Draft unavailable");
+  expect(
+    draft.items.map(({ phrase }) => phrase && transcript.slice(phrase.start, phrase.end)),
+  ).toEqual(["Apfel", null, null, "Mu\u0308sli", null, null, null, null]);
+  expect(draft.items[0]?.phrase).toEqual({ start: 3, end: 8 });
+});
+
+test("checks the elapsed deadline before querying BLS even if the timer has not run", async () => {
+  const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+  try {
+    const getAllAsync = vi.fn(async () => []);
+    await expect(
+      draftFromTranscript(
+        { getAllAsync },
+        async () => {
+          clock.mockReturnValue(10_001);
+          return [englishItem];
+        },
+        input,
+      ),
+    ).resolves.toEqual({ state: "timed-out" });
+    expect(getAllAsync).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test("discards a catalog result that completes after the elapsed deadline", async () => {
+  const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+  try {
+    const getAllAsync = vi.fn(async () => {
+      clock.mockReturnValue(10_001);
+      return [];
+    });
+    await expect(
+      draftFromTranscript({ getAllAsync }, async () => [englishItem], input),
+    ).resolves.toEqual({ state: "timed-out" });
+    expect(getAllAsync).toHaveBeenCalledOnce();
+  } finally {
+    clock.mockRestore();
+  }
+});
