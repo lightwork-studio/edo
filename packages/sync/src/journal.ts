@@ -3,9 +3,7 @@ import {
   assertSession,
   type Change,
   decodeChange,
-  decodePullResponse,
   decodeSubmission,
-  decodeSubmissionResult,
   isKnownRecordKind,
   type JsonObject,
   maxSyncSubmissions,
@@ -19,7 +17,7 @@ import {
 } from "@edo/contract";
 import {
   assertReceiptMatchesAttempt,
-  assertResponseSession,
+  authenticatedResponseSnapshot,
   maxSyncRequestBytes,
   normalizeSyncServer,
   serverForSession,
@@ -374,10 +372,9 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     ) {
       return transact(() => {
         const binding = checkSession(session);
-        assertResponseSession(response, session);
+        const { results } = authenticatedResponseSnapshot(response, session);
         let revision = binding.revision;
-        for (const outcome of response.results) {
-          const result = decodeSubmissionResult(outcome);
+        for (const result of results) {
           const row = db.get(
             "SELECT * FROM edo_sync_outbox WHERE attempt_id = ?",
             result.submissionId,
@@ -431,12 +428,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       input: PullResponse,
       applyRemote: (change: Change) => undefined,
     ) {
-      assertResponseSession(input, session, requestCursor);
-      const page = decodePullResponse(
-        input,
-        { ...syncScope(session), cursor: requestCursor },
-        session,
-      );
+      const page = authenticatedResponseSnapshot(input, session, requestCursor);
       return transact(() => {
         const binding = checkSession(session);
         if (binding.cursor !== requestCursor)

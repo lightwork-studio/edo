@@ -232,6 +232,86 @@ function candidateSession(
   }).connect();
 }
 
+test("the journal consumes the authenticated push and pull snapshots", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const change = { ...key, state: "live", revision: 1, content: edit("unused", 74).content };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/hello")) {
+        return Response.json({
+          ...scope,
+          revision: 0,
+          restoredFrom: null,
+          features: ["write-records"],
+        });
+      }
+      if (url.endsWith("/push")) {
+        return Response.json({
+          ...scope,
+          results: [
+            { submissionId: "local", status: "retryable", reason: "temporarily-unavailable" },
+          ],
+        });
+      }
+      return Response.json({ ...scope, cursor: 1, hasMore: false, changes: [change] });
+    },
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  local.journal.commitLocal(key, edit("local", 75), () => local.set(75));
+  const attempt = local.journal.prepare(session);
+  const receipt = await client.push(session, attempt);
+  Object.defineProperty(receipt.results, Symbol.iterator, {
+    *value() {
+      yield { submissionId: "local", status: "accepted", revision: 99 };
+    },
+  });
+  local.journal.applyResults(session, receipt, local.receive);
+  expect.soft(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+  expect.soft(local.journal.prepare(session)).toEqual(attempt);
+
+  // A second reader with no pending edit must project the original disk value.
+  using peer = diary(":memory:");
+  peer.journal.bind(session);
+  const page = await client.pull(session, 0);
+  const changes = page.changes;
+  let reads = 0;
+  Object.defineProperty(page, "changes", {
+    enumerable: true,
+    get: () => (++reads === 1 ? changes : [{ ...change, content: { ...change.content, kg: 98 } }]),
+  });
+  peer.journal.applyPage(session, 0, page, peer.receive);
+  expect(peer.get()).toBe(74);
+  expect(peer.journal.history()).toMatchObject({ revision: 1, cursor: 1 });
+});
+
+test("the journal refuses a response whose enumerable payload has changed", async () => {
+  using local = diary(":memory:");
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (input) =>
+      Response.json(
+        String(input).endsWith("/hello")
+          ? { ...scope, revision: 0, restoredFrom: null, features: ["write-records"] }
+          : { ...scope, cursor: 0, hasMore: false, changes: [] },
+      ),
+  });
+  const session = await client.connect();
+  local.journal.bind(session);
+  const page = await client.pull(session, 0);
+  Object.defineProperty(page, "cursor", { value: 42 });
+  expect(() => local.journal.applyPage(session, 0, page, local.receive)).toThrow(
+    expect.objectContaining({ code: "invalid-request" }),
+  );
+  expect(local.journal.history()).toMatchObject({ revision: 0, cursor: 0 });
+});
+
 test("an unnegotiated session cannot bind a private diary", async () => {
   using local = diary(":memory:");
   const session = await candidateSession();

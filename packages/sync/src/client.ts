@@ -48,11 +48,20 @@ export function serverForSession(session: NegotiatedSync): string {
   return server;
 }
 
-export function assertResponseSession(
+export function authenticatedResponseSnapshot(
+  response: PushResponse,
+  session: NegotiatedSync,
+): PushResponse;
+export function authenticatedResponseSnapshot(
+  response: PullResponse,
+  session: NegotiatedSync,
+  cursor: number,
+): PullResponse;
+export function authenticatedResponseSnapshot(
   response: PushResponse | PullResponse,
   session: NegotiatedSync,
   cursor?: number,
-): void {
+): PushResponse | PullResponse {
   const origin = responseOrigin.get(response);
   if (!origin || origin.session !== session) {
     throw new SyncWireError("update-required", "The response was not issued for this connection");
@@ -63,6 +72,9 @@ export function assertResponseSession(
   if (origin.snapshot !== JSON.stringify(response)) {
     throw new SyncWireError("invalid-request", "The response changed after validation");
   }
+  // The saved JSON came from the appropriate wire decoder before the client returned it.
+  // Never consult the caller-owned response again when writing to the diary.
+  return JSON.parse(origin.snapshot) as PushResponse | PullResponse;
 }
 
 export function assertReceiptMatchesAttempt(response: PushResponse, attempt: Submission): void {
