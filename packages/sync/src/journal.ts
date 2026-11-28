@@ -153,18 +153,57 @@ function pinnedRelease(db: JournalSqlite): string | null {
   return release;
 }
 
-function remoteRecord(db: JournalSqlite, key: RecordKey): Change | null {
-  const row = db.get(
-    "SELECT revision, content FROM edo_sync_remote WHERE kind = ? AND id = ?",
-    key.kind,
-    key.id,
-  );
+function readRemoteCopy(row: Row | undefined, key: RecordKey): Change | null {
   if (!row || typeof row.content !== "string") return null;
   const record = decodeChange(JSON.parse(row.content));
   if (record.kind !== key.kind || record.id !== key.id || record.revision !== row.revision) {
     throw new Error("Stored remote identity is invalid");
   }
   return record;
+}
+
+function remoteRecord(db: JournalSqlite, key: RecordKey): Change | null {
+  return readRemoteCopy(
+    db.get(
+      "SELECT revision, content FROM edo_sync_remote WHERE kind = ? AND id = ?",
+      key.kind,
+      key.id,
+    ),
+    key,
+  );
+}
+
+function retainDisplacedCopy(db: JournalSqlite, attempt: Submission, incoming: Change) {
+  const previous = remoteRecord(db, attempt);
+  if (
+    !previous ||
+    previous.state === "unavailable" ||
+    previous.revision >= incoming.revision ||
+    previous.revision < (attempt.baseRevision ?? 0)
+  )
+    return;
+  db.run(
+    `INSERT INTO edo_sync_attempt_observations VALUES (?, ?, ?)
+    ON CONFLICT(submission_id,revision) DO NOTHING`,
+    attempt.submissionId,
+    previous.revision,
+    JSON.stringify(previous),
+  );
+}
+
+function attemptObservation(
+  db: JournalSqlite,
+  attempt: Submission,
+  revision: number,
+): Change | null {
+  return readRemoteCopy(
+    db.get(
+      "SELECT revision, content FROM edo_sync_attempt_observations WHERE submission_id = ? AND revision = ?",
+      attempt.submissionId,
+      revision,
+    ),
+    attempt,
+  );
 }
 
 interface MealProjection {
@@ -530,6 +569,19 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             !hasLocalWork(next) &&
             remote.state !== "unavailable" &&
             remote.revision >= (next.baseRevision ?? 0);
+          let withBase = withPulledBase(next, remote);
+          if (!projectRemote && result.status === "accepted" && !withBase.base) {
+            withBase = withPulledBase(
+              withBase,
+              attemptObservation(db, record.attempt, result.revision),
+            );
+          }
+          if (result.status !== "retryable") {
+            db.run(
+              "DELETE FROM edo_sync_attempt_observations WHERE submission_id = ?",
+              result.submissionId,
+            );
+          }
           if (projectRemote) {
             const projected = createOutboxRecord(remote, remote);
             requireSynchronousWrite(applyRemote(remote));
@@ -538,7 +590,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
               writeMealProjection(db, record.key.id, pulledMealProjection(projected.base));
             }
           } else {
-            saveRecord(db, withPulledBase(next, remote), release);
+            saveRecord(db, withBase, release);
             if (result.status === "accepted" && record.key.kind === "meal") {
               const attempt = record.attempt;
               const content = attempt.op === "put" ? attempt.content : null;
@@ -574,6 +626,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           throw new Error("The pull cursor changed before the page was saved");
         for (const change of page.changes) {
           const { record, release } = localRecord(db, change);
+          if (record.attempt) retainDisplacedCopy(db, record.attempt, change);
           db.run(
             `INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)
             ON CONFLICT(kind,id) DO UPDATE SET revision = excluded.revision, content = excluded.content

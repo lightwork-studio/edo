@@ -19,6 +19,11 @@ copies and the pull cursor commit in one transaction. The journal keeps a newer 
 separately while a local attempt is pending. The final acknowledgement applies that copy
 with the diary update when the last local edit clears.
 
+While a submission is in flight, a pull can replace the last account copy with a newer
+revision. The journal keeps displaced complete copies for that submission until its terminal
+receipt. It can use the copy at the accepted revision as the original for a newer draft.
+If the device never received that revision, the original still has no value.
+
 A stale or rejected mutation remains queued with its server evidence. A caller pulls the current
 copy before offering review. List refusals through `blockedRecords`, which returns record keys
 and statuses in pages. Open the selected record with `blockedReview` to read its current values.
