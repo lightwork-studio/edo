@@ -1,4 +1,12 @@
-import type { DiaryItem, Food, FoodId, FoodNutrition, Nutrients, Portion } from "@edo/core";
+import type {
+  DiaryItem,
+  DiaryMeal,
+  Food,
+  FoodId,
+  FoodNutrition,
+  Nutrients,
+  Portion,
+} from "@edo/core";
 
 function object(value: unknown, name: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -149,5 +157,29 @@ export function readSnapshot(input: unknown): Omit<DiaryItem, "id"> {
     portion: readPortion(portion),
     food: readFood(food),
     nutrients: readNutrients(nutrients),
+  };
+}
+
+/** Read the captured meal fields supported by this version of the diary. */
+export function readMealSnapshot(input: unknown): DiaryMeal {
+  const meal = object(input, "meal snapshot");
+  if (!Array.isArray(meal.items)) throw new TypeError("Invalid diary meal items");
+  const items: DiaryItem[] = [];
+  const ids = new Set<string>();
+  for (let index = 0; index < meal.items.length; index++) {
+    const raw = object(meal.items[index], "meal item");
+    const id = diaryId(raw.id, "item ID");
+    if (ids.has(id)) throw new TypeError("Duplicate diary meal item ID");
+    ids.add(id);
+    items.push({ id, ...readSnapshot(raw) });
+  }
+  const utcOffsetMinutes = readUtcOffset(meal.utcOffsetMinutes);
+  if (meal.utcOffsetMinutes === null) throw new TypeError("Invalid diary UTC offset");
+  return {
+    id: diaryId(meal.id, "meal ID"),
+    localDay: readDay(meal.localDay),
+    occurredAt: readInstant(meal.occurredAt),
+    ...(utcOffsetMinutes === undefined ? {} : { utcOffsetMinutes }),
+    items,
   };
 }
