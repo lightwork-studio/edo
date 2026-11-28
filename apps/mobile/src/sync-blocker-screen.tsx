@@ -24,7 +24,7 @@ const copy = {
     put: "The phone’s latest saved action is an edit.",
     delete: "The phone’s latest saved action is a deletion.",
     weighIn: {
-      phone: "Latest phone change",
+      phone: "Pending phone change",
       account: "Saved account copy",
       localDay: "Diary day",
       instant: "Recorded time",
@@ -65,7 +65,7 @@ const copy = {
     put: "Die zuletzt auf dem Gerät gespeicherte Aktion ist eine Änderung.",
     delete: "Die zuletzt auf dem Gerät gespeicherte Aktion ist eine Löschung.",
     weighIn: {
-      phone: "Letzte Änderung auf dem Gerät",
+      phone: "Ausstehende Änderung auf dem Gerät",
       account: "Gespeicherte Kontokopie",
       localDay: "Tagebuchdatum",
       instant: "Erfasster Zeitpunkt",
