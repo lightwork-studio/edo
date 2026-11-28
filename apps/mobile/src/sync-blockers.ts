@@ -41,10 +41,19 @@ export type WeighInReviewSide = ReviewSide<{
 
 export type MealReviewSide = ReviewSide<{ readonly meal: Omit<DiaryMeal, "id"> }>;
 
-export function formatReviewQuantity(amount: number, locale: string): string {
+export function reviewQuantityFormatter(locale: string): (amount: number) => string {
   const formatter = new Intl.NumberFormat(locale);
   const decimal = formatter.format(1.1).replaceAll(formatter.format(1), "") || ".";
-  return amount.toString().replace(".", decimal);
+  return (amount) => amount.toString().replace(".", decimal);
+}
+
+const mealReviewPageSize = 20;
+
+export function mealReviewPage<T>(items: readonly T[], page: number) {
+  const total = items.length;
+  const start = page * mealReviewPageSize;
+  const end = Math.min(start + mealReviewPageSize, total);
+  return { items: items.slice(start, end), total, start, end };
 }
 
 function weighInValues(content: Record<string, unknown>, id: string): WeighInReviewSide {
