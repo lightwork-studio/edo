@@ -57,6 +57,24 @@ type DeliveryEvidence = {
   };
 };
 
+function unexpired(value: unknown, now: number) {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(
+      value,
+    )
+  ) {
+    return false;
+  }
+  const day = value.slice(0, 10);
+  const midnight = Date.parse(`${day}T00:00:00Z`);
+  return (
+    Number.isFinite(midnight) &&
+    new Date(midnight).toISOString().startsWith(day) &&
+    Date.parse(value) > now
+  );
+}
+
 /** Match fresh provider responses fetched by the authenticated release jobs. */
 export function findDeliveredPreflightBuild(evidence: DeliveryEvidence) {
   const { runtime, builds, submissions, testFlight } = evidence;
@@ -112,13 +130,12 @@ export function findDeliveredPreflightBuild(evidence: DeliveryEvidence) {
       (receipt) =>
         receipt?.platform === "IOS" &&
         typeof receipt.id === "string" &&
-        uuid.test(receipt.id) &&
+        receipt.id.length > 0 &&
         members.has(receipt.id) &&
         receipt.processingState === "VALID" &&
         receipt.internalBuildState === "IN_BETA_TESTING" &&
         receipt.expired === false &&
-        typeof receipt.expirationDate === "string" &&
-        Date.parse(receipt.expirationDate) > now &&
+        unexpired(receipt.expirationDate, now) &&
         receipt.marketingVersion === build.appVersion &&
         receipt.buildNumber === build.appBuildVersion,
     );

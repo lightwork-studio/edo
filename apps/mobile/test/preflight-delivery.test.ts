@@ -104,6 +104,8 @@ test("rejects expired, processing and mismatched TestFlight receipts", () => {
     { expired: true },
     { expirationDate: "2020-01-01T00:00:00Z" },
     { expirationDate: "invalid-date" },
+    { expirationDate: "2099" },
+    { expirationDate: "2099-02-30T00:00:00Z" },
     { platform: "MAC_OS" },
     { marketingVersion: "0.2.0" },
     { buildNumber: "2" },
@@ -161,6 +163,17 @@ test("requires Apple membership of the exact build record", () => {
       },
     }),
   ).toBeNull();
+});
+
+test("accepts Apple offsets and opaque resource IDs with exact membership", () => {
+  const id = "AppleBuildResource-ABC";
+  const buildReceipt = { ...receipt, id, expirationDate: "2099-02-28T17:30:00.123-08:00" };
+  expect(
+    findDeliveredPreflightBuild({
+      ...evidence,
+      testFlight: { ...evidence.testFlight, memberBuildIds: [id], builds: [buildReceipt] },
+    }),
+  ).toMatchObject({ buildId: build.id });
 });
 
 test("rejects malformed versions even when both providers report the same values", () => {
