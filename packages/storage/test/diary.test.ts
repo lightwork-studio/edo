@@ -465,6 +465,17 @@ test("rebases an independent weight and event-time change together with its queu
   expect(diary.sync.journal.queued()).toEqual(blocked);
   source.db.exec("DROP TRIGGER suppress_weight_rebase");
 
+  source.db.exec(`CREATE TRIGGER rewrite_weight_attempt AFTER UPDATE OF content ON edo_sync_outbox
+    WHEN NEW.kind = 'weigh-in'
+    BEGIN UPDATE edo_sync_outbox SET attempt_id = 'rewritten-attempt', attempt_release = '0.1'
+      WHERE kind = NEW.kind AND id = NEW.id; END`);
+  expect(() => diary.sync.tryRebaseWeighIn(session, weighIn.id, "merged-weight")).toThrow(
+    /rebased outbox edit changed/,
+  );
+  expect(diary.listWeighIns(weighIn.localDay, remoteWeighIn.localDay)).toEqual([localWeighIn]);
+  expect(diary.sync.journal.queued()).toEqual(blocked);
+  source.db.exec("DROP TRIGGER rewrite_weight_attempt");
+
   expect(diary.sync.tryRebaseWeighIn(session, weighIn.id, "merged-weight")).toBe(true);
   source.db.close();
   const reopened = await createDatabase().start();
