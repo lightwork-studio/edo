@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-native";
 import { type Language, strings } from "./strings";
 import { type BlockerJournal, readSyncBlocker, type syncBlockerNotice } from "./sync-blockers";
 import { DetailHeader, Notice, styles } from "./ui";
@@ -14,9 +14,10 @@ const copy = {
     open: "View sync issues",
     next: "Next issue",
     restart: "Start again",
+    position: (number: number) => `Issue ${number}`,
     record: "Saved record",
-    put: "The phone has a saved edit waiting to sync.",
-    delete: "The phone has a saved deletion waiting to sync.",
+    put: "The phone’s latest saved action is an edit.",
+    delete: "The phone’s latest saved action is a deletion.",
     kinds: {
       meal: "Meal",
       "custom-food": "Custom food",
@@ -27,10 +28,10 @@ const copy = {
       "nutrition-target": "Nutrition targets",
     } as Record<string, string>,
     reasons: {
-      stale: "The server received a newer version of this record.",
-      deleted: "The server has a deletion for this record.",
-      exists: "The server already has a record with this identity.",
-      "invalid-content": "The server refused this change.",
+      stale: "The server reported a newer version when it received the previous submission.",
+      deleted: "The server reported a deletion when it received the previous submission.",
+      exists: "The server reported that this record already existed.",
+      "invalid-content": "The server refused the previous submission.",
       "submission-reused":
         "The server already received a different change with this submission ID.",
     },
@@ -45,9 +46,10 @@ const copy = {
     open: "Synchronisierungsprobleme ansehen",
     next: "Nächstes Problem",
     restart: "Von vorn beginnen",
+    position: (number: number) => `Problem ${number}`,
     record: "Gespeicherter Eintrag",
-    put: "Auf dem Gerät wartet eine gespeicherte Änderung auf die Synchronisierung.",
-    delete: "Auf dem Gerät wartet eine gespeicherte Löschung auf die Synchronisierung.",
+    put: "Die zuletzt auf dem Gerät gespeicherte Aktion ist eine Änderung.",
+    delete: "Die zuletzt auf dem Gerät gespeicherte Aktion ist eine Löschung.",
     kinds: {
       meal: "Mahlzeit",
       "custom-food": "Eigenes Lebensmittel",
@@ -58,10 +60,10 @@ const copy = {
       "nutrition-target": "Ernährungsziele",
     } as Record<string, string>,
     reasons: {
-      stale: "Auf dem Server liegt eine neuere Version dieses Eintrags vor.",
-      deleted: "Auf dem Server ist dieser Eintrag als gelöscht gespeichert.",
-      exists: "Auf dem Server liegt bereits ein Eintrag mit derselben ID vor.",
-      "invalid-content": "Der Server hat diese Änderung abgelehnt.",
+      stale: "Bei der letzten Übermittlung meldete der Server eine neuere Version.",
+      deleted: "Bei der letzten Übermittlung meldete der Server eine Löschung.",
+      exists: "Der Server meldete, dass dieser Eintrag bereits vorhanden war.",
+      "invalid-content": "Der Server hat die vorherige Übermittlung abgelehnt.",
       "submission-reused":
         "Der Server hat bereits eine andere Änderung mit derselben Übermittlungs-ID erhalten.",
     },
@@ -97,9 +99,20 @@ export function SyncBlockerScreen({
   onBack: () => void;
 }) {
   const words = copy[language];
-  const [issue, setIssue] = useState(() => readSyncBlocker(journal, null));
+  const [{ issue, position }, setReview] = useState(() => ({
+    issue: readSyncBlocker(journal, null),
+    position: 1,
+  }));
   function restart() {
-    setIssue(readSyncBlocker(journal, null));
+    const first = readSyncBlocker(journal, null);
+    setReview({ issue: first, position: 1 });
+    if (first.state !== "empty") AccessibilityInfo.announceForAccessibility(words.position(1));
+  }
+  function next() {
+    if (!issue.next) return;
+    const nextPosition = position + 1;
+    setReview({ issue: readSyncBlocker(journal, issue.next), position: nextPosition });
+    AccessibilityInfo.announceForAccessibility(words.position(nextPosition));
   }
   return (
     <>
@@ -107,6 +120,7 @@ export function SyncBlockerScreen({
       <ScrollView contentContainerStyle={styles.content}>
         {issue.state === "blocked" ? (
           <View style={styles.card}>
+            <Text style={styles.meta}>{words.position(position)}</Text>
             <Text accessibilityRole="header" style={styles.title}>
               {(Object.hasOwn(words.kinds, issue.kind) && words.kinds[issue.kind]) || words.record}
             </Text>
@@ -123,11 +137,7 @@ export function SyncBlockerScreen({
           />
         )}
         {issue.next && (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setIssue(readSyncBlocker(journal, issue.next))}
-            style={styles.action}
-          >
+          <Pressable accessibilityRole="button" onPress={next} style={styles.action}>
             <Text style={styles.actionText}>{words.next}</Text>
           </Pressable>
         )}

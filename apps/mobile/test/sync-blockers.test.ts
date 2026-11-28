@@ -112,6 +112,17 @@ it("finds persisted record blockers offline and exposes only their presentation 
       state: "blocked",
       kind: "weigh-in",
     });
+    reopened.exec(`UPDATE edo_sync_outbox SET content =
+      json_set(content, '$.blocked.submission.op', 'put', '$.blocked.result.status', 'damaged')
+      WHERE kind = 'meal'`);
+    expect(() => journal.blockedRecords(null, 1)).toThrow(/Invalid blocked sync record/);
+    expect(syncBlockerNotice(journal)).toBe("blocked");
+    const malformedStatus = readSyncBlocker(journal, null);
+    expect(malformedStatus).toEqual({ state: "error", next: meal });
+    expect(readSyncBlocker(journal, malformedStatus.next)).toMatchObject({
+      state: "blocked",
+      kind: "weigh-in",
+    });
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
