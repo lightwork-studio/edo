@@ -169,6 +169,73 @@ function remoteRecord(db: JournalSqlite, key: RecordKey): Change | null {
   return record;
 }
 
+interface MealProjection {
+  readonly revision: number;
+  readonly origin: "accepted" | "pulled";
+  readonly content: JsonObject | null;
+}
+
+type StoredMealProjection = MealProjection &
+  ({ origin: "accepted" } | { origin: "pulled"; content: null });
+
+function readMealProjection(db: JournalSqlite, id: string): StoredMealProjection | null {
+  const row = db.get(
+    "SELECT revision, origin, content FROM edo_sync_meal_projections WHERE id = ?",
+    id,
+  );
+  if (!row) return null;
+  const { content, origin, revision } = row;
+  if (
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
+    (origin !== "accepted" && origin !== "pulled") ||
+    (content !== null && (origin !== "accepted" || typeof content !== "string"))
+  ) {
+    throw new Error("Stored meal projection is invalid");
+  }
+  if (content === null) return { revision, origin, content: null };
+  const change = decodeChange({
+    kind: "meal",
+    id,
+    revision,
+    state: "live",
+    content: JSON.parse(content),
+  });
+  if (change.state !== "live" || change.content.id !== id) {
+    throw new Error("Stored meal projection identity is invalid");
+  }
+  return { revision, origin: "accepted", content: change.content };
+}
+
+function writeMealProjection(
+  db: JournalSqlite,
+  id: string,
+  projection: StoredMealProjection | null,
+): void {
+  if (!projection) {
+    db.run("DELETE FROM edo_sync_meal_projections WHERE id = ?", id);
+    return;
+  }
+  db.run(
+    `INSERT INTO edo_sync_meal_projections VALUES (?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      revision = excluded.revision, origin = excluded.origin, content = excluded.content`,
+    id,
+    projection.revision,
+    projection.origin,
+    projection.content === null ? null : JSON.stringify(projection.content),
+  );
+}
+
+function pulledMealProjection(change: Change | null): StoredMealProjection | null {
+  // The outbox already holds the full verified copy. Remember that its revision was applied.
+  return change?.state === "deleted" ||
+    (change?.state === "live" && change.content.id === change.id)
+    ? { revision: change.revision, origin: "pulled", content: null }
+    : null;
+}
+
 function localRecord(db: JournalSqlite, key: RecordKey) {
   const row = db.get("SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?", key.kind, key.id);
   if (row) return storedRecord(row);
@@ -375,9 +442,10 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       return transact(() => {
         const binding = checkSession(session);
         assertResponseSession(response, session);
+        // A projection can call external code. Keep every authenticated outcome detached first.
+        const results = response.results.map(decodeSubmissionResult);
         let revision = binding.revision;
-        for (const outcome of response.results) {
-          const result = decodeSubmissionResult(outcome);
+        for (const result of results) {
           const row = db.get(
             "SELECT * FROM edo_sync_outbox WHERE attempt_id = ?",
             result.submissionId,
@@ -405,16 +473,26 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             result.status === "accepted" && !hasLocalWork(next)
               ? remoteRecord(db, record.key)
               : null;
-          if (
-            remote &&
-            remote.state !== "unavailable" &&
-            remote.revision >= (next.baseRevision ?? 0)
-          ) {
+          const projectRemote =
+            remote && remote.state !== "unavailable" && remote.revision >= (next.baseRevision ?? 0);
+          if (projectRemote) {
             const projected = createOutboxRecord(remote, remote);
             requireSynchronousWrite(applyRemote(remote));
             saveRecord(db, projected);
+            if (record.key.kind === "meal") {
+              writeMealProjection(db, record.key.id, pulledMealProjection(projected.base));
+            }
           } else {
             saveRecord(db, next, release);
+            if (result.status === "accepted" && record.key.kind === "meal") {
+              const attempt = record.attempt;
+              const content = attempt.op === "put" ? attempt.content : null;
+              const projection: StoredMealProjection | null =
+                !hasLocalWork(next) && (content === null || content.id === attempt.id)
+                  ? { revision: result.revision, origin: "accepted", content }
+                  : null;
+              writeMealProjection(db, record.key.id, projection);
+            }
           }
           if (result.status !== "retryable")
             db.run("INSERT INTO edo_sync_receipts VALUES (?)", result.submissionId);
@@ -463,6 +541,9 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           const projected = createOutboxRecord(change, change);
           requireSynchronousWrite(applyRemote(change));
           saveRecord(db, projected);
+          if (projected.key.kind === "meal") {
+            writeMealProjection(db, projected.key.id, pulledMealProjection(projected.base));
+          }
         }
         db.run(
           "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
@@ -580,5 +661,20 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           .filter(hasLocalWork),
       ),
     serverCopy: (key: RecordKey) => inspect(() => remoteRecord(db, key)),
+    /** Compare with SQLite before using this evidence. Accepted content need not equal the server copy. */
+    mealProjection(id: string): MealProjection | null {
+      return transact(() => {
+        const projection = readMealProjection(db, id);
+        if (!projection) return null;
+        const { record } = localRecord(db, { kind: "meal", id });
+        if (hasLocalWork(record) || record.baseRevision !== projection.revision) return null;
+        if (projection.origin === "accepted") return projection;
+        const base = record.base;
+        if (base?.state === "deleted") return projection;
+        return base?.state === "live" && base.content.id === id
+          ? { ...projection, content: base.content }
+          : null;
+      }, "BEGIN");
+    },
   };
 }

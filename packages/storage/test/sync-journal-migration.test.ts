@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -5,6 +6,9 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { type DiarySqliteConnection, type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { createSyncClient, openSyncJournal } from "@edo/sync";
 import { afterEach, expect, test } from "vitest";
+import { applyRecordContent } from "../../../apps/sync-node/src/record-projection.ts";
+import { createHealthServer } from "../../../apps/sync-node/src/server.ts";
+import { openSyncStore } from "../../../apps/sync-node/src/sync-store.ts";
 import { diaryMigrations, migrateDiary } from "../src/migrations.ts";
 
 const v4Sql = readFileSync(new URL("./fixtures/diary-v4.sql", import.meta.url), "utf8");
@@ -85,12 +89,13 @@ test("upgrades a historical v4 diary and restores the full verified backup", asy
   expect(JSON.parse(diary.exportPrivateArchive())).toEqual(v4Archive);
   expect(journalTables(source.sqlite)).toEqual([
     "edo_sync_binding",
+    "edo_sync_meal_projections",
     "edo_sync_outbox",
     "edo_sync_receipts",
     "edo_sync_remote",
     "edo_sync_submission_ids",
   ]);
-  expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(5);
+  expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(6);
   const journal = openSyncJournal(source.sqlite);
   expect(journal.history()).toBeNull();
   expect(journal.queued()).toEqual([]);
@@ -155,31 +160,163 @@ test("rolls back the journal schema if interrupted and retries without data loss
   expect(journalTables(source.sqlite)).toContain("edo_sync_outbox");
 });
 
-test("rejects a backup that drops journal rows before a subsequent migration", async () => {
+test("upgrades and can recover a bound v5 diary without inventing accepted meal evidence", async () => {
   const source = fixture();
-  await source.open();
-  source.sqlite.run("INSERT INTO edo_sync_submission_ids (submission_id) VALUES (?)", "reserved");
-
-  await expect(
-    migrateDiary(
-      source.sqlite,
-      [...diaryMigrations, () => {}],
-      async (_, verify) => {
-        const copy = join(source.dir, "missing-submission.sqlite");
-        await copyDatabase(source.path, copy);
-        const incomplete = new DatabaseSync(copy);
-        try {
-          incomplete.exec("DELETE FROM edo_sync_submission_ids");
-          verify(connection(incomplete));
-        } finally {
-          incomplete.close();
-        }
-      },
-      () => {},
-    ),
-  ).rejects.toThrow("Diary backup does not match the current diary");
-  expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(5);
-  expect(source.sqlite.get("SELECT submission_id FROM edo_sync_submission_ids")).toMatchObject({
-    submission_id: "reserved",
+  await migrateDiary(
+    source.sqlite,
+    diaryMigrations.slice(0, 5),
+    source.backupBeforeMigration,
+    () => {},
+  );
+  const key = { kind: "meal", id: v4Archive.meals[0].id };
+  const record = JSON.stringify({
+    key,
+    baseRevision: 7,
+    base: null,
+    pending: null,
+    attempt: null,
+    blocked: null,
   });
+  source.sqlite.run(
+    "INSERT INTO edo_sync_binding VALUES (1, ?, ?, ?, 7, 0)",
+    "https://example.test",
+    "account",
+    "fixture",
+  );
+  source.sqlite.run(
+    "INSERT INTO edo_sync_outbox VALUES ('meal', ?, NULL, NULL, ?)",
+    key.id,
+    record,
+  );
+  source.sqlite.run("INSERT INTO edo_sync_receipts VALUES (?)", "accepted-old");
+  source.sqlite.run("INSERT INTO edo_sync_submission_ids VALUES (?)", "accepted-old");
+
+  const interrupted: DiarySqliteConnection = {
+    ...source.sqlite,
+    exec: (sql) => {
+      source.sqlite.exec(sql);
+      if (sql.includes("CREATE TABLE edo_sync_meal_projections")) {
+        throw new Error("Simulated v6 interruption");
+      }
+    },
+  };
+  await expect(
+    openDiary({ connection: interrupted, backupBeforeMigration: source.backupBeforeMigration }),
+  ).rejects.toThrow("Simulated v6 interruption");
+  expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(5);
+  expect(journalTables(source.sqlite)).not.toContain("edo_sync_meal_projections");
+  const diary = await source.open();
+  expect(JSON.parse(diary.exportPrivateArchive())).toEqual(v4Archive);
+  expect(diary.sync.journal.history()).toMatchObject({ revision: 7, cursor: 0 });
+  expect(diary.sync.journal.mealProjection(key.id)).toBeNull();
+  expect(source.sqlite.get("SELECT content FROM edo_sync_outbox")).toEqual({ content: record });
+  using backup = new DatabaseSync(join(source.dir, "prior-v5-diary.sqlite"), { readOnly: true });
+  expect(backup.prepare("PRAGMA user_version").get()).toEqual({ user_version: 5 });
+  expect(backup.prepare("SELECT submission_id FROM edo_sync_receipts").get()).toEqual({
+    submission_id: "accepted-old",
+  });
+  expect(backup.prepare("SELECT content FROM edo_sync_outbox").get()).toEqual({ content: record });
 });
+
+test("recovers accepted meal evidence when a v5 attempt retries after a lost response", async () => {
+  const source = fixture();
+  await migrateDiary(
+    source.sqlite,
+    diaryMigrations.slice(0, 5),
+    source.backupBeforeMigration,
+    () => {},
+  );
+  using store = openSyncStore(join(source.dir, "account.sqlite"), {
+    applyContent: applyRecordContent,
+  });
+  store.createAccount("account", "fixture");
+  await using server = createHealthServer({
+    sync: {
+      store,
+      authorize: () => ({ accountBinding: "account", sessionKey: "phone" }),
+    },
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing sync test port");
+  const client = createSyncClient({
+    origin: `http://127.0.0.1:${address.port}`,
+    allowLoopbackHttp: true,
+    authorization: () => "Bearer synthetic",
+  });
+  const session = await client.connect();
+  const journal = openSyncJournal(source.sqlite);
+  journal.bind(session);
+  const meal = v4Archive.meals[0];
+  const key = { kind: "meal", id: meal.id };
+  journal.commitLocal(
+    key,
+    { op: "put", submissionId: "v5-attempt", content: meal },
+    () => undefined,
+  );
+  const attempt = journal.prepare(session);
+  const lost = await client.push(session, attempt);
+  expect(lost.results).toEqual([{ status: "accepted", submissionId: "v5-attempt", revision: 1 }]);
+  source.db.close();
+
+  const upgrade = openFile(source.path, source.dir);
+  const synced = await upgrade.open();
+  const history = synced.sync.journal.history();
+  if (!history) throw new Error("Expected the restored binding");
+  const reconnected = await client.connect(history);
+  synced.sync.journal.bind(reconnected);
+  expect(synced.sync.journal.mealProjection(meal.id)).toBeNull();
+  const retry = synced.sync.journal.prepare(reconnected);
+  expect(retry).toEqual(attempt);
+  const accepted = await client.push(reconnected, retry);
+  expect(accepted).toEqual(lost);
+  synced.sync.journal.applyResults(reconnected, accepted, () => undefined);
+  upgrade.db.close();
+
+  const reopened = await openFile(source.path, source.dir).open();
+  expect(reopened.sync.journal.mealProjection(meal.id)).toEqual({
+    revision: 1,
+    origin: "accepted",
+    content: reopened.getMeal(meal.id),
+  });
+  expect(reopened.sync.journal.serverCopy(key)).toBeNull();
+  expect(reopened.sync.journal.history()).toMatchObject({ revision: 1, cursor: 0 });
+});
+
+test.each(["edo_sync_submission_ids", "edo_sync_meal_projections"] as const)(
+  "rejects a backup that drops a row from %s before a subsequent migration",
+  async (table) => {
+    const source = fixture();
+    await source.open();
+    source.sqlite.run("INSERT INTO edo_sync_submission_ids (submission_id) VALUES (?)", "reserved");
+    source.sqlite.run(
+      "INSERT INTO edo_sync_meal_projections VALUES (?, 2, 'accepted', ?)",
+      "meal",
+      '{"id":"meal"}',
+    );
+
+    await expect(
+      migrateDiary(
+        source.sqlite,
+        [...diaryMigrations, () => {}],
+        async (_, verify) => {
+          const copy = join(source.dir, "missing-submission.sqlite");
+          await copyDatabase(source.path, copy);
+          const incomplete = new DatabaseSync(copy);
+          try {
+            incomplete.exec(`DELETE FROM ${table}`);
+            verify(connection(incomplete));
+          } finally {
+            incomplete.close();
+          }
+        },
+        () => {},
+      ),
+    ).rejects.toThrow("Diary backup does not match the current diary");
+    expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(6);
+    expect(source.sqlite.get("SELECT submission_id FROM edo_sync_submission_ids")).toMatchObject({
+      submission_id: "reserved",
+    });
+  },
+);
