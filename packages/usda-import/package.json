@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "preview": "node src/foundation.ts",
+    "preview:legacy": "node src/legacy.ts",
     "typecheck": "tsc -p ."
   },
   "dependencies": {

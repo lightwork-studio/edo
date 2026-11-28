@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { unzipSync } from "fflate";
+import {
+  carbohydrateByDifference,
+  type Measurement,
+  previewNutrition,
+  units,
+} from "./nutrients.ts";
 
 const source = {
   provider: "usda",
@@ -14,25 +20,6 @@ const source = {
   archiveBytes: 696866,
 } as const;
 const archiveEntry = "FoodData_Central_foundation_food_json_2026-10-29.json";
-const carbohydrateByDifference = 1005;
-const energyPreference = [2048, 2047, 1008];
-type Unit = "G" | "KCAL";
-const units = new Map<number, Unit>([
-  [1003, "G"],
-  [1004, "G"],
-  [carbohydrateByDifference, "G"],
-  [1079, "G"],
-  ...energyPreference.map((id) => [id, "KCAL"] as const),
-]);
-
-interface Measurement {
-  readonly nutrientId: number;
-  readonly unit: Unit;
-  readonly amount: number | null;
-  readonly quantificationLimit: number | null;
-  readonly derivationCode: string | null;
-}
-
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Invalid Foundation Foods object");
@@ -94,34 +81,12 @@ function readFood(input: unknown) {
     });
   }
 
-  function quantified(nutrientId: number): number | null {
-    const observed = measurements.get(nutrientId);
-    if (!observed || observed.amount === null || observed.amount < 0) return null;
-    const { amount, quantificationLimit } = observed;
-    return quantificationLimit !== null && quantificationLimit > 0 && amount <= quantificationLimit
-      ? null
-      : amount;
-  }
-
-  const energyNutrientId = energyPreference.find((id) => quantified(id) !== null) ?? null;
   return {
     fdcId,
     ndbNumber: row.ndbNumber == null ? null : identifier(row.ndbNumber, "NDB number"),
     description: text(row.description, "food description"),
     publicationDate: text(row.publicationDate, "food publication date"),
-    nutrition: {
-      basis: "per-100-g",
-      nutrients: {
-        kcal: energyNutrientId === null ? null : quantified(energyNutrientId),
-        proteinG: quantified(1003),
-        availableCarbohydratesG: null,
-        fatG: quantified(1004),
-        fiberG: quantified(1079),
-      },
-    },
-    carbohydrateByDifferenceG: quantified(carbohydrateByDifference),
-    energyNutrientId,
-    sourceMeasurements: [...measurements.values()].sort((a, b) => a.nutrientId - b.nutrientId),
+    ...previewNutrition(measurements),
   };
 }
 
