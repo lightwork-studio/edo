@@ -3,17 +3,18 @@ import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-nati
 import { type Language, strings } from "./strings";
 import {
   type BlockerJournal,
-  formatReviewQuantity,
   type MealReviewSide,
+  mealReviewPage,
   readSyncBlocker,
+  reviewQuantityFormatter,
   type syncBlockerNotice,
   type WeighInReviewSide,
 } from "./sync-blockers";
-import { DetailHeader, Notice, styles } from "./ui";
+import { DetailHeader, macros, Notice, styles } from "./ui";
 
 const gregorianCutoverDay = "1582-10-15";
 const gregorianCutoverTime = Date.parse(`${gregorianCutoverDay}T00:00:00.000Z`);
-const mealPageSize = 20;
+const reviewNutrients = [...macros, { label: "fibre", nutrient: "fiberG" }] as const;
 
 const copy = {
   en: {
@@ -41,8 +42,12 @@ const copy = {
     meal: {
       unavailable: "Meal contents unavailable",
       empty: "No items in this meal.",
-      more: "Show more items",
+      previousPage: "Previous items",
+      nextPage: "Next items",
+      itemRange: (first: number, last: number, total: number) =>
+        `Items ${first}–${last} of ${total}`,
       offset: "Recorded UTC offset",
+      missingOffset: "Offset unavailable",
       unknownEnergy: "Energy unknown",
     },
     kinds: {
@@ -89,8 +94,12 @@ const copy = {
     meal: {
       unavailable: "Mahlzeit nicht verfügbar",
       empty: "Diese Mahlzeit enthält keine Einträge.",
-      more: "Weitere Einträge anzeigen",
+      previousPage: "Vorherige Einträge",
+      nextPage: "Nächste Einträge",
+      itemRange: (first: number, last: number, total: number) =>
+        `Einträge ${first}–${last} von ${total}`,
       offset: "Erfasste UTC-Abweichung",
+      missingOffset: "UTC-Abweichung nicht verfügbar",
       unknownEnergy: "Energie unbekannt",
     },
     kinds: {
@@ -145,21 +154,26 @@ export function SyncBlockerScreen({
 }) {
   const words = copy[language];
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
-  const [{ issue, position }, setReview] = useState(() => ({
+  const [{ issue, position, generation }, setReview] = useState(() => ({
     issue: readSyncBlocker(journal, null),
     position: 1,
+    generation: 0,
   }));
   function restart() {
     const first = readSyncBlocker(journal, null);
     scroll.current?.scrollTo({ y: 0, animated: false });
-    setReview({ issue: first, position: 1 });
+    setReview({ issue: first, position: 1, generation: generation + 1 });
     if (first.state !== "empty") AccessibilityInfo.announceForAccessibility(words.position(1));
   }
   function next() {
     if (!issue.next) return;
     const nextPosition = position + 1;
     scroll.current?.scrollTo({ y: 0, animated: false });
-    setReview({ issue: readSyncBlocker(journal, issue.next), position: nextPosition });
+    setReview({
+      issue: readSyncBlocker(journal, issue.next),
+      position: nextPosition,
+      generation,
+    });
     AccessibilityInfo.announceForAccessibility(words.position(nextPosition));
   }
   return (
@@ -191,14 +205,14 @@ export function SyncBlockerScreen({
             ) : issue.meal ? (
               <>
                 <MealSide
-                  key={`${position}-phone`}
+                  key={`${generation}-${position}-phone`}
                   title={words.weighIn.phone}
                   side={issue.meal.phone}
                   locale={locale}
                   language={language}
                 />
                 <MealSide
-                  key={`${position}-account`}
+                  key={`${generation}-${position}-account`}
                   title={words.weighIn.account}
                   side={issue.meal.account}
                   locale={locale}
@@ -239,6 +253,7 @@ function WeighInSide({
   locale: string;
   words: (typeof copy)[Language]["weighIn"];
 }) {
+  const formatQuantity = reviewQuantityFormatter(locale);
   return (
     <View>
       <Text accessibilityRole="header" style={styles.title}>
@@ -246,9 +261,7 @@ function WeighInSide({
       </Text>
       {side.state === "live" ? (
         <>
-          <Text style={[styles.body, styles.numbers]}>
-            {formatReviewQuantity(side.kg, locale)} kg
-          </Text>
+          <Text style={[styles.body, styles.numbers]}>{formatQuantity(side.kg)} kg</Text>
           <CapturedTime
             localDay={side.localDay}
             occurredAt={side.occurredAt}
@@ -315,7 +328,7 @@ function MealSide({
   language: Language;
 }) {
   const words = copy[language];
-  const [limit, setLimit] = useState(mealPageSize);
+  const [page, setPage] = useState(0);
   const heading = (
     <Text accessibilityRole="header" style={styles.title}>
       {title}
@@ -334,6 +347,15 @@ function MealSide({
 
   const { meal } = side;
   const offset = meal.utcOffsetMinutes;
+  const formatQuantity = reviewQuantityFormatter(locale);
+  const { items, total, start, end } = mealReviewPage(meal.items, page);
+  function changePage(next: number) {
+    setPage(next);
+    const nextPage = mealReviewPage(meal.items, next);
+    AccessibilityInfo.announceForAccessibility(
+      `${title}. ${words.meal.itemRange(nextPage.start + 1, nextPage.end, total)}`,
+    );
+  }
   return (
     <View>
       {heading}
@@ -343,36 +365,60 @@ function MealSide({
         locale={locale}
         words={words.weighIn}
       />
-      {offset !== undefined && (
+      <Text style={styles.meta}>{words.meal.offset}</Text>
+      <Text style={styles.body}>
+        {offset === undefined ? words.meal.missingOffset : formatUtcOffset(offset)}
+      </Text>
+      {total === 0 && <Text style={styles.meta}>{words.meal.empty}</Text>}
+      {(start > 0 || end < total) && (
         <>
-          <Text style={styles.meta}>{words.meal.offset}</Text>
-          <Text style={styles.body}>{formatUtcOffset(offset)}</Text>
+          <Text style={styles.meta}>{words.meal.itemRange(start + 1, end, total)}</Text>
+          <View style={styles.row}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: start === 0 }}
+              accessibilityLabel={`${title}. ${words.meal.previousPage}`}
+              disabled={start === 0}
+              onPress={() => changePage(page - 1)}
+              style={[styles.action, styles.stretch, start === 0 && styles.faded]}
+            >
+              <Text style={styles.actionText}>{words.meal.previousPage}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: end === total }}
+              accessibilityLabel={`${title}. ${words.meal.nextPage}`}
+              disabled={end === total}
+              onPress={() => changePage(page + 1)}
+              style={[styles.action, styles.stretch, end === total && styles.faded]}
+            >
+              <Text style={styles.actionText}>{words.meal.nextPage}</Text>
+            </Pressable>
+          </View>
         </>
       )}
-      {meal.items.length === 0 && <Text style={styles.meta}>{words.meal.empty}</Text>}
-      {meal.items.slice(0, limit).map(({ id, food, portion, nutrients }) => (
+      {items.map(({ id, food, portion, nutrients }) => (
         <View key={id}>
           <Text style={styles.body}>{food.name}</Text>
           <Text style={[styles.meta, styles.numbers]}>
-            {formatReviewQuantity(portion.amount, locale)}{" "}
+            {formatQuantity(portion.amount)}{" "}
             {portion.unit === "portion" ? strings[language].portion : portion.unit}
             {" · "}
             {nutrients.kcal === null
               ? words.meal.unknownEnergy
-              : `${formatReviewQuantity(nutrients.kcal, locale)} kcal`}
+              : `${formatQuantity(nutrients.kcal)} kcal`}
+          </Text>
+          <Text style={styles.meta}>
+            {reviewNutrients
+              .map(({ label, nutrient }) => {
+                const value = nutrients[nutrient];
+                const amount = value === null ? "—" : `${formatQuantity(value)} g`;
+                return `${strings[language][label]} ${amount}`;
+              })
+              .join(" · ")}
           </Text>
         </View>
       ))}
-      {meal.items.length > limit && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${title}. ${words.meal.more}`}
-          onPress={() => setLimit((current) => Math.min(current + mealPageSize, meal.items.length))}
-          style={styles.action}
-        >
-          <Text style={styles.actionText}>{words.meal.more}</Text>
-        </Pressable>
-      )}
     </View>
   );
 }

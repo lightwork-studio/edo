@@ -5,13 +5,33 @@ import { DatabaseSync } from "node:sqlite";
 import { createDiaryItem } from "@edo/core";
 import { openDiary, type SqliteConnection } from "@edo/storage";
 import { expect, it } from "vitest";
-import { formatReviewQuantity, readSyncBlocker, syncBlockerNotice } from "../src/sync-blockers";
+import {
+  mealReviewPage,
+  readSyncBlocker,
+  reviewQuantityFormatter,
+  syncBlockerNotice,
+} from "../src/sync-blockers";
+
+it("bounds each captured meal page and reaches a partial final page without repeating items", () => {
+  const items = Array.from({ length: 61 }, (_, index) => ({ id: `item-${index + 1}` }));
+  const pages = [0, 1, 2, 3].map((page) => mealReviewPage(items, page));
+  expect(pages.map(({ start, end }) => [start, end])).toEqual([
+    [0, 20],
+    [20, 40],
+    [40, 60],
+    [60, 61],
+  ]);
+  expect(pages.map(({ items }) => items.length)).toEqual([20, 20, 20, 1]);
+  expect(pages.flatMap(({ items }) => items)).toEqual(items);
+  expect(mealReviewPage([], 0)).toEqual({ items: [], total: 0, start: 0, end: 0 });
+});
 
 it("keeps weight precision when the locale uses a different decimal separator or numeral glyph", () => {
-  expect(formatReviewQuantity(80.0021, "de-DE")).toBe("80,0021");
-  expect(formatReviewQuantity(80.0022, "de-DE")).toBe("80,0022");
-  expect(formatReviewQuantity(80.0021, "de-CH")).toBe("80.0021");
-  expect(formatReviewQuantity(80.0021, "en-US-u-nu-mathbold")).toBe("80.0021");
+  const german = reviewQuantityFormatter("de-DE");
+  expect(german(80.0021)).toBe("80,0021");
+  expect(german(80.0022)).toBe("80,0022");
+  expect(reviewQuantityFormatter("de-CH")(80.0021)).toBe("80.0021");
+  expect(reviewQuantityFormatter("en-US-u-nu-mathbold")(80.0021)).toBe("80.0021");
 });
 
 function connectionFor(db: DatabaseSync): SqliteConnection {
@@ -269,7 +289,7 @@ it("compares captured meals without exposing opaque fields or changing the saved
   const small = createDiaryItem("stable-item", food, { amount: 50, unit: "g" });
   // Preserve the stored nutrient values even if a newer catalog would recalculate the amount.
   const phoneItem = { ...large, nutrients: { ...large.nutrients, kcal: 76.125 } };
-  const accountItem = { ...small, nutrients: { ...small.nutrients, kcal: null } };
+  const accountItem = { ...small, nutrients: { ...small.nutrients, kcal: null, proteinG: 2.125 } };
   const phone = { id: key.id, ...day, items: [{ ...phoneItem, future: "opaque-item" }] };
   const account = {
     ...key,

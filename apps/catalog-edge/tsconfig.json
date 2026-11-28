@@ -4,5 +4,5 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
-  "include": ["worker.ts", "publish.ts"]
+  "include": ["worker.ts", "publish.ts", "off-source-status.ts"]
 }
