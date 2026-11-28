@@ -40,3 +40,17 @@ Requests can be up to 768 KiB and replies up to 1 MiB. A conflict can report a r
 and revision with its content marked unavailable if the reply would otherwise exceed
 the limit. The server retains each terminal receipt in its private database. Receipt
 retention remains open for managed rollout.
+
+## Local server backups
+
+Create and verify a standalone SQLite snapshot while the sync store is running.
+
+```sh
+pnpm --filter @edo/sync-node backup create /srv/edo/sync.sqlite /srv/edo-backups/edo-20261128.sqlite
+pnpm --filter @edo/sync-node backup verify /srv/edo-backups/edo-20261128.sqlite
+```
+
+Create the backup in an existing private directory that supports hard links. The command
+checks the snapshot before making it visible at the named path and refuses an existing
+destination. Keep the backup and its command output private. The database includes all accounts,
+and the output shows the lineage and revision stored for each account in the snapshot.
