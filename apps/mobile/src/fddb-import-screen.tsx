@@ -9,7 +9,11 @@ import {
   DiaryFileReadTimeoutError,
   DiaryFileSizeError,
 } from "./diary-file-picker";
-import { InvalidFddbSourceTimeZone, previewFddbFile } from "./fddb-file-import";
+import {
+  FddbPreparedSizeError,
+  InvalidFddbSourceTimeZone,
+  previewFddbFile,
+} from "./fddb-file-import";
 import type { Strings } from "./strings";
 import { colors, DetailHeader, Notice, PrimaryButton, styles } from "./ui";
 
@@ -20,6 +24,7 @@ type ImportError =
   | "apply"
   | "size"
   | "records"
+  | "preparedSize"
   | "timeZone"
   | "timeout"
   | "provider";
@@ -29,6 +34,7 @@ const issueSampleLimit = 12;
 function importError(error: unknown, fallback: ImportError): ImportError {
   if (error instanceof DiaryFileSizeError) return "size";
   if (error instanceof FddbCsvRecordLimitError) return "records";
+  if (error instanceof FddbPreparedSizeError) return "preparedSize";
   if (error instanceof InvalidFddbSourceTimeZone) return "timeZone";
   if (error instanceof DiaryFileReadTimeoutError) return "timeout";
   if (error instanceof DiaryFileProviderBusyError) return "provider";

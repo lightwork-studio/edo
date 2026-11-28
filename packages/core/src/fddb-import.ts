@@ -78,8 +78,9 @@ export async function planFddbDiaryImport(
     hourCycle: "h23",
   });
   const issues: FddbDiaryImportPlan["issues"][number][] = [...preview.issues];
-  const rowIds = new Map<string, { hash: string; count: number }>();
-  const foodIds = new Map<string, string>();
+  const occurrences = new Map<string, number>();
+  let recentRow: { fingerprint: string; hash: string } | undefined;
+  let recentFood: { id: string; sourceId: string } | undefined;
   const meals: DiaryMeal[] = [];
 
   async function digest(text: string): Promise<string> {
@@ -104,15 +105,23 @@ export async function planFddbDiaryImport(
     ]);
     // Repeated identical rows are separate diary entries. The count is independent of the CSV
     // line number, so importing overlapping date ranges does not change existing identities.
-    const identity = rowIds.get(fingerprint) ?? { hash: await digest(fingerprint), count: 0 };
-    rowIds.set(fingerprint, identity);
-    const id = `fddb-meal-${identity.hash}-${++identity.count}`;
-    let sourceId = `fddb-entry-${identity.hash}`;
+    // Count fixed-size digests so long, distinct rows do not remain in the map.
+    if (recentRow?.fingerprint !== fingerprint) {
+      recentRow = { fingerprint, hash: await digest(fingerprint) };
+    }
+    const { hash } = recentRow;
+    const ordinal = (occurrences.get(hash) ?? 0) + 1;
+    occurrences.set(hash, ordinal);
+    const id = `fddb-meal-${hash}-${ordinal}`;
+    let sourceId = `fddb-entry-${hash}`;
     if (row.sourceFoodId !== null) {
-      const key = row.sourceFoodId;
-      sourceId =
-        foodIds.get(key) ?? `fddb-food-${await digest(JSON.stringify(["fddb-food-v1", key]))}`;
-      foodIds.set(key, sourceId);
+      if (recentFood?.id !== row.sourceFoodId) {
+        recentFood = {
+          id: row.sourceFoodId,
+          sourceId: `fddb-food-${await digest(JSON.stringify(["fddb-food-v1", row.sourceFoodId]))}`,
+        };
+      }
+      sourceId = recentFood.sourceId;
     }
     const item = createDiaryItem(
       `${id}-item`,
