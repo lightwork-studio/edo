@@ -46,6 +46,7 @@ it("identifies the client, coalesces barcode aliases and keeps the exact returne
   expect(request.searchParams.get("product_type")).toBe("food");
   expect(request.searchParams.get("fields")?.split(",")).toContain("nutrition");
   expect(new Headers(options?.headers).get("user-agent")).toContain("lightwork-studio/edo");
+  expect(options?.credentials).toBe("omit");
   expect(options?.redirect).toBe("error");
   expect(results[0]).toMatchObject({
     status: "found",
@@ -126,6 +127,42 @@ it("treats a mismatched response, invalid payload or upstream failure as unavail
   await expect(lookup("034000470693")).resolves.toEqual({ status: "unavailable" });
   fetchProduct.mockRejectedValueOnce(new Error("Network unavailable"));
   await expect(lookup("034000470693")).resolves.toEqual({ status: "unavailable" });
+});
+
+it("rejects non-JSON and declared oversized successful responses", async () => {
+  const json = JSON.stringify({ product });
+  const fetchProduct = vi.fn<typeof fetch>();
+  fetchProduct.mockResolvedValueOnce(
+    new Response(json, { headers: { "Content-Type": "text/html" } }),
+  );
+  fetchProduct.mockResolvedValueOnce(
+    new Response(json, {
+      headers: { "Content-Type": "application/json", "Content-Length": "262145" },
+    }),
+  );
+  const lookup = createOpenFoodFactsLiveLookup(fetchProduct, () => start);
+  await expect(lookup(product.code)).resolves.toEqual({ status: "unavailable" });
+  await expect(lookup(product.code)).resolves.toEqual({ status: "unavailable" });
+});
+
+it("cancels a chunked upstream body when the accumulated bytes exceed the limit", async () => {
+  const cancel = vi.fn();
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(128 * 1024));
+      controller.enqueue(new Uint8Array(128 * 1024));
+      controller.enqueue(new Uint8Array(1));
+    },
+    cancel,
+  });
+  const response = new Response(body, { headers: { "Content-Type": "application/json" } });
+  const lookup = createOpenFoodFactsLiveLookup(
+    async () => response,
+    () => start,
+  );
+  await expect(lookup(product.code)).resolves.toEqual({ status: "unavailable" });
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(body.locked).toBe(false);
 });
 
 it("pauses other lookups when the rate-limit headers arrive", async () => {

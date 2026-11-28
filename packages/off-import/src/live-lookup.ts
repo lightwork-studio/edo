@@ -18,6 +18,7 @@ const fields = [
   "last_modified_t",
 ].join(",");
 const minute = 60_000;
+const maxResponseBytes = 256 * 1024;
 // One shared client stays below the provider's 15 per minute/IP allowance for product reads.
 const requestsPerMinute = 10;
 
@@ -32,6 +33,40 @@ function retryUntil(response: Response, at: number): number {
   if (delay === undefined) return at + minute;
   const retry = /^\d+$/.test(delay) ? at + Number(delay) * 1000 : Date.parse(delay);
   return Number.isFinite(retry) ? Math.max(retry, at + minute) : at + minute;
+}
+
+async function readProduct(response: Response): Promise<Record<string, unknown> | undefined> {
+  const type = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  const length = response.headers.get("content-length");
+  if (
+    type !== "application/json" ||
+    (length !== null && (!/^\d+$/.test(length) || Number(length) > maxResponseBytes))
+  ) {
+    void response.body?.cancel().catch(() => undefined);
+    return undefined;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) return undefined;
+  const bytes = new Uint8Array(maxResponseBytes);
+  let offset = 0;
+  let finished = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        finished = true;
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, offset));
+        return object(object(JSON.parse(text))?.product);
+      }
+      if (value.byteLength > maxResponseBytes - offset) return undefined;
+      bytes.set(value, offset);
+      offset += value.byteLength;
+    }
+  } finally {
+    if (!finished) void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 export function createOpenFoodFactsLiveLookup(
@@ -50,6 +85,7 @@ export function createOpenFoodFactsLiveLookup(
     try {
       const response = await fetchProduct(url, {
         headers: { "User-Agent": "Edo/1 (https://github.com/lightwork-studio/edo)" },
+        credentials: "omit",
         redirect: "error",
         signal: AbortSignal.timeout(5000),
       });
@@ -63,8 +99,7 @@ export function createOpenFoodFactsLiveLookup(
         return { status: response.status === 404 ? "not-found" : "unavailable" };
       }
 
-      const payload = object(await response.json());
-      const product = object(payload?.product);
+      const product = await readProduct(response);
       const revision = product?.last_modified_t;
       const release =
         typeof revision === "number" && Number.isSafeInteger(revision) && revision > 0
