@@ -34,7 +34,7 @@ export const diaryMigrations: readonly Migration[] = [
   (db) => db.exec(`${Object.values(legacyDiarySchema).join(";\n")};`),
   (db) => {
     db.exec(`
-      ALTER TABLE diary_meals ADD COLUMN utc_offset_minutes INTEGER
+      ALTER TABLE main.diary_meals ADD COLUMN utc_offset_minutes INTEGER
         CHECK (utc_offset_minutes IS NULL OR
           (typeof(utc_offset_minutes) = 'integer' AND utc_offset_minutes BETWEEN -1439 AND 1439));
       PRAGMA application_id = ${diaryApplicationId};
@@ -48,7 +48,7 @@ export const diaryMigrations: readonly Migration[] = [
         occurred_at INTEGER NOT NULL,
         kg REAL NOT NULL CHECK (kg > 0)
       ) STRICT;
-      CREATE INDEX diary_weigh_ins_by_day ON diary_weigh_ins (local_day, occurred_at, id);
+      CREATE INDEX main.diary_weigh_ins_by_day ON diary_weigh_ins (local_day, occurred_at, id);
       CREATE TABLE diary_targets (
         save_order INTEGER PRIMARY KEY CHECK (save_order > 0),
         id TEXT UNIQUE NOT NULL,
@@ -60,7 +60,7 @@ export const diaryMigrations: readonly Migration[] = [
         fat_g REAL NOT NULL CHECK (fat_g >= 0),
         carbohydrate_g REAL NOT NULL CHECK (carbohydrate_g >= 0)
       ) STRICT;
-      CREATE INDEX diary_targets_by_day ON diary_targets (effective_day, save_order);
+      CREATE INDEX main.diary_targets_by_day ON diary_targets (effective_day, save_order);
     `);
   },
   (db) => {
@@ -146,12 +146,23 @@ export function inCurrentDiary<T>(
   }
 }
 
+export function requireUnshadowedDiary(db: DiarySqliteConnection): void {
+  const shadow = db.get(`
+    SELECT 1
+    FROM temp.sqlite_schema AS temporary
+    JOIN main.sqlite_schema AS persistent ON temporary.name = persistent.name COLLATE NOCASE
+    WHERE temporary.type IN ('table', 'view') AND persistent.type = 'table'
+    LIMIT 1
+  `);
+  if (shadow) throw new Error("Reopen the diary on a clean SQLite connection before continuing");
+}
+
 function verifyIntegrity(db: DiarySqliteConnection, operation: string): void {
-  const checks = db.all("PRAGMA quick_check");
+  const checks = db.all("PRAGMA main.quick_check");
   if (checks.length !== 1 || checks[0]?.quick_check !== "ok") {
     throw new Error(`${operation} failed SQLite integrity verification`);
   }
-  if (db.get("PRAGMA foreign_key_check")) {
+  if (db.get("PRAGMA main.foreign_key_check")) {
     throw new Error(`${operation} contains invalid references`);
   }
 }
@@ -168,38 +179,39 @@ async function verifyBackup(
     }
     requireDiaryIdentity(snapshot, installed);
     verifyIntegrity(snapshot, "Diary backup");
+    // Compare persisted rows even if one connection also has temporary tables.
     for (const query of [
-      "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name",
-      "SELECT * FROM diary_meals ORDER BY id",
-      "SELECT * FROM diary_items ORDER BY id",
+      "SELECT type, name, tbl_name, sql FROM main.sqlite_schema ORDER BY type, name",
+      "SELECT * FROM main.diary_meals ORDER BY id",
+      "SELECT * FROM main.diary_items ORDER BY id",
       ...(installed >= 3
         ? [
-            "SELECT * FROM diary_weigh_ins ORDER BY id",
-            "SELECT * FROM diary_targets ORDER BY save_order",
+            "SELECT * FROM main.diary_weigh_ins ORDER BY id",
+            "SELECT * FROM main.diary_targets ORDER BY save_order",
           ]
         : []),
       ...(installed >= 4
         ? [
-            "SELECT * FROM diary_custom_foods ORDER BY id",
-            "SELECT * FROM diary_recipes ORDER BY id",
-            "SELECT * FROM diary_meal_templates ORDER BY id",
-            "SELECT * FROM diary_favorites ORDER BY provider, source_id",
+            "SELECT * FROM main.diary_custom_foods ORDER BY id",
+            "SELECT * FROM main.diary_recipes ORDER BY id",
+            "SELECT * FROM main.diary_meal_templates ORDER BY id",
+            "SELECT * FROM main.diary_favorites ORDER BY provider, source_id",
           ]
         : []),
       ...(installed >= 5
         ? [
-            "SELECT * FROM edo_sync_binding ORDER BY singleton",
-            "SELECT * FROM edo_sync_outbox ORDER BY kind, id",
-            "SELECT * FROM edo_sync_receipts ORDER BY submission_id",
-            "SELECT * FROM edo_sync_remote ORDER BY kind, id",
-            "SELECT * FROM edo_sync_submission_ids ORDER BY submission_id",
+            "SELECT * FROM main.edo_sync_binding ORDER BY singleton",
+            "SELECT * FROM main.edo_sync_outbox ORDER BY kind, id",
+            "SELECT * FROM main.edo_sync_receipts ORDER BY submission_id",
+            "SELECT * FROM main.edo_sync_remote ORDER BY kind, id",
+            "SELECT * FROM main.edo_sync_submission_ids ORDER BY submission_id",
           ]
         : []),
-      ...(installed >= 6 ? ["SELECT * FROM edo_sync_meal_projections ORDER BY id"] : []),
-      ...(installed >= 7 ? ["SELECT * FROM edo_sync_staged_meal_claims ORDER BY id"] : []),
-      ...(installed >= 8 ? ["SELECT * FROM edo_sync_weigh_in_projections ORDER BY id"] : []),
+      ...(installed >= 6 ? ["SELECT * FROM main.edo_sync_meal_projections ORDER BY id"] : []),
+      ...(installed >= 7 ? ["SELECT * FROM main.edo_sync_staged_meal_claims ORDER BY id"] : []),
+      ...(installed >= 8 ? ["SELECT * FROM main.edo_sync_weigh_in_projections ORDER BY id"] : []),
       ...(installed >= 9
-        ? ["SELECT * FROM edo_sync_attempt_observations ORDER BY submission_id, revision"]
+        ? ["SELECT * FROM main.edo_sync_attempt_observations ORDER BY submission_id, revision"]
         : []),
     ]) {
       if (JSON.stringify(source.all(query)) !== JSON.stringify(snapshot.all(query))) {
@@ -236,6 +248,7 @@ export async function migrateDiary(
       throw new Error("This diary was saved by a newer version of Edo");
     }
     requireDiaryIdentity(db, installed);
+    requireUnshadowedDiary(db);
     if (installed < migrations.length) {
       if (installed === 0) {
         const existing = db.get("SELECT name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'");
@@ -245,6 +258,7 @@ export async function migrateDiary(
       }
 
       for (const migrate of migrations.slice(installed)) migrate(db);
+      requireUnshadowedDiary(db);
       verifyIntegrity(db, "Diary migration");
       verifyRecords(db);
       db.exec(`PRAGMA user_version = ${migrations.length}`);
