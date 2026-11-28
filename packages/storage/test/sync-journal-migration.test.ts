@@ -504,7 +504,7 @@ test.each([
   "edo_sync_staged_meal_claims",
   "edo_sync_weigh_in_projections",
 ] as const)(
-  "rejects a backup that drops a row from %s before a subsequent migration",
+  "verifies the persisted rows in %s when the source also has a temporary copy",
   async (table) => {
     const source = fixture();
     await source.open();
@@ -546,16 +546,18 @@ test.each([
       '{"kind":"weigh-in","id":"weight","state":"deleted","revision":1}',
     );
 
+    source.sqlite.exec(`CREATE TEMP TABLE ${table} AS SELECT * FROM main.${table} WHERE 0`);
+    const nextMigrations = [...diaryMigrations, () => {}];
     await expect(
       migrateDiary(
         source.sqlite,
-        [...diaryMigrations, () => {}],
+        nextMigrations,
         async (_, verify) => {
           const copy = join(source.dir, "missing-submission.sqlite");
           await copyDatabase(source.path, copy);
           const incomplete = new DatabaseSync(copy);
           try {
-            incomplete.exec(`DELETE FROM ${table}`);
+            incomplete.exec(`DELETE FROM main.${table}`);
             verify(connection(incomplete));
           } finally {
             incomplete.close();
@@ -565,6 +567,11 @@ test.each([
       ),
     ).rejects.toThrow("Diary backup does not match the current diary");
     expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(diaryMigrations.length);
-    expect(source.sqlite.get(`SELECT count(*) AS count FROM ${table}`)).toEqual({ count: 1 });
+    expect(source.sqlite.get(`SELECT count(*) AS count FROM main.${table}`)).toEqual({ count: 1 });
+
+    await migrateDiary(source.sqlite, nextMigrations, source.backupBeforeMigration, () => {});
+    expect(source.sqlite.get("PRAGMA user_version")?.user_version).toBe(nextMigrations.length);
+    expect(source.sqlite.get(`SELECT count(*) AS count FROM main.${table}`)).toEqual({ count: 1 });
+    expect(source.sqlite.get(`SELECT count(*) AS count FROM temp.${table}`)).toEqual({ count: 0 });
   },
 );

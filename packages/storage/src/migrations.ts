@@ -168,38 +168,39 @@ async function verifyBackup(
     }
     requireDiaryIdentity(snapshot, installed);
     verifyIntegrity(snapshot, "Diary backup");
+    // Compare persisted rows even if one connection also has temporary tables.
     for (const query of [
-      "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name",
-      "SELECT * FROM diary_meals ORDER BY id",
-      "SELECT * FROM diary_items ORDER BY id",
+      "SELECT type, name, tbl_name, sql FROM main.sqlite_schema ORDER BY type, name",
+      "SELECT * FROM main.diary_meals ORDER BY id",
+      "SELECT * FROM main.diary_items ORDER BY id",
       ...(installed >= 3
         ? [
-            "SELECT * FROM diary_weigh_ins ORDER BY id",
-            "SELECT * FROM diary_targets ORDER BY save_order",
+            "SELECT * FROM main.diary_weigh_ins ORDER BY id",
+            "SELECT * FROM main.diary_targets ORDER BY save_order",
           ]
         : []),
       ...(installed >= 4
         ? [
-            "SELECT * FROM diary_custom_foods ORDER BY id",
-            "SELECT * FROM diary_recipes ORDER BY id",
-            "SELECT * FROM diary_meal_templates ORDER BY id",
-            "SELECT * FROM diary_favorites ORDER BY provider, source_id",
+            "SELECT * FROM main.diary_custom_foods ORDER BY id",
+            "SELECT * FROM main.diary_recipes ORDER BY id",
+            "SELECT * FROM main.diary_meal_templates ORDER BY id",
+            "SELECT * FROM main.diary_favorites ORDER BY provider, source_id",
           ]
         : []),
       ...(installed >= 5
         ? [
-            "SELECT * FROM edo_sync_binding ORDER BY singleton",
-            "SELECT * FROM edo_sync_outbox ORDER BY kind, id",
-            "SELECT * FROM edo_sync_receipts ORDER BY submission_id",
-            "SELECT * FROM edo_sync_remote ORDER BY kind, id",
-            "SELECT * FROM edo_sync_submission_ids ORDER BY submission_id",
+            "SELECT * FROM main.edo_sync_binding ORDER BY singleton",
+            "SELECT * FROM main.edo_sync_outbox ORDER BY kind, id",
+            "SELECT * FROM main.edo_sync_receipts ORDER BY submission_id",
+            "SELECT * FROM main.edo_sync_remote ORDER BY kind, id",
+            "SELECT * FROM main.edo_sync_submission_ids ORDER BY submission_id",
           ]
         : []),
-      ...(installed >= 6 ? ["SELECT * FROM edo_sync_meal_projections ORDER BY id"] : []),
-      ...(installed >= 7 ? ["SELECT * FROM edo_sync_staged_meal_claims ORDER BY id"] : []),
-      ...(installed >= 8 ? ["SELECT * FROM edo_sync_weigh_in_projections ORDER BY id"] : []),
+      ...(installed >= 6 ? ["SELECT * FROM main.edo_sync_meal_projections ORDER BY id"] : []),
+      ...(installed >= 7 ? ["SELECT * FROM main.edo_sync_staged_meal_claims ORDER BY id"] : []),
+      ...(installed >= 8 ? ["SELECT * FROM main.edo_sync_weigh_in_projections ORDER BY id"] : []),
       ...(installed >= 9
-        ? ["SELECT * FROM edo_sync_attempt_observations ORDER BY submission_id, revision"]
+        ? ["SELECT * FROM main.edo_sync_attempt_observations ORDER BY submission_id, revision"]
         : []),
     ]) {
       if (JSON.stringify(source.all(query)) !== JSON.stringify(snapshot.all(query))) {
