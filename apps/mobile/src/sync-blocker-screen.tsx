@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-native";
 import { type Language, strings } from "./strings";
-import { type BlockerJournal, readSyncBlocker, type syncBlockerNotice } from "./sync-blockers";
+import {
+  type BlockerJournal,
+  readSyncBlocker,
+  type syncBlockerNotice,
+  type WeighInReviewSide,
+} from "./sync-blockers";
 import { DetailHeader, Notice, styles } from "./ui";
 
 const copy = {
@@ -18,6 +23,15 @@ const copy = {
     record: "Saved record",
     put: "The phone’s latest saved action is an edit.",
     delete: "The phone’s latest saved action is a deletion.",
+    weighIn: {
+      phone: "Latest phone change",
+      account: "Saved account copy",
+      localDay: "Diary day",
+      instant: "Recorded time",
+      deleted: "Deleted",
+      unavailable: "Weigh-in values unavailable",
+      unknown: "No saved value",
+    },
     kinds: {
       meal: "Meal",
       "custom-food": "Custom food",
@@ -50,6 +64,15 @@ const copy = {
     record: "Gespeicherter Eintrag",
     put: "Die zuletzt auf dem Gerät gespeicherte Aktion ist eine Änderung.",
     delete: "Die zuletzt auf dem Gerät gespeicherte Aktion ist eine Löschung.",
+    weighIn: {
+      phone: "Letzte Änderung auf dem Gerät",
+      account: "Gespeicherte Kontokopie",
+      localDay: "Tagebuchdatum",
+      instant: "Erfasster Zeitpunkt",
+      deleted: "Gelöscht",
+      unavailable: "Gewichtsdaten nicht verfügbar",
+      unknown: "Kein gespeicherter Wert",
+    },
     kinds: {
       meal: "Mahlzeit",
       "custom-food": "Eigenes Lebensmittel",
@@ -92,10 +115,12 @@ export function SyncBlockerNotice({
 export function SyncBlockerScreen({
   journal,
   language,
+  locale,
   onBack,
 }: {
   journal: BlockerJournal;
   language: Language;
+  locale: string;
   onBack: () => void;
 }) {
   const words = copy[language];
@@ -125,7 +150,24 @@ export function SyncBlockerScreen({
               {(Object.hasOwn(words.kinds, issue.kind) && words.kinds[issue.kind]) || words.record}
             </Text>
             <Text style={styles.body}>{words.reasons[issue.reason]}</Text>
-            <Text style={styles.meta}>{words[issue.operation]}</Text>
+            {issue.weighIn ? (
+              <>
+                <WeighInSide
+                  title={words.weighIn.phone}
+                  side={issue.weighIn.phone}
+                  locale={locale}
+                  words={words.weighIn}
+                />
+                <WeighInSide
+                  title={words.weighIn.account}
+                  side={issue.weighIn.account}
+                  locale={locale}
+                  words={words.weighIn}
+                />
+              </>
+            ) : (
+              <Text style={styles.meta}>{words[issue.operation]}</Text>
+            )}
             <Pressable accessibilityRole="button" onPress={restart} style={styles.action}>
               <Text style={styles.actionText}>{words.restart}</Text>
             </Pressable>
@@ -143,5 +185,59 @@ export function SyncBlockerScreen({
         )}
       </ScrollView>
     </>
+  );
+}
+
+function WeighInSide({
+  title,
+  side,
+  locale,
+  words,
+}: {
+  title: string;
+  side: WeighInReviewSide;
+  locale: string;
+  words: (typeof copy)[Language]["weighIn"];
+}) {
+  return (
+    <View>
+      <Text accessibilityRole="header" style={styles.title}>
+        {title}
+      </Text>
+      {side.state === "live" ? (
+        <>
+          <Text style={[styles.body, styles.numbers]}>
+            {new Intl.NumberFormat(locale, {
+              maximumSignificantDigits: 17,
+              notation: side.kg < 0.01 || side.kg >= 10_000 ? "scientific" : "standard",
+            }).format(side.kg)}{" "}
+            kg
+          </Text>
+          <Text style={styles.meta}>{words.localDay}</Text>
+          <Text style={styles.body}>
+            {new Intl.DateTimeFormat(locale, {
+              dateStyle: "medium",
+              timeZone: "UTC",
+            }).format(new Date(`${side.localDay}T00:00:00.000Z`))}
+          </Text>
+          <Text style={styles.meta}>{words.instant}</Text>
+          <Text style={styles.body}>
+            {new Intl.DateTimeFormat(locale, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+              second: "2-digit",
+              ...(side.occurredAt % 1000 !== 0 && { fractionalSecondDigits: 3 }),
+              timeZone: "UTC",
+              timeZoneName: "short",
+            }).format(side.occurredAt)}
+          </Text>
+        </>
+      ) : (
+        <Text style={styles.meta}>{words[side.state]}</Text>
+      )}
+    </View>
   );
 }
