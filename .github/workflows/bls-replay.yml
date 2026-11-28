@@ -1,0 +1,49 @@
+name: Rebuild reviewed BLS catalog
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    if: github.repository == 'lightwork-studio/edo' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # Match the Node and SQLite pair used to generate the bundled seed.
+          node-version: 24.22.3
+      - run: pnpm install --frozen-lockfile
+      - name: Verify the source and rebuild the pinned catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/edo-bls"
+          mkdir -p "$work"
+          curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+            --retry 2 --max-time 90 --max-filesize 33554432 \
+            https://blsdb.de/assets/uploads/BLS_4_0_2025_DE.zip -o "$work/source.zip"
+          node packages/bls-import/src/cli.ts "$work/source.zip" "$work/catalog"
+          manifest="$work/catalog/bls/active.json"
+          checksum="$(jq -er '.artifact.sha256 | select(test("^[0-9a-f]{64}$"))' "$manifest")"
+          cmp apps/mobile/assets/bls.sqlite "$work/catalog/bls/artifacts/$checksum.sqlite"
+          {
+            printf 'Matched the bundled BLS seed with Node %s and SQLite %s.\n\n' \
+              "$(node --version)" "$(node -p process.versions.sqlite)"
+            printf '%s\n' 'Rebuilt manifest:' '~~~json'
+            jq '{source, artifact, attribution, counts}' "$manifest"
+            printf '%s\n' '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bls-4.0-reviewed
+          path: ${{ runner.temp }}/edo-bls/catalog/bls
+          if-no-files-found: error
+          retention-days: 30
