@@ -1,0 +1,132 @@
+name: Publish Edo iOS Preflight
+
+on:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        required: true
+      force_build:
+        type: boolean
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  testflight:
+    if: github.repository == 'lightwork-studio/edo' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: edo-preflight
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      evidence: ${{ steps.read.outputs.evidence }}
+    steps:
+      - name: Report paused publishing
+        if: vars.EDO_PREFLIGHT_ENABLED != 'true'
+        run: echo "Edo Preflight publishing is paused." >> "$GITHUB_STEP_SUMMARY"
+      - name: Recheck the approved revision before reading TestFlight
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]]
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$current" != "$TARGET" ]]; then exit 0; fi
+          checked="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f branch=main -f event=push -f head_sha="$TARGET" -f status=success \
+            --jq '.total_count > 0')"
+          test "$checked" = true
+          printf 'approved=true\n' >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.revision.outputs.approved == 'true'
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.revision.outputs.approved == 'true'
+        with:
+          node-version-file: .node-version
+      - name: Read the current internal TestFlight group
+        if: steps.revision.outputs.approved == 'true'
+        id: read
+        env:
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          evidence="$(node apps/mobile/scripts/preflight-apple.mts | jq -c .)"
+          printf 'evidence=%s\n' "$evidence" >> "$GITHUB_OUTPUT"
+
+  expo:
+    needs: testflight
+    if: needs.testflight.outputs.evidence != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    environment: edo-preflight
+    outputs:
+      action: ${{ steps.release.outputs.action }}
+      build: ${{ steps.release.outputs.build }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          node-version-file: .node-version
+      - if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Publish OTA or prepare the exact native build
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        id: release
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          TARGET: ${{ inputs.revision }}
+          FORCE_BUILD: ${{ inputs.force_build }}
+          TESTFLIGHT_EVIDENCE: ${{ needs.testflight.outputs.evidence }}
+        run: bash scripts/publish-preflight.sh expo
+
+  submit:
+    needs: expo
+    if: needs.expo.outputs.action == 'submit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: edo-preflight
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        with:
+          node-version-file: .node-version
+      - if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Submit or verify the exact native build
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          TARGET: ${{ inputs.revision }}
+          PREFLIGHT_BUILD: ${{ needs.expo.outputs.build }}
+        run: bash scripts/publish-preflight.sh submit

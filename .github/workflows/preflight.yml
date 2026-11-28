@@ -1,0 +1,70 @@
+name: Edo Preflight
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: Build a new TestFlight binary even when its runtime already exists
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'lightwork-studio/edo' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.head_branch == 'main' &&
+         github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - name: Verify the exact checked main revision
+        id: target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]]
+          tip="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [ "$tip" != "$TARGET" ]; then
+            echo "A newer main revision is available. Skipping this release."
+            exit 0
+          fi
+          checked="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f branch=main -f event=push -f head_sha="$TARGET" -f status=success \
+            --jq '.total_count > 0')"
+          if [ "$checked" != true ]; then
+            echo "::error::CI has not passed on this main revision."
+            exit 1
+          fi
+          echo "sha=$TARGET" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: verify
+    if: needs.verify.outputs.sha != ''
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: edo-preflight-ios
+      queue: max
+    uses: ./.github/workflows/preflight-publish.yml
+    with:
+      revision: ${{ needs.verify.outputs.sha }}
+      force_build: ${{ inputs.force_build == true }}

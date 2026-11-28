@@ -17,3 +17,5 @@ coverage/
 *.jks
 *.keystore
 *.mobileprovision
+
+/apps/mobile/credentials.json

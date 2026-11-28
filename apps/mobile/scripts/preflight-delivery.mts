@@ -3,13 +3,13 @@ import { readFileSync } from "node:fs";
 const expoProject = "fd9dba15-d0b8-4594-a2b0-aed4cc0a0b7a";
 const iosBundle = "studio.lightwork.edo";
 const preflightChannel = "preflight";
-const appStoreApp = "6840244969";
-const preflightGroup = "Archive Restore";
-const preflightGroupId = "cea7ca9a-9d7a-4089-9d81-46be7dbe9ac9";
+export const appStoreApp = "6840244969";
+export const preflightGroup = "Archive Restore";
+export const preflightGroupId = "cea7ca9a-9d7a-4089-9d81-46be7dbe9ac9";
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const maxReceiptAgeMs = 5 * 60_000;
 
-type ExpoBuild = {
+export type ExpoBuild = {
   readonly id: string;
   readonly app?: { readonly id?: string };
   readonly appIdentifier?: string;
@@ -19,6 +19,7 @@ type ExpoBuild = {
   readonly distribution?: string;
   readonly isForIosSimulator?: boolean;
   readonly status: string;
+  readonly message?: string;
   readonly runtime?: { readonly version?: string } | null;
   readonly updateChannel?: { readonly name?: string } | null;
 };
@@ -31,7 +32,7 @@ type ExpoSubmission = {
   readonly submittedBuild?: { readonly id?: string } | null;
 };
 
-type TestFlightBuild = {
+export type TestFlightBuild = {
   readonly id: string;
   readonly marketingVersion: string;
   readonly buildNumber: string;
@@ -42,7 +43,7 @@ type TestFlightBuild = {
   readonly expirationDate: string;
 };
 
-type DeliveryEvidence = {
+export type DeliveryEvidence = {
   readonly runtime: string;
   readonly builds: readonly ExpoBuild[];
   readonly submissions: readonly ExpoSubmission[];
@@ -56,6 +57,42 @@ type DeliveryEvidence = {
     readonly builds: readonly TestFlightBuild[];
   };
 };
+
+export function matchesPreflightStoreBuild(build: ExpoBuild, runtime: string) {
+  return (
+    build?.platform === "IOS" &&
+    build.distribution === "STORE" &&
+    build.isForIosSimulator !== true &&
+    build.app?.id === expoProject &&
+    build.appIdentifier === iosBundle &&
+    build.runtime?.version === runtime &&
+    build.updateChannel?.name === preflightChannel &&
+    typeof build.id === "string" &&
+    uuid.test(build.id)
+  );
+}
+
+export function targetsPreflightSubmission(submission: ExpoSubmission, buildId: string) {
+  return (
+    submission?.platform === "IOS" &&
+    submission.app?.id === expoProject &&
+    submission.iosConfig?.ascAppIdentifier === appStoreApp &&
+    submission.submittedBuild?.id === buildId
+  );
+}
+
+export function describePreflightBuild(build: ExpoBuild) {
+  const { appVersion: marketingVersion, appBuildVersion: buildNumber } = build;
+  if (
+    typeof marketingVersion !== "string" ||
+    !/^\d+\.\d+\.\d+$/.test(marketingVersion) ||
+    typeof buildNumber !== "string" ||
+    !/^\d+(?:\.\d+){0,2}$/.test(buildNumber)
+  ) {
+    return null;
+  }
+  return { buildId: build.id, marketingVersion, buildNumber };
+}
 
 function unexpired(value: unknown, now: number) {
   if (
@@ -101,30 +138,18 @@ export function findDeliveredPreflightBuild(evidence: DeliveryEvidence) {
   for (const build of builds) {
     if (
       build?.status !== "FINISHED" ||
-      build.platform !== "IOS" ||
-      build.distribution !== "STORE" ||
-      build.isForIosSimulator !== false ||
-      build.app?.id !== expoProject ||
-      build.appIdentifier !== iosBundle ||
-      build.runtime?.version !== runtime ||
-      build.updateChannel?.name !== preflightChannel ||
-      typeof build.id !== "string" ||
-      !uuid.test(build.id) ||
-      typeof build.appVersion !== "string" ||
-      !/^\d+\.\d+\.\d+$/.test(build.appVersion) ||
-      typeof build.appBuildVersion !== "string" ||
-      !/^\d+(?:\.\d+){0,2}$/.test(build.appBuildVersion)
+      !matchesPreflightStoreBuild(build, runtime) ||
+      build.isForIosSimulator !== false
     ) {
       continue;
     }
 
+    const identity = describePreflightBuild(build);
+    if (!identity) continue;
     const submitted = submissions.some(
       (submission) =>
         submission?.status === "FINISHED" &&
-        submission.platform === "IOS" &&
-        submission.app?.id === expoProject &&
-        submission.iosConfig?.ascAppIdentifier === appStoreApp &&
-        submission.submittedBuild?.id === build.id,
+        targetsPreflightSubmission(submission, identity.buildId),
     );
     const available = testFlight.builds.some(
       (receipt) =>
@@ -136,15 +161,11 @@ export function findDeliveredPreflightBuild(evidence: DeliveryEvidence) {
         receipt.internalBuildState === "IN_BETA_TESTING" &&
         receipt.expired === false &&
         unexpired(receipt.expirationDate, now) &&
-        receipt.marketingVersion === build.appVersion &&
-        receipt.buildNumber === build.appBuildVersion,
+        receipt.marketingVersion === identity.marketingVersion &&
+        receipt.buildNumber === identity.buildNumber,
     );
     if (submitted && available) {
-      return {
-        buildId: build.id,
-        marketingVersion: build.appVersion,
-        buildNumber: build.appBuildVersion,
-      };
+      return identity;
     }
   }
   return null;
