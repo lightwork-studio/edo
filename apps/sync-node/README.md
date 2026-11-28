@@ -51,6 +51,9 @@ pnpm --filter @edo/sync-node backup verify /srv/edo-backups/edo-20261128.sqlite
 ```
 
 Create the backup in an existing private directory that supports hard links. The command
-checks the snapshot before making it visible at the named path and refuses an existing
-destination. Keep the backup and its command output private. The database includes all accounts,
+checks the snapshot before making it visible at a new path. Use a path with no existing
+database or SQLite sidecar files and reserve that path for this command while it runs.
+Keep the backup and its command output private. The database includes all accounts,
 and the output shows the lineage and revision stored for each account in the snapshot.
+If the backup process is forcibly stopped mid-copy, its private `.edo-sync-backup-*`
+directory can remain. Remove that directory only after the process has exited.

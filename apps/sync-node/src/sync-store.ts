@@ -190,20 +190,43 @@ export function syncDatabaseVersion(db: DatabaseSync): 1 | typeof schemaVersion 
 export function inspectSyncSnapshot(db: DatabaseSync) {
   return transaction(db, "BEGIN", () => {
     const version = syncDatabaseVersion(db);
-    const integrity = db.prepare("PRAGMA quick_check").all();
-    if (
-      integrity.length !== 1 ||
-      integrity[0]?.quick_check !== "ok" ||
-      db.prepare("PRAGMA foreign_key_check").get()
-    ) {
+    const integrity = db.prepare("PRAGMA integrity_check(1)").get();
+    if (integrity?.integrity_check !== "ok" || db.prepare("PRAGMA foreign_key_check").get()) {
       throw new Error("Sync database snapshot failed its integrity check");
     }
-    db.prepare("SELECT revision, content FROM sync_records LIMIT 0").all();
-    db.prepare("SELECT submission_id, result FROM sync_receipts LIMIT 0").all();
-    if (version === schemaVersion) {
-      db.prepare(
-        "SELECT account_binding, item_id, meal_id FROM sync_meal_item_owners LIMIT 0",
-      ).all();
+    using expected = new DatabaseSync(":memory:");
+    expected.exec(schema);
+    if (version === schemaVersion) expected.exec(mealItemOwnershipSchema);
+    const schemaSql = `
+      SELECT type, name, sql FROM sqlite_schema
+      WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name
+    `;
+    const definition = (database: DatabaseSync) =>
+      database
+        .prepare(schemaSql)
+        .all()
+        .map(({ type, name, sql }) => [
+          type,
+          name,
+          typeof sql === "string" ? sql.replace(/\s+/g, " ").trim() : sql,
+        ]);
+    if (JSON.stringify(definition(db)) !== JSON.stringify(definition(expected))) {
+      throw new Error("Sync database snapshot schema does not match its version");
+    }
+    if (
+      db
+        .prepare(`
+        SELECT 1 FROM sync_accounts AS account
+        WHERE EXISTS (
+          SELECT 1 FROM sync_records AS record
+          WHERE record.account_binding = account.account_binding
+            AND record.revision > account.revision
+        )
+        LIMIT 1
+      `)
+        .get()
+    ) {
+      throw new Error("Sync database snapshot contains records ahead of account history");
     }
     const accounts = db
       .prepare(

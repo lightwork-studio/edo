@@ -141,3 +141,137 @@ test("does not replace an existing backup or publish a corrupt or unrelated SQLi
     { accountBinding: "account", revision: 0 },
   ]);
 });
+
+test("rejects SQLite sidecars without touching their contents", async () => {
+  const source = join(directory, "live.sqlite");
+  const target = join(directory, "backup.sqlite");
+  using live = openSyncStore(source, { applyContent: applyRecordContent });
+  live.createAccount("account", "lineage");
+  for (const suffix of ["-journal", "-wal", "-shm"]) {
+    const sidecar = `${target}${suffix}`;
+    await writeFile(sidecar, "keep the existing sidecar");
+    await expect(createSyncBackup(source, target)).rejects.toThrow("SQLite sidecar");
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(() => verifySyncBackup(target)).toThrow("SQLite sidecar");
+    expect(await readFile(sidecar, "utf8")).toBe("keep the existing sidecar");
+    await rm(sidecar);
+  }
+  await createSyncBackup(source, target);
+  expect(verifySyncBackup(target).accounts).toHaveLength(1);
+});
+
+test("rejects an idle WAL database without creating sidecars", async () => {
+  const source = join(directory, "wal.sqlite");
+  {
+    using live = openSyncStore(source, { applyContent: applyRecordContent });
+    live.createAccount("account", "lineage");
+  }
+  {
+    using db = new DatabaseSync(source);
+    db.exec("PRAGMA journal_mode = WAL");
+  }
+  expect(() => verifySyncBackup(source)).toThrow("standalone SQLite file");
+  for (const suffix of ["-wal", "-shm"]) {
+    await expect(stat(`${source}${suffix}`)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+});
+
+test("rejects an inconsistent revision index that passes SQLite quick_check", async () => {
+  const source = join(directory, "bad-index.sqlite");
+  {
+    using live = openSyncStore(source, { applyContent: applyRecordContent });
+    live.createAccount("alpha", "lineage");
+    push(live, "alpha", put("a", "a-1", 80));
+    push(live, "alpha", put("b", "a-2", 81));
+  }
+  let pageSize = 0;
+  let rootPage = 0;
+  {
+    using db = new DatabaseSync(source, { readOnly: true });
+    pageSize = Number(db.prepare("PRAGMA page_size").get()?.page_size);
+    rootPage = Number(
+      db
+        .prepare("SELECT rootpage FROM sqlite_schema WHERE name = ?")
+        .get("sqlite_autoindex_sync_records_2")?.rootpage,
+    );
+  }
+  const image = await readFile(source);
+  const header = (rootPage - 1) * pageSize;
+  expect(image[header]).toBe(0x0a); // Leaf index B-tree page.
+  const secondCell = header + image.readUInt16BE(header + 10);
+  // The second record has one-byte revision 2, following its index header and account "alpha".
+  const revision = secondCell + 11;
+  expect(image[revision]).toBe(2);
+  image[revision] = 3;
+  await writeFile(source, image);
+  {
+    using db = new DatabaseSync(source, { readOnly: true });
+    expect(db.prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
+  }
+  expect(() => verifySyncBackup(source)).toThrow("snapshot failed its integrity check");
+  const output = join(directory, "bad-index-backup.sqlite");
+  await expect(createSyncBackup(source, output)).rejects.toThrow(
+    "snapshot failed its integrity check",
+  );
+  await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("rejects a missing ownership trigger and verifies an intact version 1 snapshot", async () => {
+  const source = join(directory, "versioned.sqlite");
+  {
+    using live = openSyncStore(source, { applyContent: applyRecordContent });
+    live.createAccount("account", "lineage");
+    push(live, "account", put("weight", "accepted", 80));
+  }
+  {
+    using db = new DatabaseSync(source);
+    db.exec("DROP TRIGGER sync_claim_inserted_meal_items");
+  }
+  const output = join(directory, "versioned-backup.sqlite");
+  expect(() => verifySyncBackup(source)).toThrow("schema does not match its version");
+  await expect(createSyncBackup(source, output)).rejects.toThrow(
+    "schema does not match its version",
+  );
+  await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+
+  {
+    using db = new DatabaseSync(source);
+    db.exec(`
+      DROP TRIGGER sync_replace_updated_meal_items;
+      DROP TRIGGER sync_release_deleted_meal_items;
+      DROP TABLE sync_meal_item_owners;
+      PRAGMA user_version = 1;
+    `);
+  }
+  expect(await createSyncBackup(source, output)).toEqual({
+    path: output,
+    schemaVersion: 1,
+    accounts: [{ accountBinding: "account", lineage: "lineage", revision: 1, restoredFrom: null }],
+  });
+  expect(verifySyncBackup(source).schemaVersion).toBe(1);
+  expect(verifySyncBackup(output).schemaVersion).toBe(1);
+  using reopened = openSyncStore(output, { applyContent: applyRecordContent });
+  expect(push(reopened, "account", put("weight", "accepted", 80)).results).toEqual([
+    { status: "accepted", submissionId: "accepted", revision: 1 },
+  ]);
+});
+
+test("rejects a record ahead of the copied account revision", async () => {
+  const source = join(directory, "inconsistent-history.sqlite");
+  {
+    using live = openSyncStore(source, { applyContent: applyRecordContent });
+    live.createAccount("account", "lineage");
+    push(live, "account", put("weight", "accepted", 80));
+  }
+  {
+    using db = new DatabaseSync(source);
+    db.exec("UPDATE sync_accounts SET revision = 0");
+    expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+  }
+  const output = join(directory, "inconsistent-history-backup.sqlite");
+  expect(() => verifySyncBackup(source)).toThrow("records ahead of account history");
+  await expect(createSyncBackup(source, output)).rejects.toThrow(
+    "records ahead of account history",
+  );
+  await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+});
