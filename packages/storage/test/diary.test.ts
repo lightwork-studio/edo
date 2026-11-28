@@ -519,7 +519,7 @@ test.each(["clean", "local edit", "legacy local deletion"] as const)(
       revision: 7,
       content: weighIn,
     });
-    expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([]);
+    expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([weighIn]);
     expect(diary.sync.replayMealProjections(active)).toEqual({
       awaitingPages: false,
       deferred: expectedDeferred,
@@ -730,6 +730,12 @@ test.each(["pending delete", "pending put", "v5 revision only"] as const)(
     expect(diary.sync.replayMealProjections(session)).toEqual(deferred);
     expect(diary.getMeal(left.id)).toEqual(scenario === "pending put" ? emptied : null);
     expect(diary.getMeal(right.id)).toBeNull();
+    expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([
+      { ...weighIn, kg: 80 },
+    ]);
+    if (scenario === "pending put") {
+      diary.sync.saveWeighIn({ ...weighIn, kg: 79 }, "offline-weight");
+    }
 
     expect((await tablet.push(tabletSession, [tail("second-tail", 4, 81)])).results).toMatchObject([
       { status: "accepted", revision: 5 },
@@ -742,6 +748,23 @@ test.each(["pending delete", "pending put", "v5 revision only"] as const)(
       ),
     ).toEqual(deferred);
     expect(diary.getMeal(right.id)).toBeNull();
+    expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([
+      { ...weighIn, kg: scenario === "pending put" ? 79 : 81 },
+    ]);
+    if (scenario === "pending put") {
+      const weighInKey = { kind: "weigh-in", id: weighIn.id };
+      expect(diary.sync.journal.serverCopy(weighInKey)).toMatchObject({
+        revision: 5,
+        content: { kg: 81 },
+      });
+      expect(diary.sync.journal.queued()).toContainEqual(
+        expect.objectContaining({
+          key: weighInKey,
+          baseRevision: 4,
+          pending: expect.objectContaining({ submissionId: "offline-weight" }),
+        }),
+      );
+    }
     if (scenario === "pending delete") {
       const receipt = await phone.push(session, diary.sync.journal.prepare(session));
       expect(receipt.results).toMatchObject([{ status: "accepted", revision: 2 }]);
@@ -891,7 +914,49 @@ test.each(["staged pull", "conflict receipt"] as const)(
   },
 );
 
-test("leaves first local writes unbased when authenticated account copies are only staged", async () => {
+test("retains unknown ownership from a superseded unavailable meal across a pending delete", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const unavailable = { kind: "meal", id: "opaque-source", state: "unavailable", revision: 1 };
+  const destination = { ...meal, id: "destination" };
+  const scope = { release: "0.1", accountBinding: "account", lineage: "fixture" };
+  let reply: object = { ...scope, cursor: 1, hasMore: false, changes: [unavailable] };
+  const client = diarySyncClient(() => Response.json(reply));
+  const session = await client.connect();
+  diary.sync.journal.bind(session);
+  expect(diary.sync.applyMealPage(session, 0, await client.pull(session, 0)).deferred).toEqual([
+    unavailable.id,
+  ]);
+  expect(source.db.prepare("SELECT * FROM edo_sync_staged_meal_claims").all()).toEqual([
+    { id: unavailable.id, item_ids: "[]", unknown_prior: 1 },
+  ]);
+  diary.sync.deleteMeal(unavailable.id, "unbased-delete");
+  reply = {
+    ...scope,
+    cursor: 3,
+    hasMore: false,
+    changes: [
+      { ...unavailable, state: "deleted", revision: 2 },
+      { kind: "meal", id: destination.id, state: "live", revision: 3, content: destination },
+    ],
+  };
+  expect(diary.sync.applyMealPage(session, 1, await client.pull(session, 1)).deferred).toEqual([
+    unavailable.id,
+    destination.id,
+  ]);
+  expect(diary.sync.replayMealProjections(session).deferred).toEqual([
+    unavailable.id,
+    destination.id,
+  ]);
+  expect(diary.getMeal(destination.id)).toBeNull();
+  expect(
+    source.db
+      .prepare("SELECT unknown_prior FROM edo_sync_staged_meal_claims WHERE id = ?")
+      .get(unavailable.id),
+  ).toEqual({ unknown_prior: 1 });
+});
+
+test("keeps a staged meal unbased while applying an independent weigh-in on the same page", async () => {
   const diary = await createDatabase().start();
   diary.saveMeal({ ...meal, occurredAt: meal.occurredAt + 60_000 });
   const client = diarySyncClient(() =>
@@ -913,11 +978,12 @@ test("leaves first local writes unbased when authenticated account copies are on
     awaitingPages: false,
     deferred: [meal.id],
   });
+  expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([weighIn]);
   diary.sync.deleteMeal(meal.id, "local-delete");
   diary.sync.saveWeighIn({ ...weighIn, kg: 81 }, "local-weigh-in");
   expect(diary.sync.journal.prepare(session)).toMatchObject([
     { submissionId: "local-delete", baseRevision: null },
-    { submissionId: "local-weigh-in", baseRevision: null },
+    { submissionId: "local-weigh-in", baseRevision: 2 },
   ]);
   expect(diary.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toMatchObject({
     revision: 1,

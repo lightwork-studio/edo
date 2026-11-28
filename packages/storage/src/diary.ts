@@ -1,8 +1,9 @@
-import type { NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
+import type { Change, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
 import {
   type MealProjectionHistory,
   mealItemIds,
+  type OutboxRecord,
   openSyncJournal,
   type StagedMealChange,
   type StagedMealClaims,
@@ -179,6 +180,46 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
   return meal?.id === id ? meal : null;
 }
 
+function pulledWeighIn(change: Change | null): WeighIn | null | undefined {
+  if (change?.state === "deleted") return null;
+  if (change?.state !== "live" || change.content.id !== change.id) return undefined;
+  try {
+    return readWeighIn({
+      id: change.id,
+      local_day: change.content.localDay,
+      occurred_at: change.content.occurredAt,
+      kg: change.content.kg,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function projectWeighIn(
+  db: DiarySqliteConnection,
+  change: Change,
+  { base, baseRevision }: Pick<OutboxRecord, "base" | "baseRevision">,
+): boolean {
+  const incoming = pulledWeighIn(change);
+  if (incoming === undefined) return false;
+  const row = db.get("SELECT * FROM diary_weigh_ins WHERE id = ?", change.id);
+  const current = row ? readWeighIn(row) : null;
+  if (JSON.stringify(current) === JSON.stringify(incoming)) return true;
+
+  const previous = pulledWeighIn(base);
+  if (previous === null) return false;
+  if (
+    previous === undefined
+      ? baseRevision !== null || current !== null
+      : JSON.stringify(current) !== JSON.stringify(previous)
+  ) {
+    return false;
+  }
+  if (incoming) writeWeighIn(db, incoming);
+  else db.run("DELETE FROM diary_weigh_ins WHERE id = ?", change.id);
+  return true;
+}
+
 function projectMeals(
   db: DiarySqliteConnection,
   changes: readonly StagedMealChange[],
@@ -324,6 +365,8 @@ export async function openDiary({
     history: (id: string) => MealProjectionHistory,
     claims: readonly StagedMealClaims[],
   ) => projectMeals(db, changes, history, claims);
+  const applyWeighIn = (change: Change, evidence: Pick<OutboxRecord, "base" | "baseRevision">) =>
+    projectWeighIn(db, change, evidence);
   return {
     ...diaryProgress(db),
     ...myFoods(db),
@@ -399,12 +442,13 @@ export async function openDiary({
         );
       },
       applyMealPage: (session, cursor, page) =>
-        journal.applyMealPage(session, cursor, page, applyMeals),
+        journal.applyMealPage(session, cursor, page, applyMeals, applyWeighIn),
       applyMealResults: (session, results) => {
         journal.applyResults(session, results);
-        return journal.replayMealProjections(session, applyMeals);
+        return journal.replayMealProjections(session, applyMeals, applyWeighIn);
       },
-      replayMealProjections: (session) => journal.replayMealProjections(session, applyMeals),
+      replayMealProjections: (session) =>
+        journal.replayMealProjections(session, applyMeals, applyWeighIn),
       saveWeighIn: (entry, submissionId) => {
         const reading = prepareWeighIn(entry);
         journal.commitLocalProjection({ kind: "weigh-in", id: reading.id }, submissionId, () => {

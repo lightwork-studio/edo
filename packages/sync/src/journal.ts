@@ -379,6 +379,37 @@ type ProjectMeals = (
   history: (id: string) => MealProjectionHistory,
   claims: readonly StagedMealClaims[],
 ) => readonly string[];
+type ProjectWeighIn = (
+  change: Change,
+  evidence: Pick<OutboxRecord, "base" | "baseRevision">,
+) => boolean;
+
+function projectStagedWeighIns(db: JournalSqlite, apply: ProjectWeighIn) {
+  const rows = db.all(`
+    SELECT remote.id
+    FROM edo_sync_remote AS remote
+    LEFT JOIN edo_sync_outbox AS outbox
+      ON outbox.kind = remote.kind AND outbox.id = remote.id
+    WHERE remote.kind = 'weigh-in'
+      AND json_extract(outbox.content, '$.base.revision') IS NOT remote.revision
+    ORDER BY remote.revision, remote.id
+  `);
+  for (const row of rows) {
+    if (typeof row.id !== "string") throw new Error("Stored weigh-in identity is invalid");
+    const key = { kind: "weigh-in", id: row.id };
+    const change = remoteRecord(db, key);
+    if (!change) throw new Error("Missing weigh-in copy");
+    if (change.state === "unavailable") continue;
+    const { record } = localRecord(db, key);
+    if (
+      !hasLocalWork(record) &&
+      change.revision >= (record.baseRevision ?? 0) &&
+      apply(change, record)
+    ) {
+      saveRecord(db, createOutboxRecord(change, change));
+    }
+  }
+}
 
 const stagedMealSelection = `
   FROM edo_sync_remote AS remote
@@ -767,6 +798,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       requestCursor: number,
       input: PullResponse,
       apply: ProjectMeals,
+      applyWeighIn: ProjectWeighIn,
     ) {
       requireActiveSession(session);
       const page = authenticatedResponseSnapshot(input, session, requestCursor);
@@ -805,6 +837,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           page.cursor,
           observed,
         );
+        projectStagedWeighIns(db, applyWeighIn);
         const result =
           page.hasMore || page.cursor < binding.revision
             ? { awaitingPages: true, deferred: [] }
@@ -813,9 +846,14 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         return result;
       });
     },
-    replayMealProjections(session: NegotiatedSync, apply: ProjectMeals) {
+    replayMealProjections(
+      session: NegotiatedSync,
+      apply: ProjectMeals,
+      applyWeighIn: ProjectWeighIn,
+    ) {
       return transact(() => {
         const binding = checkSession(session);
+        projectStagedWeighIns(db, applyWeighIn);
         const result =
           binding.cursor < binding.revision
             ? { awaitingPages: true, deferred: [] }
