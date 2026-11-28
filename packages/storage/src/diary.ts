@@ -1,6 +1,13 @@
-import type { NegotiatedSync } from "@edo/contract";
+import type { Change, JsonObject, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
-import { openSyncJournal } from "@edo/sync";
+import {
+  type MealProjectionHistory,
+  mealItemIds,
+  type OutboxRecord,
+  openSyncJournal,
+  type StagedMealChange,
+  type StagedMealClaims,
+} from "@edo/sync";
 import { readMealEntries } from "./diary-archive.ts";
 import {
   type DiaryProgressStore,
@@ -10,6 +17,7 @@ import {
   verifyDiaryProgress,
   writeWeighIn,
 } from "./diary-progress.ts";
+import { groupMealProjections, type MealProjectionCandidate } from "./meal-projection-groups.ts";
 import {
   type DiaryBackup,
   diaryMigrations,
@@ -59,7 +67,15 @@ export interface SyncMealStore {
     saveMeal(meal: DiaryMeal, submissionId: string): void;
     deleteMeal(id: string, submissionId: string): void;
     tryRebaseMeal(session: NegotiatedSync, id: string, submissionId: string): boolean;
+    applyMealPage(session: NegotiatedSync, cursor: number, page: PullResponse): MealPullProgress;
+    applyMealResults(session: NegotiatedSync, results: PushResponse): MealPullProgress;
+    replayMealProjections(session: NegotiatedSync): MealPullProgress;
   };
+}
+
+interface MealPullProgress {
+  readonly awaitingPages: boolean;
+  readonly deferred: readonly string[];
 }
 
 export interface SyncDiaryStore extends SyncMealStore {
@@ -164,6 +180,134 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
   return meal?.id === id ? meal : null;
 }
 
+function readWeighInContent(id: string, content: JsonObject): WeighIn | undefined {
+  if (content.id !== id) return undefined;
+  try {
+    return readWeighIn({
+      id,
+      local_day: content.localDay,
+      occurred_at: content.occurredAt,
+      kg: content.kg,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function pulledWeighIn(change: Change | null): WeighIn | null | undefined {
+  if (change?.state === "deleted") return null;
+  return change?.state === "live" ? readWeighInContent(change.id, change.content) : undefined;
+}
+
+function projectWeighIn(
+  db: DiarySqliteConnection,
+  change: Change,
+  { base, baseRevision }: Pick<OutboxRecord, "base" | "baseRevision">,
+  accepted: JsonObject | null | undefined,
+): boolean {
+  const incoming = pulledWeighIn(change);
+  if (incoming === undefined) return false;
+  const row = db.get("SELECT * FROM diary_weigh_ins WHERE id = ?", change.id);
+  const current = row ? readWeighIn(row) : null;
+  const previous =
+    accepted === undefined
+      ? pulledWeighIn(base)
+      : accepted === null
+        ? null
+        : readWeighInContent(change.id, accepted);
+  if (previous === null && incoming !== null) return false;
+  if (JSON.stringify(current) === JSON.stringify(incoming)) return true;
+  if (
+    previous === undefined
+      ? baseRevision !== null || current !== null
+      : JSON.stringify(current) !== JSON.stringify(previous)
+  ) {
+    return false;
+  }
+  if (incoming) writeWeighIn(db, incoming);
+  else db.run("DELETE FROM diary_weigh_ins WHERE id = ?", change.id);
+  return true;
+}
+
+function projectMeals(
+  db: DiarySqliteConnection,
+  changes: readonly StagedMealChange[],
+  history: (id: string) => MealProjectionHistory,
+  claims: readonly StagedMealClaims[],
+): string[] {
+  const candidates: MealProjectionCandidate[] = [];
+  const owners = new Map<string, string>();
+  for (const { change, blocked } of changes) {
+    const parsed = change.state === "live" ? readRebaseMeal(change.content, change.id) : null;
+    const incoming = change.state === "deleted" ? null : (parsed ?? undefined);
+    const opaqueClaims =
+      incoming === undefined && change.state === "live"
+        ? mealItemIds(change.content, change.id)
+        : undefined;
+    const current = readMeal(db, change.id);
+    // The existing writer would keep a known offset for an unchanged event. Keep this
+    // unsynchronized until a projection can remember the exact effective local value.
+    const wouldKeepOffset = Boolean(
+      current &&
+        incoming &&
+        current.utcOffsetMinutes !== undefined &&
+        incoming.utcOffsetMinutes === undefined &&
+        current.localDay === incoming.localDay &&
+        current.occurredAt === incoming.occurredAt,
+    );
+    const { projection, accountBase, hadPriorBase } = history(change.id);
+    const prior = projection
+      ? projection.content === null
+        ? null
+        : (readRebaseMeal(projection.content, change.id) ?? undefined)
+      : undefined;
+    const priorClaims =
+      projection?.content === null ? [] : mealItemIds(projection?.content, change.id);
+    const accountClaims =
+      accountBase?.state === "live" ? mealItemIds(accountBase.content, change.id) : undefined;
+    candidates.push({
+      id: change.id,
+      current,
+      prior,
+      incoming,
+      hadPriorBase,
+      priorClaims: [...new Set([...(priorClaims ?? []), ...(accountClaims ?? [])])],
+      unknownPrior: hadPriorBase && priorClaims === undefined,
+      blocked: blocked || wouldKeepOffset,
+      ...(opaqueClaims && { opaqueClaims }),
+    });
+    const itemIds =
+      incoming === undefined ? (opaqueClaims ?? []) : (incoming?.items.map(({ id }) => id) ?? []);
+    for (const itemId of itemIds) {
+      const row = db.get("SELECT meal_id FROM diary_items WHERE id = ?", itemId);
+      if (row) owners.set(itemId, diaryId(row.meal_id, "meal ID"));
+    }
+  }
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const { groups } = groupMealProjections(candidates, owners, claims);
+  for (const group of groups) {
+    const replacements = group.flatMap((id) => {
+      const candidate = byId.get(id);
+      if (!candidate || candidate.incoming === undefined) {
+        throw new Error("Missing meal projection candidate");
+      }
+      return JSON.stringify(candidate.current) === JSON.stringify(candidate.incoming)
+        ? []
+        : [{ id, incoming: candidate.incoming }];
+    });
+    // Release all affected owners first so a swap never violates the global item IDs.
+    for (const { id } of replacements) db.run("DELETE FROM diary_items WHERE meal_id = ?", id);
+    for (const { id, incoming } of replacements) {
+      if (incoming) writeMeal(db, prepareMeal(incoming), true);
+      else db.run("DELETE FROM diary_meals WHERE id = ?", id);
+      if (JSON.stringify(readMeal(db, id)) !== JSON.stringify(incoming)) {
+        throw new Error("The meal projection changed while saving");
+      }
+    }
+  }
+  return groups.flat();
+}
+
 function planPrivateRestore(
   db: DiarySqliteConnection,
   archive: ReturnType<typeof readPrivateArchive>,
@@ -225,6 +369,16 @@ export async function openDiary({
     verifyMyFoods(connection);
   });
   const journal = openSyncJournal(db, () => requireCurrentDiaryVersion(db));
+  const applyMeals = (
+    changes: readonly StagedMealChange[],
+    history: (id: string) => MealProjectionHistory,
+    claims: readonly StagedMealClaims[],
+  ) => projectMeals(db, changes, history, claims);
+  const applyWeighIn = (
+    change: Change,
+    evidence: Pick<OutboxRecord, "base" | "baseRevision">,
+    accepted: JsonObject | null | undefined,
+  ) => projectWeighIn(db, change, evidence, accepted);
   return {
     ...diaryProgress(db),
     ...myFoods(db),
@@ -241,17 +395,23 @@ export async function openDiary({
       saveMeal: (meal, submissionId) => {
         const prepared = prepareMeal(meal);
         journal.commitLocalProjection({ kind: "meal", id: prepared.id }, submissionId, () => {
+          const previous = readMeal(db, prepared.id);
           writeMeal(db, prepared, true);
           const persisted = readMeal(db, prepared.id);
           if (!persisted) throw new Error("Could not read the saved meal for sync");
-          return { op: "put", content: persisted };
+          const retained = new Set(persisted.items.map(({ id }) => id));
+          const formerMealItems = previous?.items
+            .map(({ id }) => id)
+            .filter((id) => !retained.has(id));
+          return { op: "put", content: persisted, formerMealItems };
         });
       },
       deleteMeal: (id, submissionId) => {
         const mealId = diaryId(id, "meal ID");
         journal.commitLocalProjection({ kind: "meal", id: mealId }, submissionId, () => {
+          const previous = readMeal(db, mealId);
           db.run("DELETE FROM diary_meals WHERE id = ?", mealId);
-          return { op: "delete" };
+          return { op: "delete", formerMealItems: previous?.items.map(({ id }) => id) ?? null };
         });
       },
       tryRebaseMeal: (session, id, submissionId) => {
@@ -260,12 +420,17 @@ export async function openDiary({
           session,
           { kind: "meal", id: mealId },
           submissionId,
-          ({ base, draft, server }) => {
+          ({ base, draft, server }, hasOtherStagedMeal) => {
             const original = readRebaseMeal(base, mealId);
             const local = readRebaseMeal(draft, mealId);
             const remote = readRebaseMeal(server, mealId);
             if (!original || !local || !remote) return null;
             if (JSON.stringify(readMeal(db, mealId)) !== JSON.stringify(local)) return null;
+            const originalItems = new Set(original.items.map(({ id }) => id));
+            const membershipChanged =
+              remote.items.length !== originalItems.size ||
+              remote.items.some(({ id }) => !originalItems.has(id));
+            if (membershipChanged && hasOtherStagedMeal()) return null;
             const result = reconcileDiaryMeal(original, local, remote);
             const merged = result.status === "merged" ? result.meal : null;
             if (
@@ -288,6 +453,14 @@ export async function openDiary({
           },
         );
       },
+      applyMealPage: (session, cursor, page) =>
+        journal.applyMealPage(session, cursor, page, applyMeals, applyWeighIn),
+      applyMealResults: (session, results) => {
+        journal.applyResults(session, results);
+        return journal.replayMealProjections(session, applyMeals, applyWeighIn);
+      },
+      replayMealProjections: (session) =>
+        journal.replayMealProjections(session, applyMeals, applyWeighIn),
       saveWeighIn: (entry, submissionId) => {
         const reading = prepareWeighIn(entry);
         journal.commitLocalProjection({ kind: "weigh-in", id: reading.id }, submissionId, () => {

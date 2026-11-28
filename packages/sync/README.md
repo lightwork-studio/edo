@@ -29,3 +29,12 @@ If the evidence changed, open a fresh review. The journal reserves
 previous draft IDs so later edits cannot reuse them. The app can re-add a favourite
 after the user reviews its deletion. Other deleted records need a new ID. The app needs
 the attached-account flow and grouped conflict review before it can offer this candidate to users.
+
+The diary candidate's grouped meal path stages each authenticated pull and applies dependent meal
+updates together once its cursor catches up. Item IDs observed in a superseded pull, a conflict
+receipt or a local edit remain available to the grouping decision. Unresolved prior membership
+can defer changes to item ownership. An accepted receipt cannot clear an observation from a later
+remote revision. The path applies independent weigh-ins when the local record can safely advance.
+An accepted weigh-in's effective device value stays separate from its authenticated account copy.
+Other record kinds retain their staged copies. Grouped meal receipts commit independently of
+replay, so the caller can retry an interrupted replay after reopening.
