@@ -353,12 +353,7 @@ function decide(
     current,
   });
   const currentRevision = current?.revision ?? null;
-  if (baseRevision !== null) {
-    if (currentRevision === null) return conflict("stale");
-    if (baseRevision > currentRevision) {
-      throw new SyncWireError("cursor-reset", "The server record moved behind the submission base");
-    }
-  }
+  if (baseRevision !== null && currentRevision === null) return conflict("stale");
   const expected = baseRevision === currentRevision;
   if (submission.op === "delete") {
     if (current?.state === "deleted") return accepted(current.revision);
@@ -451,6 +446,9 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       SELECT revision, kind, record_id, content FROM sync_records
       WHERE account_binding = ? AND kind = ? AND record_id = ?
     `);
+    const recordRevision = db.prepare(`
+      SELECT revision FROM sync_records WHERE account_binding = ? AND kind = ? AND record_id = ?
+    `);
     const changesAfter = db.prepare(`
       SELECT revision, kind, record_id, content FROM sync_records
       WHERE account_binding = ? AND revision > ? ORDER BY revision LIMIT ?
@@ -511,12 +509,19 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
         const { release, lineage } = request;
         return transaction(db, "BEGIN IMMEDIATE", () => {
           const account = assertCurrentHistory(history(accountBinding), session);
-          if (
-            request.submissions.some(
-              ({ baseRevision }) => baseRevision !== null && baseRevision > account.revision,
-            )
-          ) {
-            throw new SyncWireError("cursor-reset", "The submission base is ahead of this account");
+          // A submission's base must have existed before any writes in this batch.
+          for (const { baseRevision, kind, id } of request.submissions) {
+            if (baseRevision === null) continue;
+            const initialRevision = recordRevision.get(accountBinding, kind, id)?.revision;
+            if (
+              baseRevision > account.revision ||
+              (typeof initialRevision === "number" && baseRevision > initialRevision)
+            ) {
+              throw new SyncWireError(
+                "cursor-reset",
+                "The submission base is ahead of the stored record history",
+              );
+            }
           }
           let revision = account.revision;
           const results = request.submissions.map((submission): SubmissionResult => {

@@ -253,6 +253,21 @@ test("rejects impossible base revisions for missing records before processing a 
   expect(pull(store, session).changes).toEqual([]);
 });
 
+test("checks every claimed revision against the state before any write in the batch", () => {
+  using store = openSyncStore(filename);
+  const session = sessionFor(store.createAccount("alpha", "history-alpha"));
+  push(store, session, put("a", "seed-a", null, { name: "A" }), put("b", "seed-b", null, {}));
+  const moveA = put("a", "first-edit", 1, { name: "Updated" });
+  const impossibleBase = put("a", "next-edit", 2, { name: "Updated" });
+  expectWireError(() => push(store, session, moveA, impossibleBase), "cursor-reset");
+  expect(store.history("alpha")?.revision).toBe(2);
+  expect(pull(store, session).changes[0]).toMatchObject({
+    id: "a",
+    revision: 1,
+    content: { name: "A" },
+  });
+});
+
 test("rejects a tombstone whose record ID cannot fit a pull page", () => {
   using store = openSyncStore(filename);
   const session = sessionFor(store.createAccount("alpha", "history-alpha"));
