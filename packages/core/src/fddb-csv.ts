@@ -38,23 +38,45 @@ export interface FddbDiaryPreview {
   readonly issues: readonly { line: number; code: FddbIssueCode }[];
 }
 
+function readQuotedField(source: string, start: number) {
+  let end = source.indexOf('"', start + 1);
+  while (end !== -1 && source[end + 1] === '"') {
+    end = source.indexOf('"', end + 2);
+  }
+  return end === -1
+    ? null
+    : {
+        value: source.slice(start + 1, end).replaceAll('""', '"'),
+        end: end + 1,
+      };
+}
+
 function* records(source: string): Generator<{ line: number; fields: string[] | null }> {
-  const field = /(?:"((?:[^"]|"")*)"|([^";\r\n]*))(?=;|\r|\n|$)/y;
+  const bareField = /[^";\r\n]*/y;
   let cursor = 0;
   let line = 1;
   let rowLine = 1;
   let fields: string[] = [];
   while (cursor <= source.length) {
-    field.lastIndex = cursor;
-    const match = field.exec(source);
-    if (!match) {
+    const quoted = source[cursor] === '"';
+    bareField.lastIndex = cursor;
+    const bare = quoted ? undefined : bareField.exec(source)?.[0];
+    const field =
+      bare === undefined
+        ? readQuotedField(source, cursor)
+        : { value: bare, end: cursor + bare.length };
+    const boundary = field ? source[field.end] : undefined;
+    if (
+      !field ||
+      (boundary !== undefined && boundary !== ";" && boundary !== "\r" && boundary !== "\n")
+    ) {
       // A broken quoted field can change the location of subsequent record boundaries.
       yield { line: rowLine, fields: null };
       return;
     }
-    fields.push(match[1]?.replaceAll('""', '"') ?? match[2] ?? "");
-    line += match[0].match(/\r\n|[\r\n]/g)?.length ?? 0;
-    cursor += match[0].length;
+    fields.push(field.value);
+    if (quoted) line += field.value.match(/\r\n|[\r\n]/g)?.length ?? 0;
+    cursor = field.end;
     if (source[cursor] === ";") {
       cursor++;
       continue;
@@ -138,10 +160,6 @@ export function previewFddbDiaryCsv(source: string): FddbDiaryPreview {
     const name = description?.trim();
     if (!name) {
       issues.push({ line, code: "missing-food-name" });
-      continue;
-    }
-    if (nutrition.every((value) => value === null)) {
-      issues.push({ line, code: "invalid-nutrition" });
       continue;
     }
     rows.push({

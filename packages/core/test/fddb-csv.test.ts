@@ -75,3 +75,24 @@ test("rejects unknown headers and stops after an unsafe record boundary", () => 
   expect(result.rows).toHaveLength(1);
   expect(result.issues).toEqual([{ line: 3, code: "malformed-csv" }]);
 });
+
+test("keeps a named row with all nutrition fields unavailable", () => {
+  const result = previewFddbDiaryCsv(`${header}\n27.11.2026 09:00;Soup;;;;;;`);
+  expect(result.issues).toEqual([]);
+  expect(result.rows).toHaveLength(1);
+  expect(result.rows[0]?.nutrients).toEqual({
+    kcal: null,
+    proteinG: null,
+    availableCarbohydratesG: null,
+    fatG: null,
+    fiberG: null,
+  });
+});
+
+test("keeps completed rows before a large unterminated quoted field", () => {
+  const result = previewFddbDiaryCsv(
+    `${header}\n27.11.2026 09:00;Soup;;418,4;0;0;0;0\n27.11.2026 10:00;"${"a".repeat(16_000_000)}`,
+  );
+  expect(result.rows).toHaveLength(1);
+  expect(result.issues).toEqual([{ line: 3, code: "malformed-csv" }]);
+});
