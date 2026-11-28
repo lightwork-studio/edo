@@ -136,6 +136,12 @@ importers:
         specifier: workspace:*
         version: link:../contract
 
+  packages/usda-import:
+    dependencies:
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
+
 packages:
 
   2g@1.0.1:
