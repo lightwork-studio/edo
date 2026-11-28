@@ -5,6 +5,8 @@ interface MealProjectionCandidate {
   readonly current: DiaryMeal | null;
   /** Undefined means the diary has no evidence of a prior projection. Null is a known deletion. */
   readonly prior: DiaryMeal | null | undefined;
+  /** A v5 journal may know the revision without retaining its effective local contents. */
+  readonly hadPriorBase?: boolean;
   readonly incoming: DiaryMeal | null;
 }
 
@@ -12,10 +14,10 @@ function sameMeal(left: DiaryMeal | null, right: DiaryMeal | null): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function canProject({ current, prior, incoming }: MealProjectionCandidate): boolean {
+function canProject({ current, prior, incoming, hadPriorBase }: MealProjectionCandidate): boolean {
   if (prior === null && incoming !== null) return false;
   if (sameMeal(current, incoming)) return true;
-  return prior === undefined ? current === null : sameMeal(current, prior);
+  return prior === undefined ? !hadPriorBase && current === null : sameMeal(current, prior);
 }
 
 /**
