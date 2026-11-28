@@ -9,13 +9,20 @@ import {
   isKnownRecordKind,
   maxSyncSubmissions,
   type NegotiatedSync,
+  type PullResponse,
+  type PushResponse,
   type RecordKey,
   type Submission,
-  type SubmissionResult,
   SyncWireError,
   syncScope,
 } from "@edo/contract";
-import { normalizeSyncServer } from "./client.ts";
+import {
+  assertResponseSession,
+  maxSyncRequestBytes,
+  normalizeSyncServer,
+  serverForSession,
+  syncRequestBytes,
+} from "./client.ts";
 import {
   createOutboxRecord,
   type OutboxEdit,
@@ -190,9 +197,10 @@ function remoteRecord(db: JournalSqlite, key: RecordKey): Change | null {
 
 function localRecord(db: JournalSqlite, key: RecordKey) {
   const row = db.get("SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?", key.kind, key.id);
-  return row
-    ? storedRecord(row)
-    : { record: createOutboxRecord(key, remoteRecord(db, key)), release: null };
+  if (row) return storedRecord(row);
+  const remote = remoteRecord(db, key);
+  const base = remote?.state === "unavailable" ? null : remote;
+  return { record: createOutboxRecord(key, base), release: null };
 }
 
 function requireUnusedId(db: JournalSqlite, id: string) {
@@ -215,6 +223,10 @@ function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
 }
 
+function requireSynchronousWrite(result: undefined): void {
+  if (result !== undefined) throw new TypeError("Diary writes must complete synchronously");
+}
+
 /** Candidate on-device persistence. Schema installation belongs to the diary migration. */
 export function openSyncJournal(db: JournalSqlite) {
   let activeSession: NegotiatedSync | null = null;
@@ -222,15 +234,16 @@ export function openSyncJournal(db: JournalSqlite) {
   function checkSession(session: NegotiatedSync) {
     if (activeSession !== session)
       throw new SyncWireError("update-required", "Bind the active connection before syncing");
+    serverForSession(session);
     return verifyScope(savedBinding(db), session);
   }
 
   return {
     history: () => savedBinding(db),
     requiredRelease: () => pinnedRelease(db),
-    bind(session: NegotiatedSync, server: string) {
+    bind(session: NegotiatedSync) {
       assertSession(session);
-      const endpoint = normalizeSyncServer(server, true);
+      const endpoint = serverForSession(session);
       inTransaction(db, () => {
         const binding = savedBinding(db);
         if (binding) {
@@ -256,7 +269,7 @@ export function openSyncJournal(db: JournalSqlite) {
       });
       activeSession = session;
     },
-    commitLocal(key: RecordKey, edit: OutboxEdit, applyLocal: () => void) {
+    commitLocal(key: RecordKey, edit: OutboxEdit, applyLocal: () => undefined) {
       return inTransaction(db, () => {
         if (!savedBinding(db))
           throw new Error("Connect this diary before queueing account changes");
@@ -266,7 +279,7 @@ export function openSyncJournal(db: JournalSqlite) {
         const { record, release } = localRecord(db, key);
         const validated = decodeSubmission({ ...edit, ...key, baseRevision: record.baseRevision });
         const changed = queueOutboxEdit(record, validated);
-        applyLocal();
+        requireSynchronousWrite(applyLocal());
         saveRecord(db, changed, release);
       });
     },
@@ -284,37 +297,63 @@ export function openSyncJournal(db: JournalSqlite) {
             "Reconnect using the release of the pending submission",
           );
         }
-        const rows = db.all(
-          `SELECT * FROM edo_sync_outbox
-          WHERE attempt_id IS NOT NULL OR (
-            json_type(content, '$.pending') = 'object' AND json_type(content, '$.blocked') = 'null'
-          ) ORDER BY (attempt_id IS NULL), kind, id LIMIT ?`,
-          limit,
+        const emptyBytes = syncRequestBytes(
+          JSON.stringify({ ...syncScope(session), submissions: [] }),
         );
-        return rows.map((row) => {
-          const { record } = storedRecord(row);
-          if (!session.writableKinds.includes(record.key.kind)) {
-            throw new SyncWireError(
-              "update-required",
-              "The negotiated release cannot send this pending record",
-            );
+        let bytes = emptyBytes;
+        let skippedOversized = false;
+        const batch: { attempt: Submission; save: OutboxRecord | null }[] = [];
+        scan: for (let offset = 0; batch.length < limit; offset += limit) {
+          const rows = db.all(
+            `SELECT * FROM edo_sync_outbox
+            WHERE attempt_id IS NOT NULL OR (
+              json_type(content, '$.pending') = 'object' AND json_type(content, '$.blocked') = 'null'
+            ) ORDER BY (attempt_id IS NULL), kind, id LIMIT ? OFFSET ?`,
+            limit,
+            offset,
+          );
+          for (const row of rows) {
+            const { record } = storedRecord(row);
+            if (!session.writableKinds.includes(record.key.kind)) {
+              throw new SyncWireError(
+                "update-required",
+                "The negotiated release cannot send this pending record",
+              );
+            }
+            const next = prepareOutboxAttempt(record);
+            if (!next.attempt) throw new Error("The selected work cannot be sent");
+            const size = syncRequestBytes(JSON.stringify(next.attempt));
+            if (emptyBytes + size > maxSyncRequestBytes) {
+              skippedOversized = true;
+              continue;
+            }
+            const separator = batch.length ? 1 : 0;
+            if (batch.length === limit || bytes + separator + size > maxSyncRequestBytes)
+              break scan;
+            bytes += separator + size;
+            batch.push({ attempt: next.attempt, save: next === record ? null : next });
           }
-          const next = prepareOutboxAttempt(record);
-          if (!next.attempt) throw new Error("The selected work cannot be sent");
-          if (next !== record) saveRecord(db, next, session.release);
-          return next.attempt;
+          if (rows.length < limit) break;
+        }
+        if (!batch.length && skippedOversized) {
+          throw new SyncWireError("invalid-request", "A pending edit is too large to sync");
+        }
+        return batch.map(({ attempt, save }) => {
+          if (save) saveRecord(db, save, session.release);
+          return attempt;
         });
       });
     },
     applyResults(
       session: NegotiatedSync,
-      outcomes: readonly SubmissionResult[],
-      applyRemote: (change: Change) => void,
+      response: PushResponse,
+      applyRemote: (change: Change) => undefined,
     ) {
       return inTransaction(db, () => {
         const binding = checkSession(session);
+        assertResponseSession(response, session);
         let revision = binding.revision;
-        for (const outcome of outcomes) {
+        for (const outcome of response.results) {
           const result = decodeSubmissionResult(outcome);
           const row = db.get(
             "SELECT * FROM edo_sync_outbox WHERE attempt_id = ?",
@@ -346,7 +385,7 @@ export function openSyncJournal(db: JournalSqlite) {
             remote.state !== "unavailable" &&
             remote.revision >= (next.baseRevision ?? 0)
           ) {
-            applyRemote(remote);
+            requireSynchronousWrite(applyRemote(remote));
             saveRecord(db, createOutboxRecord(remote, remote));
           } else {
             saveRecord(db, next, release);
@@ -363,9 +402,10 @@ export function openSyncJournal(db: JournalSqlite) {
     applyPage(
       session: NegotiatedSync,
       requestCursor: number,
-      input: unknown,
-      applyRemote: (change: Change) => void,
+      input: PullResponse,
+      applyRemote: (change: Change) => undefined,
     ) {
+      assertResponseSession(input, session, requestCursor);
       const page = decodePullResponse(
         input,
         { ...syncScope(session), cursor: requestCursor },
@@ -394,7 +434,7 @@ export function openSyncJournal(db: JournalSqlite) {
             continue;
           }
           if (change.revision < (record.baseRevision ?? 0)) continue;
-          applyRemote(change);
+          requireSynchronousWrite(applyRemote(change));
           saveRecord(db, createOutboxRecord(change, change));
         }
         db.run(
@@ -404,15 +444,26 @@ export function openSyncJournal(db: JournalSqlite) {
         );
       });
     },
-    retryReviewed(key: RecordKey, seenRevision: number | null, submissionId: string) {
+    retryReviewed(
+      key: RecordKey,
+      seenRevision: number | null,
+      seenSubmissionId: string,
+      submissionId: string,
+    ) {
       return inTransaction(db, () => {
         const { record } = localRecord(db, key);
         const server = remoteRecord(db, key);
         if ((server?.revision ?? null) !== seenRevision) {
           throw new Error("The server record changed during review");
         }
+        const draft = record.pending ?? record.blocked?.submission;
+        if (draft?.submissionId !== seenSubmissionId) {
+          throw new Error("The local edit changed during review");
+        }
         requireUnusedId(db, submissionId);
-        saveRecord(db, retryBlockedOutbox(record, server, submissionId));
+        const retried = retryBlockedOutbox(record, server, submissionId);
+        decodeSubmission({ ...retried.pending, ...key, baseRevision: retried.baseRevision });
+        saveRecord(db, retried);
       });
     },
     queued: () =>

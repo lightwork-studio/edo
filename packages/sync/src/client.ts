@@ -10,6 +10,8 @@ import {
   type HelloRequest,
   maxSyncEnvelopeBytes,
   type NegotiatedSync,
+  type PullResponse,
+  type PushResponse,
   type Submission,
   type SyncRelease,
   SyncWireError,
@@ -29,7 +31,36 @@ interface SyncClientOptions {
 type SavedHistory = Pick<AuthenticatedHistory, "accountBinding" | "lineage" | "revision"> & {
   readonly server: string;
 };
-const maxRequestBytes = (maxSyncEnvelopeBytes * 3) / 4;
+export const maxSyncRequestBytes = (maxSyncEnvelopeBytes * 3) / 4;
+const serversBySession = new WeakMap<NegotiatedSync, string>();
+const responseOrigin = new WeakMap<
+  PushResponse | PullResponse,
+  { session: NegotiatedSync; cursor?: number }
+>();
+
+export function syncRequestBytes(serialized: string): number {
+  return new TextEncoder().encode(serialized).byteLength;
+}
+
+export function serverForSession(session: NegotiatedSync): string {
+  const server = serversBySession.get(session);
+  if (!server) throw new SyncWireError("update-required", "Connect before binding this diary");
+  return server;
+}
+
+export function assertResponseSession(
+  response: PushResponse | PullResponse,
+  session: NegotiatedSync,
+  cursor?: number,
+): void {
+  const origin = responseOrigin.get(response);
+  if (!origin || origin.session !== session) {
+    throw new SyncWireError("update-required", "The response was not issued for this connection");
+  }
+  if (origin.cursor !== cursor) {
+    throw new SyncWireError("cursor-reset", "The response belongs to a different pull cursor");
+  }
+}
 
 export function normalizeSyncServer(value: string, allowLoopback: boolean) {
   const url = new URL(value);
@@ -116,7 +147,7 @@ export function createSyncClient({
     const { authorization, isCurrent, signal } = options;
     assertCurrent(isCurrent);
     const serialized = JSON.stringify(body);
-    if (new TextEncoder().encode(serialized).byteLength > maxRequestBytes) {
+    if (syncRequestBytes(serialized) > maxSyncRequestBytes) {
       throw new SyncWireError("invalid-request", "The sync request needs a smaller batch");
     }
     let response: Response;
@@ -166,6 +197,7 @@ export function createSyncClient({
     server: base,
     async connect(previous?: SavedHistory, signal?: AbortSignal) {
       const attempt = ++generation;
+      if (active) serversBySession.delete(active.session);
       active = null;
       if (previous && previous.server !== base) {
         throw new SyncWireError(
@@ -178,6 +210,7 @@ export function createSyncClient({
       const reply = await post("hello", hello, options);
       assertCurrent(options.isCurrent);
       const session = acceptHello(hello, reply, previous, releases);
+      serversBySession.set(session, base);
       active = { session, authorization: header };
       return session;
     },
@@ -186,7 +219,9 @@ export function createSyncClient({
       const request = decodePushRequest({ ...current.wire, submissions }, session);
       const reply = await post("push", request, current.request);
       assertCurrent(current.request.isCurrent);
-      return decodePushResponse(reply, request, session);
+      const response = decodePushResponse(reply, request, session);
+      responseOrigin.set(response, { session });
+      return response;
     },
     async pull(session: NegotiatedSync, cursor: number, limit?: number, signal?: AbortSignal) {
       const current = scope(session, signal);
@@ -196,7 +231,9 @@ export function createSyncClient({
       );
       const reply = await post("pull", request, current.request);
       assertCurrent(current.request.isCurrent);
-      return decodePullResponse(reply, request, session);
+      const response = decodePullResponse(reply, request, session);
+      responseOrigin.set(response, { session, cursor: request.cursor });
+      return response;
     },
   };
 }
