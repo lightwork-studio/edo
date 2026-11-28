@@ -1,8 +1,10 @@
 export const strings = {
   en: {
     today: "Today",
-    previousWeek: "Previous week",
-    nextWeek: "Next week",
+    chooseDiaryDay: "Choose a day",
+    cancelDatePicker: "Cancel",
+    previousMonth: "Previous month",
+    nextMonth: "Next month",
     logged: "Logged",
     protein: "Protein",
     carbs: "Carbs",
@@ -189,8 +191,10 @@ export const strings = {
   },
   de: {
     today: "Heute",
-    previousWeek: "Vorherige Woche",
-    nextWeek: "Nächste Woche",
+    chooseDiaryDay: "Tag auswählen",
+    cancelDatePicker: "Abbrechen",
+    previousMonth: "Vorheriger Monat",
+    nextMonth: "Nächster Monat",
     logged: "Erfasst",
     protein: "Eiweiß",
     carbs: "Kohlenhydrate",
