@@ -116,6 +116,7 @@ if historical.year != today.year:
 historical_header += ". Choose a day"
 find(historical_header)
 tap(historical_header)
+find(last_month.strftime("%B %Y"))
 adb("shell", "input", "keyevent", "4")
 find(historical_header)
 tap(historical_header)
