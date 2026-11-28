@@ -115,17 +115,23 @@ export function totalNutrition(meals: readonly DiaryMeal[]): Nutrients | null {
   return nutritionSum(meals.flatMap((meal) => meal.items.map((item) => item.nutrients)));
 }
 
-/** Keep the stored order, replacing the edited item or inserting a newly logged meal by time. */
+/** Keep the same meal and item order as the diary's SQLite query. */
 export function foodPreviewItems(
   meals: readonly DiaryMeal[],
   entry:
-    | { readonly kind: "add"; readonly occurredAt: number }
+    | { readonly kind: "add"; readonly occurredAt: number; readonly mealId: string }
     | { readonly kind: "edit"; readonly mealId: string; readonly itemId: string },
 ) {
   const items: Nutrients[] = [];
   let index = -1;
   for (const meal of meals) {
-    if (entry.kind === "add" && index < 0 && meal.occurredAt > entry.occurredAt) {
+    if (
+      entry.kind === "add" &&
+      index < 0 &&
+      (meal.occurredAt > entry.occurredAt ||
+        // The proposed ID is ASCII, so this comparison matches SQLite's binary ordering.
+        (meal.occurredAt === entry.occurredAt && meal.id > entry.mealId))
+    ) {
       index = items.length;
     }
     for (const item of meal.items) {
@@ -154,6 +160,7 @@ export type FoodEntry =
   | ({
       kind: "add";
       food: Food;
+      mealId?: string;
     } & EntryTime)
   | {
       kind: "edit";
@@ -171,7 +178,7 @@ export function saveFood(
   if (entry.kind === "add") {
     const item = createDiaryItem(newId(), entry.food, portion);
     diary.saveMeal({
-      id: newId(),
+      id: entry.mealId ?? newId(),
       localDay: entry.day,
       occurredAt: entry.occurredAt,
       utcOffsetMinutes: entry.utcOffsetMinutes,

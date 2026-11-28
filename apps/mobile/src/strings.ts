@@ -97,7 +97,9 @@ export const strings = {
       portion: string,
       total: string,
       target: string,
-    ) => `${name}. Logged ${logged}. This portion ${portion}. Total ${total}. Target ${target}.`,
+      editing: boolean,
+    ) =>
+      `${name}. ${editing ? "Other logged food" : "Logged"} ${logged}. This portion ${portion}. Total ${total}. Target ${target}.`,
     nutritionBasis: "Nutrition reference",
     per100g: "Per 100 g",
     per100ml: "Per 100 ml",
@@ -294,7 +296,9 @@ export const strings = {
       portion: string,
       total: string,
       target: string,
-    ) => `${name}. Erfasst ${logged}. Diese Portion ${portion}. Gesamt ${total}. Ziel ${target}.`,
+      editing: boolean,
+    ) =>
+      `${name}. ${editing ? "Sonstige erfasste Lebensmittel" : "Erfasst"} ${logged}. Diese Portion ${portion}. Gesamt ${total}. Ziel ${target}.`,
     nutritionBasis: "Nährwertbezug",
     per100g: "Pro 100 g",
     per100ml: "Pro 100 ml",

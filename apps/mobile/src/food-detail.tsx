@@ -300,6 +300,7 @@ export function FoodDetail({
                             describe(value),
                             describe(afterValue),
                             describe(goal),
+                            originalItem !== undefined,
                           )
                         : `${t[label]}, ${describe(value)}`
                     }

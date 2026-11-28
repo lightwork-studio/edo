@@ -403,7 +403,7 @@ test("uses the other captured items when previewing an edited portion for the da
   expect(foodPreviewItems(meals, { kind: "edit", mealId: "second", itemId: "edit" })).toBeNull();
 });
 
-test("sums raw diary values in captured order when previewing a new portion", () => {
+test("matches saved energy when a new meal shares the same instant as other diary meals", async () => {
   const nutrients = {
     kcal: 112.3,
     proteinG: 1,
@@ -419,26 +419,41 @@ test("sums raw diary values in captured order when previewing a new portion", ()
     nutrition: { basis: "per-100-g", nutrients },
   };
   const portion = { amount: 100, unit: "g" } as const;
-  const meals = [112.3, 723.8, 341.7].map((kcal, index) => ({
-    id: `meal-${index}`,
-    localDay: "2026-11-27",
-    occurredAt: index * 2,
-    items: [
-      { ...createDiaryItem(`item-${index}`, food, portion), nutrients: { ...nutrients, kcal } },
-    ],
-  }));
-  const beforeLast = foodPreviewItems(meals, { kind: "add", occurredAt: 3 });
-  expect(beforeLast?.index).toBe(2);
-  const preview = foodPreviewItems(meals, { kind: "add", occurredAt: 5 });
+  using db = new DatabaseSync(":memory:");
+  const diary = await diaryConnection(db);
+  const capture = entryTime(null, new Date(2026, 10, 27, 12));
+  const withEnergy = (kcal: number): Food => ({
+    ...food,
+    nutrition: { ...food.nutrition, nutrients: { ...nutrients, kcal } },
+  });
+  for (const [index, kcal] of [112.3, 723.8, 341.7].entries()) {
+    saveFood(
+      diary,
+      { kind: "add", ...capture, mealId: `meal-${index}`, food: withEnergy(kcal) },
+      portion,
+      () => `item-${index}`,
+    );
+  }
+  const proposed = withEnergy(199.69999999999882);
+  const entry = { kind: "add", ...capture, mealId: "a", food: proposed } as const;
+  const meals = diary.listMeals(capture.day);
+  const after = foodPreviewItems(meals, { ...entry, occurredAt: capture.occurredAt + 1 });
+  expect(after?.index).toBe(3);
+  const preview = foodPreviewItems(meals, entry);
   if (!preview) throw new Error("Missing proposed day totals");
-  const proposed = { ...nutrients, kcal: 199.69999999999882 };
+  expect(preview.index).toBe(0);
   const total = nutritionSum([
     ...preview.items.slice(0, preview.index),
-    proposed,
+    createDiaryItem("preview-item", proposed, portion).nutrients,
     ...preview.items.slice(preview.index),
   ]);
   if (total?.kcal == null) throw new Error("Missing preview energy");
-  expect(roundEnergyKcal(total.kcal)).toBe(1377);
+  expect(roundEnergyKcal(total.kcal)).toBe(1378);
+
+  saveFood(diary, entry, portion, () => "saved-item");
+  const saved = diary.listMeals(capture.day);
+  expect(saved[0]?.id).toBe("a");
+  expect(totalNutrition(saved)).toEqual(total);
 });
 
 test("uses the first supported device language and keeps its regional locale", () => {
