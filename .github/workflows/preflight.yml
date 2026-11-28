@@ -65,6 +65,11 @@ jobs:
       group: edo-preflight-ios
       queue: max
     uses: ./.github/workflows/preflight-publish.yml
+    secrets:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
     with:
       revision: ${{ needs.verify.outputs.sha }}
       force_build: ${{ inputs.force_build == true }}

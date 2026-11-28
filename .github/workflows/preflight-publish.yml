@@ -9,6 +9,15 @@ on:
       force_build:
         type: boolean
         required: true
+    secrets:
+      EXPO_TOKEN:
+        required: true
+      ASC_API_KEY_P8:
+        required: true
+      ASC_API_KEY_ID:
+        required: true
+      ASC_API_ISSUER_ID:
+        required: true
 
 permissions:
   actions: read
@@ -20,6 +29,10 @@ jobs:
       actions: read
       contents: read
     uses: ./.github/workflows/preflight-testflight.yml
+    secrets:
+      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
     with:
       revision: ${{ inputs.revision }}
 
@@ -102,6 +115,10 @@ jobs:
       actions: read
       contents: read
     uses: ./.github/workflows/preflight-testflight.yml
+    secrets:
+      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
     with:
       revision: ${{ inputs.revision }}
 

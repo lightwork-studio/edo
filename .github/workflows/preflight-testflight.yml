@@ -6,6 +6,13 @@ on:
       revision:
         type: string
         required: true
+    secrets:
+      ASC_API_KEY_P8:
+        required: true
+      ASC_API_KEY_ID:
+        required: true
+      ASC_API_ISSUER_ID:
+        required: true
     outputs:
       evidence:
         value: ${{ jobs.testflight.outputs.evidence }}

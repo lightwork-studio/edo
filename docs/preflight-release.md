@@ -38,3 +38,6 @@ To roll back an OTA, set `EDO_PREFLIGHT_ENABLED` to `false`. Wait for active pub
 finish or cancel them, and check whether EAS still has a build or submission in progress.
 Republish the previous compatible update only after pending publishing work has stopped. Enable
 the workflow again when a checked revision is ready.
+
+If TestFlight eligibility changes between export and publish, the OTA run stops. Confirm the
+intended testing group and start a new run to evaluate the current release state.
