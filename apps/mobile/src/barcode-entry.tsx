@@ -1,4 +1,4 @@
-import type { PackagedFood } from "@edo/core";
+import { normalizeOpenFoodFactsBarcode, type PackagedFood } from "@edo/core";
 import type { DiaryStore, MyFoodsStore, PackagedFoodCache } from "@edo/storage";
 import { fetch } from "expo/fetch";
 import { useEffect, useState } from "react";
@@ -10,6 +10,7 @@ import {
 } from "./barcode";
 import { BarcodeScreen } from "./barcode-screen";
 import { packagedCatalogOrigin } from "./catalog-origin";
+import { OffContributionReview } from "./off-contribution-review";
 import type { Strings } from "./strings";
 
 export interface BarcodeState {
@@ -40,6 +41,7 @@ export function BarcodeEntry({
   onBack: () => void;
 }) {
   const [submitted, setSubmitted] = useState<{ code: string; cameraUpcE: boolean } | null>(null);
+  const [productDraft, setProductDraft] = useState<string | null>(null);
   const [resolved, setResolved] = useState<{
     submit: NonNullable<typeof submitted>;
     result: BarcodeResult;
@@ -66,6 +68,17 @@ export function BarcodeEntry({
       ? resolved.result
       : null
     : initial.result;
+  const contributionCode = submitted ? barcodeLookupOrder(code, submitted.cameraUpcE).code : code;
+  if (productDraft) {
+    return (
+      <OffContributionReview
+        barcode={productDraft}
+        locale={locale}
+        t={t}
+        onBack={() => setProductDraft(null)}
+      />
+    );
+  }
   return (
     <BarcodeScreen
       t={t}
@@ -76,6 +89,11 @@ export function BarcodeEntry({
       pending={submitted !== null && result === null}
       onSubmit={(code, cameraUpcE) => setSubmitted({ code, cameraUpcE })}
       onPick={(food) => onPick(food, { code, result })}
+      onContribute={
+        contributionCode.length <= 64 && normalizeOpenFoodFactsBarcode(contributionCode)
+          ? () => setProductDraft(contributionCode)
+          : undefined
+      }
       onBack={onBack}
     />
   );

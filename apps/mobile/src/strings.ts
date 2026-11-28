@@ -27,6 +27,7 @@ export const strings = {
     lookingUpBarcode: "Looking up barcode…",
     invalidBarcode: "Enter all the digits printed below the barcode, including leading zeroes.",
     barcodeNotFound: "No product found for this barcode.",
+    prepareProductContribution: "Prepare a product contribution",
     barcodeUnavailable: "Product lookup is unavailable. Search for the food by name or try again.",
     barcodeRateLimited: "Too many product lookups. Try again in a moment.",
     barcodeMatches: "Choose the product on your package",
@@ -203,6 +204,7 @@ export const strings = {
     lookingUpBarcode: "Barcode wird gesucht…",
     invalidBarcode: "Gib alle Ziffern unter dem Barcode ein, einschließlich führender Nullen.",
     barcodeNotFound: "Für diesen Barcode wurde kein Produkt gefunden.",
+    prepareProductContribution: "Produktbeitrag vorbereiten",
     barcodeUnavailable:
       "Die Produktsuche ist nicht verfügbar. Suche nach dem Namen des Lebensmittels oder versuche es erneut.",
     barcodeRateLimited: "Zu viele Suchanfragen. Versuche es gleich erneut.",

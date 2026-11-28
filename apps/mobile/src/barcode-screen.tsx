@@ -34,6 +34,7 @@ export function BarcodeScreen({
   pending,
   onSubmit,
   onPick,
+  onContribute,
   onBack,
 }: {
   t: Strings;
@@ -44,6 +45,7 @@ export function BarcodeScreen({
   pending: boolean;
   onSubmit: (code: string, cameraUpcE: boolean) => void;
   onPick: (food: PackagedFood) => void;
+  onContribute?: () => void;
   onBack: () => void;
 }) {
   const [digits, setDigits] = useState(code);
@@ -210,6 +212,13 @@ export function BarcodeScreen({
             onSearch={back}
           />
         )}
+        {!pending &&
+          onContribute &&
+          (currentResult?.status === "not-found" || currentResult?.status === "unavailable") && (
+            <Pressable accessibilityRole="button" onPress={onContribute} style={styles.action}>
+              <Text style={styles.actionText}>{t.prepareProductContribution}</Text>
+            </Pressable>
+          )}
       </ScrollView>
     </>
   );
