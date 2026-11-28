@@ -229,7 +229,7 @@ export function TargetRing({
         {partial &&
           [
             { left: size / 2, offset: -size / 2, degrees: Math.min(amount, 0.5) * 360 - 135 },
-            { left: 0, offset: 0, degrees: Math.max(amount - 0.5, 0) * 360 + 45 },
+            ...(amount > 0.5 ? [{ left: 0, offset: 0, degrees: (amount - 0.5) * 360 + 45 }] : []),
           ].map(({ left, offset, degrees }) => (
             <View key={left} style={[ringStyles.clip, { left, width: size / 2, height: size }]}>
               <View
