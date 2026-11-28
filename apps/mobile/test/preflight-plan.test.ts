@@ -5,12 +5,15 @@ import { planPreflight } from "../scripts/preflight-plan.mts";
 const runtime = "a".repeat(40);
 const app = { id: "fd9dba15-d0b8-4594-a2b0-aed4cc0a0b7a" };
 const buildId = "e129cdf8-e236-4cad-96a4-305822754a20";
+const revision = "b".repeat(40);
 const build = {
   id: buildId,
   app,
   appIdentifier: "studio.lightwork.edo",
   appVersion: "0.1.0",
   appBuildVersion: "3",
+  gitCommitHash: revision,
+  buildProfile: "preflight",
   platform: "IOS",
   distribution: "STORE",
   isForIosSimulator: false,
@@ -47,6 +50,8 @@ const testFlight = {
   knownBuilds: [],
 };
 const input = {
+  revision,
+  nativeBuildIds: [buildId],
   runtime,
   message: build.message,
   forceBuild: false,
@@ -67,6 +72,36 @@ test("builds only when no matching signed or in-flight archive exists", () => {
   expect(planPreflight(input)).toMatchObject({ action: "submit", buildId });
 });
 
+test("reuses an undelivered archive only for the approved source and build profile", () => {
+  const stale = { ...build, gitCommitHash: "c".repeat(40) };
+  for (const candidate of [
+    stale,
+    { ...stale, status: "IN_PROGRESS" },
+    { ...build, buildProfile: "other" },
+  ]) {
+    expect(planPreflight({ ...input, builds: [candidate] })).toEqual({ action: "build" });
+  }
+  expect(
+    planPreflight({
+      ...input,
+      builds: [stale],
+      submissions: [submission],
+      testFlight: {
+        ...testFlight,
+        memberBuildIds: [receipt.id],
+        builds: [receipt],
+        knownBuilds: [receipt],
+      },
+    }),
+  ).toMatchObject({ action: "ota", buildId });
+});
+
+test("requires a trusted workflow handoff to reuse a signed but undelivered archive", () => {
+  expect(() => planPreflight({ ...input, nativeBuildIds: [] })).toThrow(
+    "An EAS build exists without a verified native handoff",
+  );
+});
+
 test("uses the exact archive after a failed submit and waits for ongoing or accepted uploads", () => {
   expect(
     planPreflight({ ...input, submissions: [{ ...submission, status: "ERRORED" }] }),
@@ -83,6 +118,31 @@ test("uses the exact archive after a failed submit and waits for ongoing or acce
       testFlight: { ...testFlight, knownBuilds: [{ ...receipt, processingState: "PROCESSING" }] },
     }),
   ).toMatchObject({ action: "verify-delivery", buildId });
+});
+
+test("diagnoses terminal Apple processing and records without a confirmed submission", () => {
+  const failed = { ...receipt, processingState: "INVALID" };
+  expect(() =>
+    planPreflight({ ...input, testFlight: { ...testFlight, knownBuilds: [failed] } }),
+  ).toThrow("Apple rejected this archive");
+  expect(() =>
+    planPreflight({
+      ...input,
+      submissions: [{ ...submission, status: "ERRORED" }],
+      testFlight: {
+        ...testFlight,
+        memberBuildIds: [receipt.id],
+        builds: [receipt],
+        knownBuilds: [receipt],
+      },
+    }),
+  ).toThrow("Apple has the build but EAS delivery is unconfirmed");
+});
+
+test("replaces an expired EAS archive that was never delivered", () => {
+  expect(
+    planPreflight({ ...input, builds: [{ ...build, expirationDate: "2020-01-01T00:00:00Z" }] }),
+  ).toEqual({ action: "build" });
 });
 
 test("publishes OTA only after delivery and reserves a manual rebuild for its own run", () => {

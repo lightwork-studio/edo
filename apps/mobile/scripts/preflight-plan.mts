@@ -10,6 +10,8 @@ import {
 
 type SubmissionEvidence = Omit<TestFlightBuild, "internalBuildState">;
 type PlanInput = DeliveryEvidence & {
+  readonly revision: string;
+  readonly nativeBuildIds: readonly string[];
   readonly forceBuild: boolean;
   readonly message: string;
   readonly testFlight: DeliveryEvidence["testFlight"] & {
@@ -24,6 +26,9 @@ export function planPreflight(input: PlanInput) {
   const delivered = findDeliveredPreflightBuild(input);
   if (
     !Array.isArray(input.testFlight.knownBuilds) ||
+    typeof input.revision !== "string" ||
+    !/^[0-9a-f]{40}$/.test(input.revision) ||
+    !Array.isArray(input.nativeBuildIds) ||
     typeof input.forceBuild !== "boolean" ||
     typeof input.message !== "string" ||
     !input.message
@@ -32,11 +37,22 @@ export function planPreflight(input: PlanInput) {
   }
   if (delivered && !input.forceBuild) return { action: "ota", ...delivered };
 
+  const trusted = new Set(input.nativeBuildIds);
+  let unattested = false;
   for (const build of input.builds) {
     if (
       !matchesPreflightStoreBuild(build, input.runtime) ||
+      build.gitCommitHash !== input.revision ||
+      build.buildProfile !== "preflight" ||
       (input.forceBuild && build.message !== input.message)
     ) {
+      continue;
+    }
+    const expiredArchive = Boolean(
+      build.expirationDate && Date.parse(build.expirationDate) <= Date.now(),
+    );
+    if ((activeBuilds.has(build.status) || build.status === "FINISHED") && !trusted.has(build.id)) {
+      if (!expiredArchive) unattested = true;
       continue;
     }
     if (activeBuilds.has(build.status)) return { action: "wait-for-build", buildId: build.id };
@@ -56,7 +72,35 @@ export function planPreflight(input: PlanInput) {
         targetsPreflightSubmission(submission, identity.buildId) &&
         activeSubmissions.has(submission.status),
     );
+    if (apple?.processingState === "FAILED" || apple?.processingState === "INVALID") {
+      throw new Error(
+        "Apple rejected this archive. Resolve that issue before dispatching force_build.",
+      );
+    }
+    if (!apple && !submitted && expiredArchive) {
+      continue;
+    }
+    if (
+      !submitted &&
+      input.testFlight.builds.some(
+        (receipt) =>
+          receipt?.platform === "IOS" &&
+          receipt.processingState === "VALID" &&
+          receipt.internalBuildState === "IN_BETA_TESTING" &&
+          receipt.marketingVersion === identity.marketingVersion &&
+          receipt.buildNumber === identity.buildNumber,
+      )
+    ) {
+      throw new Error(
+        "Apple has the build but EAS delivery is unconfirmed. Inspect both records before dispatching force_build.",
+      );
+    }
     return { action: apple || submitted ? "verify-delivery" : "submit", ...identity };
+  }
+  if (unattested) {
+    throw new Error(
+      "An EAS build exists without a verified native handoff. Inspect its publishing run before retrying.",
+    );
   }
   return { action: "build" };
 }
@@ -64,8 +108,15 @@ export function planPreflight(input: PlanInput) {
 if (import.meta.main) {
   try {
     console.log(JSON.stringify(planPreflight(JSON.parse(readFileSync(0, "utf8")) as PlanInput)));
-  } catch {
-    console.error("Could not plan an Edo iOS Preflight release from the supplied evidence.");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /^(Apple rejected|Apple has the build|An EAS build exists)/.test(error.message)
+    ) {
+      console.error(error.message);
+    } else {
+      console.error("Could not plan an Edo iOS Preflight release from the supplied evidence.");
+    }
     process.exitCode = 1;
   }
 }

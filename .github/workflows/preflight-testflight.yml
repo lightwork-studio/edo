@@ -1,0 +1,68 @@
+name: Verify Edo internal TestFlight delivery
+
+on:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        required: true
+    outputs:
+      evidence:
+        value: ${{ jobs.testflight.outputs.evidence }}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  testflight:
+    if: github.repository == 'lightwork-studio/edo' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: edo-preflight
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      evidence: ${{ steps.read.outputs.evidence }}
+    steps:
+      - name: Report paused publishing
+        if: vars.EDO_PREFLIGHT_ENABLED != 'true'
+        run: echo "Edo Preflight publishing is paused." >> "$GITHUB_STEP_SUMMARY"
+      - name: Recheck the approved revision before reading TestFlight
+        if: vars.EDO_PREFLIGHT_ENABLED == 'true'
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]]
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$current" != "$TARGET" ]]; then exit 0; fi
+          checked="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f branch=main -f event=push -f head_sha="$TARGET" -f status=success \
+            --jq '.total_count > 0')"
+          test "$checked" = true
+          printf 'approved=true\n' >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.revision.outputs.approved == 'true'
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.revision.outputs.approved == 'true'
+        with:
+          node-version-file: .node-version
+      - name: Read the current internal TestFlight group
+        if: steps.revision.outputs.approved == 'true'
+        id: read
+        env:
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          evidence="$(node apps/mobile/scripts/preflight-apple.mts | jq -c .)"
+          printf 'evidence=%s\n' "$evidence" >> "$GITHUB_OUTPUT"
+

@@ -15,6 +15,9 @@ export type ExpoBuild = {
   readonly appIdentifier?: string;
   readonly appVersion?: string;
   readonly appBuildVersion?: string;
+  readonly gitCommitHash?: string;
+  readonly buildProfile?: string;
+  readonly expirationDate?: string;
   readonly platform: string;
   readonly distribution?: string;
   readonly isForIosSimulator?: boolean;
