@@ -1,7 +1,9 @@
+import { createDiaryItem, manualNutritionTarget } from "@edo/core";
 import { type OpenDiaryOptions, openDiary } from "@edo/storage";
 import { File } from "expo-file-system";
 import { moveAsync } from "expo-file-system/legacy";
 import { backupDatabaseAsync, deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
+import { addDays, calendarDate, localDay } from "./diary-view";
 import { connectionFor } from "./local-sqlite";
 
 const diaryName = "edo-diary.db";
@@ -64,6 +66,77 @@ async function openLocalDiaryConnection() {
   const db = await openDatabaseAsync(diaryName, { useNewConnection: true });
   try {
     const diary = await openDiary({ connection: connectionFor(db), backupBeforeMigration });
+    const now = new Date();
+    const today = localDay(now);
+    if (!diary.nutritionTargetAt(today)) {
+      diary.saveNutritionTarget({
+        id: "design-target",
+        effectiveDay: addDays(today, -7),
+        configuredAt: now.getTime(),
+        mode: "manual",
+        target: manualNutritionTarget({ kcal: 2150, proteinG: 150, fatG: 70 }),
+      });
+      function item(
+        name: string,
+        amount: number,
+        kcal: number,
+        protein: number,
+        carbs: number,
+        fat: number,
+      ) {
+        const value = 100 / amount;
+        return createDiaryItem(
+          `fixture-${name}`,
+          {
+            id: { provider: "local", sourceId: `fixture-${name}` },
+            name,
+            release: null,
+            preparation: "prepared",
+            nutrition: {
+              basis: "per-100-g",
+              nutrients: {
+                kcal: kcal * value,
+                proteinG: protein * value,
+                availableCarbohydratesG: carbs * value,
+                fatG: fat * value,
+                fiberG: 0,
+              },
+            },
+          },
+          { amount, unit: "g" },
+        );
+      }
+      const meal = (
+        day: string,
+        id: string,
+        hour: number,
+        minute: number,
+        items: ReturnType<typeof item>[],
+      ) =>
+        diary.saveMeal({
+          id,
+          localDay: day,
+          occurredAt: calendarDate(day).setUTCHours(hour, minute),
+          utcOffsetMinutes: 0,
+          items,
+        });
+      meal(today, "fixture-breakfast", 8, 10, [
+        item("Haferflocken", 60, 222, 9, 39, 4),
+        item("Skyr natur", 150, 95, 17, 6, 0.3),
+        item("Heidelbeeren", 80, 46, 1, 12, 0.2),
+      ]);
+      meal(today, "fixture-lunch", 12, 40, [item("Hähnchen-Reis-Bowl", 250, 476, 36, 62, 10)]);
+      meal(today, "fixture-dinner", 19, 30, [item("Brot mit Hummus", 150, 225, 10, 17, 6.5)]);
+      meal(addDays(today, -2), "fixture-earlier", 12, 0, [
+        item("Frühere Mahlzeit", 350, 2080, 70, 160, 60),
+      ]);
+      meal(addDays(today, -1), "fixture-later", 12, 0, [
+        item("Letzte Mahlzeit", 350, 2240, 80, 175, 70),
+      ]);
+      meal(addDays(today, -3), "fixture-half-kcal", 9, 0, [
+        item("Rundungstest", 82, 61.5, 8, 7, 1),
+      ]);
+    }
     return {
       diary,
       newId() {
