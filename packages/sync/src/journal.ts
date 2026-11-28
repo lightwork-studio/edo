@@ -321,6 +321,18 @@ function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
 }
 
+function withPulledBase(record: OutboxRecord, copy: Change | null): OutboxRecord {
+  if (
+    record.base ||
+    !copy ||
+    copy.state === "unavailable" ||
+    copy.revision !== record.baseRevision
+  ) {
+    return record;
+  }
+  return { ...record, base: copy };
+}
+
 function requireSynchronousWrite(result: undefined): void {
   if (result !== undefined) throw new TypeError("Diary writes must complete synchronously");
 }
@@ -512,12 +524,12 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           if (!record.attempt) throw new Error("This receipt has no pending outbox attempt");
           assertReceiptMatchesAttempt(response, record.attempt);
           const next = receiveOutboxOutcome(record, result);
-          const remote =
-            result.status === "accepted" && !hasLocalWork(next)
-              ? remoteRecord(db, record.key)
-              : null;
+          const remote = result.status === "accepted" ? remoteRecord(db, record.key) : null;
           const projectRemote =
-            remote && remote.state !== "unavailable" && remote.revision >= (next.baseRevision ?? 0);
+            remote &&
+            !hasLocalWork(next) &&
+            remote.state !== "unavailable" &&
+            remote.revision >= (next.baseRevision ?? 0);
           if (projectRemote) {
             const projected = createOutboxRecord(remote, remote);
             requireSynchronousWrite(applyRemote(remote));
@@ -526,7 +538,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
               writeMealProjection(db, record.key.id, pulledMealProjection(projected.base));
             }
           } else {
-            saveRecord(db, next, release);
+            saveRecord(db, withPulledBase(next, remote), release);
             if (result.status === "accepted" && record.key.kind === "meal") {
               const attempt = record.attempt;
               const content = attempt.op === "put" ? attempt.content : null;
@@ -573,9 +585,8 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           );
           if (change.state === "unavailable" || !isKnownRecordKind(change.kind)) continue;
           if (hasLocalWork(record)) {
-            if (!record.base && change.revision === record.baseRevision) {
-              saveRecord(db, { ...record, base: change }, release);
-            }
+            const withBase = withPulledBase(record, change);
+            if (withBase !== record) saveRecord(db, withBase, release);
             continue;
           }
           if (change.revision < (record.baseRevision ?? 0)) continue;

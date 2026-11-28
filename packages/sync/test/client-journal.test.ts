@@ -162,6 +162,79 @@ test("pages only persistent refusals and lets a reopened diary review each recor
   }
 });
 
+test.each(["receipt before exact pull", "receipt after exact pull", "only newer pull"] as const)(
+  "keeps the authenticated base for a pending edit with %s",
+  async (ordering) => {
+    using store = openSyncStore(":memory:", { applyContent: applyRecordContent });
+    store.createAccount("account", "fixture");
+    await using server = createHealthServer({
+      sync: {
+        store,
+        authorize(request) {
+          const token = request.headers.authorization;
+          return token ? { accountBinding: "account", sessionKey: token } : null;
+        },
+      },
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing sync test port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const connect = (name: string) =>
+      createSyncClient({ origin, allowLoopbackHttp: true, authorization: () => `Bearer ${name}` });
+    const phone = connect("phone");
+    const tablet = connect("tablet");
+    using local = diary(":memory:");
+    using peer = diary(":memory:");
+    const phoneSession = await phone.connect();
+    local.journal.bind(phoneSession);
+    local.journal.commitLocal(key, edit("phone-first", 80), () => local.set(80));
+    const accepted = await phone.push(phoneSession, local.journal.prepare(phoneSession));
+    expect(accepted.results).toMatchObject([{ status: "accepted", revision: 1 }]);
+    local.journal.commitLocal(key, edit("phone-second", 81), () => local.set(81));
+    const protectLocalEdit = () => {
+      throw new Error("A queued local edit must keep its device value");
+    };
+    const saveReceipt = () => local.journal.applyResults(phoneSession, accepted, protectLocalEdit);
+    const pull = async (cursor: number) => {
+      const page = await phone.pull(phoneSession, cursor);
+      local.journal.applyPage(phoneSession, cursor, page, protectLocalEdit);
+      return page.cursor;
+    };
+
+    if (ordering === "receipt before exact pull") saveReceipt();
+    let cursor = 0;
+    if (ordering !== "only newer pull") {
+      cursor = await pull(0);
+      expect(cursor).toBe(1);
+    }
+    if (ordering === "receipt after exact pull") saveReceipt();
+
+    const tabletSession = await tablet.connect();
+    peer.journal.bind(tabletSession);
+    peer.journal.applyPage(tabletSession, 0, await tablet.pull(tabletSession, 0), peer.receive);
+    peer.journal.commitLocal(key, edit("tablet-edit", 82), () => peer.set(82));
+    const updated = await tablet.push(tabletSession, peer.journal.prepare(tabletSession));
+    expect(updated.results).toMatchObject([{ status: "accepted", revision: 2 }]);
+
+    expect(await pull(cursor)).toBe(2);
+    if (ordering === "only newer pull") saveReceipt();
+    const conflict = await phone.push(phoneSession, local.journal.prepare(phoneSession));
+    expect(conflict.results).toMatchObject([{ status: "conflict", current: { revision: 2 } }]);
+    local.journal.applyResults(phoneSession, conflict, protectLocalEdit);
+    const review = local.journal.blockedReview(key);
+    expect(review).toMatchObject({
+      baseRevision: 1,
+      device: { content: { kg: 81 } },
+      pulled: { revision: 2, content: { kg: 82 } },
+    });
+    if (ordering === "only newer pull") expect(review?.original).toBeNull();
+    else expect(review?.original).toMatchObject({ revision: 1, content: { kg: 80 } });
+    expect(local.get()).toBe(81);
+  },
+);
+
 test("local edits roll back with failed queue writes", async () => {
   using local = diary(":memory:");
   const session = await candidateSession();
