@@ -40,15 +40,16 @@ function diary(file: string, fresh = true) {
     sqlite.exec("CREATE TABLE diary_fixture (id TEXT PRIMARY KEY, kg REAL NOT NULL) STRICT");
     installSyncJournal(connection);
   }
-  const set = (weight: number): undefined => {
-    connection.run("INSERT OR REPLACE INTO diary_fixture VALUES (?, ?)", key.id, weight);
+  const set = (weight: number, id = key.id): undefined => {
+    connection.run("INSERT OR REPLACE INTO diary_fixture VALUES (?, ?)", id, weight);
   };
   return {
     sqlite,
     connection,
     journal: openSyncJournal(connection),
     set,
-    get: () => connection.get("SELECT kg FROM diary_fixture WHERE id = ?", key.id)?.kg ?? null,
+    get: (id = key.id) =>
+      connection.get("SELECT kg FROM diary_fixture WHERE id = ?", id)?.kg ?? null,
     receive(change: Change): undefined {
       if (
         change.state !== "live" ||
@@ -56,7 +57,7 @@ function diary(file: string, fresh = true) {
         typeof change.content.kg !== "number"
       )
         throw new Error("Wrong fixture type");
-      set(change.content.kg);
+      set(change.content.kg, change.id);
     },
     [Symbol.dispose]: () => sqlite[Symbol.dispose](),
   };
@@ -223,7 +224,8 @@ test("a partial pull preserves evidence that the account is ahead of the cursor"
     expect(last).toMatchObject({ cursor: 2, hasMore: false });
     restored.journal.applyPage(session, cursor, last, restored.receive);
     expect(restored.journal.history()).toMatchObject({ cursor: 2, revision: 2 });
-    expect(restored.get()).toBe(81);
+    expect(restored.get()).toBe(80);
+    expect(restored.get(otherKey.id)).toBe(81);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
