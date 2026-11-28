@@ -442,9 +442,10 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       return transact(() => {
         const binding = checkSession(session);
         assertResponseSession(response, session);
+        // A projection can call external code. Keep every authenticated outcome detached first.
+        const results = response.results.map(decodeSubmissionResult);
         let revision = binding.revision;
-        for (const outcome of response.results) {
-          const result = decodeSubmissionResult(outcome);
+        for (const result of results) {
           const row = db.get(
             "SELECT * FROM edo_sync_outbox WHERE attempt_id = ?",
             result.submissionId,
@@ -662,7 +663,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     serverCopy: (key: RecordKey) => inspect(() => remoteRecord(db, key)),
     /** Compare with SQLite before using this evidence. Accepted content need not equal the server copy. */
     mealProjection(id: string): MealProjection | null {
-      return inspect(() => {
+      return transact(() => {
         const projection = readMealProjection(db, id);
         if (!projection) return null;
         const { record } = localRecord(db, { kind: "meal", id });
@@ -673,7 +674,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         return base?.state === "live" && base.content.id === id
           ? { ...projection, content: base.content }
           : null;
-      });
+      }, "BEGIN");
     },
   };
 }

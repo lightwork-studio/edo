@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Change, JsonValue } from "@edo/contract";
+import type { Change, JsonValue, SubmissionResult } from "@edo/contract";
 import { expect, test, vi } from "vitest";
 import { applyRecordContent } from "../../../apps/sync-node/src/record-projection.ts";
 import { createHealthServer } from "../../../apps/sync-node/src/server.ts";
@@ -314,6 +314,77 @@ test("keeps authenticated meal projection history separate from the released ser
     content: null,
   });
   expect(journal.serverCopy(key)).toMatchObject({ revision: 1, content: server });
+});
+
+test("snapshots every authenticated receipt before calling a projection writer", async () => {
+  using local = diary(":memory:");
+  const scope = { accountBinding: "account", lineage: "fixture", release: "0.1" };
+  const first = { kind: "meal", id: "first-meal" };
+  const second = { kind: "meal", id: "second-meal" };
+  const client = createSyncClient({
+    origin: "https://example.test",
+    authorization: () => "Bearer synthetic",
+    fetch: async (url) => {
+      if (String(url).endsWith("/hello")) {
+        return Response.json({
+          ...scope,
+          features: ["write-records"],
+          revision: 0,
+          restoredFrom: null,
+        });
+      }
+      if (String(url).endsWith("/pull")) {
+        return Response.json({
+          ...scope,
+          cursor: 1,
+          hasMore: false,
+          changes: [{ ...first, state: "live", revision: 1, content: { id: first.id } }],
+        });
+      }
+      return Response.json({
+        ...scope,
+        results: [
+          { status: "accepted", submissionId: "first-put", revision: 1 },
+          {
+            status: "rejected",
+            submissionId: "second-put",
+            code: "invalid-content",
+            message: "The second meal needs review",
+          },
+        ],
+      });
+    },
+  });
+  const session = await client.connect();
+  const journal = local.journal;
+  journal.bind(session);
+  journal.commitLocal(
+    first,
+    { op: "put", submissionId: "first-put", content: { id: first.id } },
+    () => undefined,
+  );
+  journal.commitLocal(
+    second,
+    { op: "put", submissionId: "second-put", content: { id: second.id } },
+    () => undefined,
+  );
+  const attempts = journal.prepare(session);
+  journal.applyPage(session, 0, await client.pull(session, 0), () => undefined);
+  const receipts = await client.push(session, attempts);
+  journal.applyResults(session, receipts, (remote) => {
+    expect(remote.id).toBe(first.id);
+    (receipts.results as SubmissionResult[])[1] = {
+      status: "accepted",
+      submissionId: "second-put",
+      revision: 99,
+    };
+  });
+  expect(journal.queued()).toMatchObject([
+    { key: second, blocked: { result: { status: "rejected", submissionId: "second-put" } } },
+  ]);
+  expect(journal.mealProjection(first.id)).toMatchObject({ origin: "pulled", revision: 1 });
+  expect(journal.mealProjection(second.id)).toBeNull();
+  expect(journal.history()).toMatchObject({ revision: 1, cursor: 1 });
 });
 
 test("an unnegotiated session cannot bind a private diary", async () => {
