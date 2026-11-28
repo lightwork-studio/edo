@@ -30,10 +30,12 @@ test("previews FDDB rows in the selected zone and imports each occurrence once",
   const review = () => previewFddbFile(source, " Europe/Berlin ", diary, sha256);
   const preview = await review();
   expect(preview).toMatchObject({
+    incompleteAtLine: null,
     storage: { newRecords: 2, alreadyPresent: 0, issues: [] },
     activityRows: 1,
     issues: [{ line: 5, code: "invalid-timestamp" }],
   });
+  if (preview.archive === null) throw new Error("Expected an applicable export");
   expect(diary.listMeals("2026-11-27")).toEqual([]);
   expect(diary.restorePrivateArchive(preview.archive)).toEqual({
     status: "restored",
@@ -59,6 +61,25 @@ test("previews FDDB rows in the selected zone and imports each occurrence once",
       { collection: "meals", index: 1 },
     ],
   });
+});
+
+test("returns no import payload when the CSV ends inside a quoted row", async () => {
+  const bad = [
+    header,
+    soup,
+    ...Array.from({ length: 13 }, () => "bad;Bread;;;;;;"),
+    '27.11.2026 23:45;"incomplete',
+  ].join("\n");
+  const preview = await previewFddbFile(
+    bad,
+    "Europe/Berlin",
+    {
+      previewPrivateArchive: () => ({ newRecords: 1, alreadyPresent: 0, issues: [] }),
+    },
+    sha256,
+  );
+  expect(preview).toMatchObject({ archive: null, incompleteAtLine: 16 });
+  expect(preview.issues.at(-1)).toEqual({ line: 16, code: "malformed-csv" });
 });
 
 test("rejects a missing or unsupported source time zone before previewing private records", async () => {

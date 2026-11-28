@@ -25,8 +25,10 @@ export async function previewFddbFile(
     maxRecords: maxFddbRecords,
   });
   const archive = JSON.stringify({ format: "edo-diary", formatVersion: 1, meals });
+  const incompleteAtLine = issues.find(({ code }) => code === "malformed-csv")?.line ?? null;
   return {
-    archive,
+    archive: incompleteAtLine === null ? archive : null,
+    incompleteAtLine,
     issues,
     activityRows,
     storage: diary.previewPrivateArchive(archive),

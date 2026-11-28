@@ -113,6 +113,8 @@ export const strings = {
     fddbSaved: (added: number, existing: number) => `${added} imported · ${existing} already saved`,
     fddbPreviewCounts: (added: number, existing: number) =>
       `${added} new · ${existing} already saved`,
+    fddbIncomplete: (line: number) =>
+      `Preview stopped at line ${line}. Choose a complete export to import these entries.`,
     fddbIssueSample: (count: number) => `Showing the first ${count} issues.`,
     fddbSkipped: (activity: number, issues: number) =>
       `${activity} activity rows · ${issues} problem rows skipped`,
@@ -121,8 +123,9 @@ export const strings = {
     fddbRowIssue: (line: number, issue: string) => `Line ${line} · ${issue}`,
     fddbIssues: {
       "unsupported-header": "Expected the German FDDB website CSV format",
-      "malformed-csv": "Broken CSV formatting. Remaining rows were skipped.",
+      "malformed-csv": "Broken CSV formatting",
       "wrong-column-count": "Unexpected number of columns",
+      "field-too-long": "A field exceeds the import length limit",
       "invalid-timestamp": "Invalid date or time",
       "missing-food-name": "Missing food name",
       "invalid-nutrition": "Invalid nutrition value",
@@ -287,6 +290,8 @@ export const strings = {
       `${added} importiert · ${existing} bereits gespeichert`,
     fddbPreviewCounts: (added: number, existing: number) =>
       `${added} neu · ${existing} bereits gespeichert`,
+    fddbIncomplete: (line: number) =>
+      `Die Vorschau endete in Zeile ${line}. Wähle einen vollständigen Export, um die Einträge zu importieren.`,
     fddbIssueSample: (count: number) => `Die ersten ${count} Probleme werden angezeigt.`,
     fddbSkipped: (activity: number, issues: number) =>
       `${activity} Aktivitätszeilen · ${issues} fehlerhafte Zeilen übersprungen`,
@@ -295,8 +300,9 @@ export const strings = {
     fddbRowIssue: (line: number, issue: string) => `Zeile ${line} · ${issue}`,
     fddbIssues: {
       "unsupported-header": "Erwartet wird das deutsche CSV-Format der FDDB-Website",
-      "malformed-csv": "Fehlerhaftes CSV-Format. Die restlichen Zeilen wurden übersprungen.",
+      "malformed-csv": "Fehlerhaftes CSV-Format",
       "wrong-column-count": "Unerwartete Anzahl von Spalten",
+      "field-too-long": "Ein Feld überschreitet die zulässige Länge",
       "invalid-timestamp": "Ungültiges Datum oder ungültige Uhrzeit",
       "missing-food-name": "Name des Lebensmittels fehlt",
       "invalid-nutrition": "Ungültiger Nährwert",
