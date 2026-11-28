@@ -334,11 +334,6 @@ function DiaryApp({
         feedback={feedback?.day === day ? t[feedback.kind] : null}
         syncNotice={syncNotice}
         onDay={chooseDay}
-        onWeek={(offset) => {
-          const next = addDays(day, offset);
-          const withinDiary = next <= lastDay;
-          chooseDay(withinDiary ? next : lastDay);
-        }}
         onAdd={
           day <= today
             ? () => {
