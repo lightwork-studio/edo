@@ -24,6 +24,11 @@ revision. The journal keeps displaced complete copies for that submission until 
 receipt. It can use the copy at the accepted revision as the original for a newer draft.
 If the device never received that revision, the original still has no value.
 
+`acceptedWeighIn` reads the submitted device value for the current accepted revision.
+A confirmed deletion returns its revision with null content. A successful account projection
+clears the temporary device evidence through that revision. Use `serverCopy` to read
+the full account record.
+
 A stale or rejected mutation remains queued with its server evidence. A caller pulls the current
 copy before offering review. List refusals through `blockedRecords`, which returns record keys
 and statuses in pages. Open the selected record with `blockedReview` to read its current values.
