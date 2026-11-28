@@ -174,10 +174,14 @@ test("two file-backed devices survive a lost response and preserve stale edits a
     );
     a.journal.commitLocal(key, edit("new-draft", 75), () => a.set(75));
     expect(() => a.journal.retryReviewed(key, 2, "a-2", "old-draft")).toThrow(/local edit changed/);
-    expect(() => a.journal.retryReviewed(key, 2, "new-draft", "x".repeat(1025))).toThrow(
+    a.journal.commitLocal(key, edit("latest-draft", 75), () => a.set(75));
+    expect(() => a.journal.commitLocal(key, edit("new-draft", 78), () => a.set(78))).toThrow(
+      /cannot reuse/,
+    );
+    expect(() => a.journal.retryReviewed(key, 2, "latest-draft", "x".repeat(1025))).toThrow(
       expect.objectContaining({ code: "invalid-request" }),
     );
-    a.journal.retryReviewed(key, 2, "new-draft", "a-3");
+    a.journal.retryReviewed(key, 2, "latest-draft", "a-3");
     const resolved = await clientA.push(sessionA, a.journal.prepare(sessionA));
     a.journal.applyResults(sessionA, resolved, a.receive);
     expect(a.journal.history()).toMatchObject({ revision: 3, cursor: 2 });
@@ -327,6 +331,11 @@ test("leaves oversized edits correctable, without blocking the next sendable rec
     () => {},
   );
   expect(local.journal.prepare(session, 1)).toMatchObject([{ submissionId: "other" }]);
+  local.journal.commitLocal(
+    { kind: "meal", id: "unsupported" },
+    { op: "put", submissionId: "unsupported", content: {} },
+    () => {},
+  );
   local.journal.commitLocal(key, edit("corrected", 74), () => local.set(74));
   expect(local.journal.prepare(session, 2)).toMatchObject([
     { submissionId: "other" },
@@ -370,6 +379,20 @@ test("a late receipt atomically applies a newer remote copy already delivered du
   local.journal.applyPage(session, 0, await client.pull(session, 0), local.receive);
   expect(local.get()).toBe(75);
   expect(local.journal.history()?.cursor).toBe(3);
+  const attempt = sent[0];
+  if (attempt?.op !== "put") throw new Error("Missing fixture submission");
+  const wrongReceipt = await client.push(session, [
+    { ...attempt, content: { ...attempt.content, kg: 77 } },
+  ]);
+  expect(() => local.journal.applyResults(session, wrongReceipt, local.receive)).toThrow(
+    /different submission/,
+  );
+  const changedReceipt = await client.push(session, sent);
+  Object.assign(changedReceipt, { lineage: "another-history" });
+  expect(() => local.journal.applyResults(session, changedReceipt, local.receive)).toThrow(
+    /changed after validation/,
+  );
+  expect(local.journal.queued()).toMatchObject([{ attempt: { submissionId: "first" } }]);
   const ack = await client.push(session, sent);
   expect(() =>
     local.journal.applyResults(session, ack, (change) => {

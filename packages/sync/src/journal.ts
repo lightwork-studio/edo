@@ -17,6 +17,7 @@ import {
   syncScope,
 } from "@edo/contract";
 import {
+  assertReceiptMatchesAttempt,
   assertResponseSession,
   maxSyncRequestBytes,
   normalizeSyncServer,
@@ -65,6 +66,9 @@ export function installSyncJournal(db: JournalSqlite): void {
       PRIMARY KEY (kind, id)
     ) WITHOUT ROWID, STRICT;
     CREATE TABLE edo_sync_receipts (
+      submission_id TEXT PRIMARY KEY NOT NULL
+    ) WITHOUT ROWID, STRICT;
+    CREATE TABLE edo_sync_submission_ids (
       submission_id TEXT PRIMARY KEY NOT NULL
     ) WITHOUT ROWID, STRICT;
     CREATE TABLE edo_sync_remote (
@@ -204,19 +208,10 @@ function localRecord(db: JournalSqlite, key: RecordKey) {
 }
 
 function requireUnusedId(db: JournalSqlite, id: string) {
-  if (
-    db.get("SELECT submission_id FROM edo_sync_receipts WHERE submission_id = ?", id) ||
-    db.get(
-      `SELECT id FROM edo_sync_outbox WHERE attempt_id = ?
-        OR json_extract(content, '$.pending.submissionId') = ?
-        OR json_extract(content, '$.blocked.submission.submissionId') = ? LIMIT 1`,
-      id,
-      id,
-      id,
-    )
-  ) {
+  if (db.get("SELECT submission_id FROM edo_sync_submission_ids WHERE submission_id = ?", id)) {
     throw new Error("A new edit cannot reuse a previous submission ID");
   }
+  db.run("INSERT INTO edo_sync_submission_ids VALUES (?)", id);
 }
 
 function hasLocalWork(record: OutboxRecord): boolean {
@@ -302,6 +297,7 @@ export function openSyncJournal(db: JournalSqlite) {
         );
         let bytes = emptyBytes;
         let skippedOversized = false;
+        let skippedUnsupported = false;
         const batch: { attempt: Submission; save: OutboxRecord | null }[] = [];
         scan: for (let offset = 0; batch.length < limit; offset += limit) {
           const rows = db.all(
@@ -315,10 +311,8 @@ export function openSyncJournal(db: JournalSqlite) {
           for (const row of rows) {
             const { record } = storedRecord(row);
             if (!session.writableKinds.includes(record.key.kind)) {
-              throw new SyncWireError(
-                "update-required",
-                "The negotiated release cannot send this pending record",
-              );
+              skippedUnsupported = true;
+              continue;
             }
             const next = prepareOutboxAttempt(record);
             if (!next.attempt) throw new Error("The selected work cannot be sent");
@@ -328,12 +322,18 @@ export function openSyncJournal(db: JournalSqlite) {
               continue;
             }
             const separator = batch.length ? 1 : 0;
-            if (batch.length === limit || bytes + separator + size > maxSyncRequestBytes)
-              break scan;
+            if (bytes + separator + size > maxSyncRequestBytes) break scan;
             bytes += separator + size;
             batch.push({ attempt: next.attempt, save: next === record ? null : next });
+            if (batch.length === limit) break scan;
           }
           if (rows.length < limit) break;
+        }
+        if (!batch.length && skippedUnsupported) {
+          throw new SyncWireError(
+            "update-required",
+            "The negotiated release cannot send this pending record",
+          );
         }
         if (!batch.length && skippedOversized) {
           throw new SyncWireError("invalid-request", "A pending edit is too large to sync");
@@ -375,6 +375,8 @@ export function openSyncJournal(db: JournalSqlite) {
               "update-required",
               "The receipt belongs to another sync release",
             );
+          if (!record.attempt) throw new Error("This receipt has no pending outbox attempt");
+          assertReceiptMatchesAttempt(response, record.attempt);
           const next = receiveOutboxOutcome(record, result);
           const remote =
             result.status === "accepted" && !hasLocalWork(next)

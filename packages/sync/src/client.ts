@@ -35,7 +35,7 @@ export const maxSyncRequestBytes = (maxSyncEnvelopeBytes * 3) / 4;
 const serversBySession = new WeakMap<NegotiatedSync, string>();
 const responseOrigin = new WeakMap<
   PushResponse | PullResponse,
-  { session: NegotiatedSync; cursor?: number }
+  { session: NegotiatedSync; snapshot: string; cursor?: number; sent?: ReadonlyMap<string, string> }
 >();
 
 export function syncRequestBytes(serialized: string): number {
@@ -59,6 +59,16 @@ export function assertResponseSession(
   }
   if (origin.cursor !== cursor) {
     throw new SyncWireError("cursor-reset", "The response belongs to a different pull cursor");
+  }
+  if (origin.snapshot !== JSON.stringify(response)) {
+    throw new SyncWireError("invalid-request", "The response changed after validation");
+  }
+}
+
+export function assertReceiptMatchesAttempt(response: PushResponse, attempt: Submission): void {
+  const sent = responseOrigin.get(response)?.sent?.get(attempt.submissionId);
+  if (sent !== JSON.stringify(attempt)) {
+    throw new SyncWireError("invalid-request", "The receipt belongs to a different submission");
   }
 }
 
@@ -220,7 +230,13 @@ export function createSyncClient({
       const reply = await post("push", request, current.request);
       assertCurrent(current.request.isCurrent);
       const response = decodePushResponse(reply, request, session);
-      responseOrigin.set(response, { session });
+      const sent = new Map(
+        request.submissions.map((submission) => [
+          submission.submissionId,
+          JSON.stringify(submission),
+        ]),
+      );
+      responseOrigin.set(response, { session, sent, snapshot: JSON.stringify(response) });
       return response;
     },
     async pull(session: NegotiatedSync, cursor: number, limit?: number, signal?: AbortSignal) {
@@ -232,7 +248,11 @@ export function createSyncClient({
       const reply = await post("pull", request, current.request);
       assertCurrent(current.request.isCurrent);
       const response = decodePullResponse(reply, request, session);
-      responseOrigin.set(response, { session, cursor: request.cursor });
+      responseOrigin.set(response, {
+        session,
+        cursor: request.cursor,
+        snapshot: JSON.stringify(response),
+      });
       return response;
     },
   };

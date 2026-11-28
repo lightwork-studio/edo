@@ -14,13 +14,14 @@ submissions and release before a network request. Oversized edits stay pending f
 correction. Callers use `requiredRelease` to reconnect while a receipt is outstanding.
 
 Apply replies through the client session that requested them. An acknowledgement advances
-the edit's base revision and retains a newer pending local edit. Downloaded records, remote
+the exact submitted edit's base revision and retains a newer pending local edit. Downloaded records, remote
 copies and the pull cursor commit in one transaction. The journal keeps a newer server copy
 separately while a local attempt is pending. The final acknowledgement applies that copy
 with the diary update when the last local edit clears.
 
 A stale or rejected mutation remains queued with its server evidence. A caller pulls the current
 copy before offering review. `retryReviewed` verifies both the reviewed server revision
-and the reviewed local draft before assigning a fresh submission ID. The app can re-add a favourite
+and the reviewed local draft before assigning a fresh submission ID. The journal reserves
+previous draft IDs so later edits cannot reuse them. The app can re-add a favourite
 after the user reviews its deletion. Other deleted records need a new ID. The app needs
 the attached-account flow and grouped conflict review before it can offer this candidate to users.
