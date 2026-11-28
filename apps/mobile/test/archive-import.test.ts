@@ -6,6 +6,7 @@ import {
   ArchiveSizeError,
   archivePickerAvailable,
   chooseArchive,
+  chooseDiaryFile,
 } from "../src/archive-import";
 
 const mock = vi.hoisted(() => ({
@@ -33,6 +34,13 @@ it("accepts UTF-8 archive text from the picker and handles cancellation", async 
   expect(archivePickerAvailable).toBe(true);
   await expect(chooseArchive()).resolves.toBe(source);
   await expect(chooseArchive()).resolves.toBeNull();
+});
+
+it("reads CSV through the same bounded picker without treating its text as JSON structure", async () => {
+  const csv = `date;food\n27.11.2026;${"[".repeat(100)}`;
+  mock.pickArchiveAsync.mockResolvedValueOnce({ status: "selected", source: `\uFEFF${csv}` });
+  await expect(chooseDiaryFile()).resolves.toBe(csv);
+  expect(mock.pickArchiveAsync).toHaveBeenCalledTimes(1);
 });
 
 it("reports the native size rejection and permits another choice", async () => {

@@ -27,11 +27,13 @@ export function ArchiveScreen({
   t,
   archive,
   onRestored,
+  onFddbImport,
   onBack,
 }: {
   t: Strings;
   archive: PrivateArchiveStore;
   onRestored: () => void;
+  onFddbImport: () => void;
   onBack: () => void;
 }) {
   const ongoing = useRef(false);
@@ -137,6 +139,17 @@ export function ArchiveScreen({
             </Pressable>
           ) : (
             <Text style={styles.meta}>{t.archivePickerUnavailable}</Text>
+          )}
+          {archivePickerAvailable && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: busy }}
+              disabled={busy}
+              style={styles.action}
+              onPress={onFddbImport}
+            >
+              <Text style={styles.actionText}>{t.fddbImport}</Text>
+            </Pressable>
           )}
         </View>
         {busy && <Notice text={t.loading} pending />}

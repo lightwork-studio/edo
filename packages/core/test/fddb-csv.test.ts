@@ -1,8 +1,17 @@
-import { previewFddbDiaryCsv } from "@edo/core";
+import { FddbCsvRecordLimitError, previewFddbDiaryCsv } from "@edo/core";
 import { expect, test } from "vitest";
 
 const header =
   "datum_tag_monat_jahr_stunde_minute;bezeichnung;interne_id;kj;kj_aktivitaeten;fett_g;kh_g;protein_g";
+
+test("counts activity and invalid non-blank records toward the optional preview limit", () => {
+  const file = [header, "", "27.11.2026 08:00;Walking;;;200;;;", "invalid;Bread;;;;;;"].join("\n");
+  expect(previewFddbDiaryCsv(file, 2)).toMatchObject({
+    activityRows: 1,
+    issues: [{ line: 4, code: "invalid-timestamp" }],
+  });
+  expect(() => previewFddbDiaryCsv(file, 1)).toThrow(FddbCsvRecordLimitError);
+});
 
 test("previews German FDDB export rows without inventing a timezone or missing nutrients", () => {
   const input = [

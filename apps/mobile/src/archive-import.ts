@@ -45,7 +45,7 @@ function checkArchiveComplexity(source: string): void {
   }
 }
 
-export async function chooseArchive(): Promise<string | null> {
+export async function chooseDiaryFile(): Promise<string | null> {
   if (!picker || choosingArchive) throw new Error("Archive selection is unavailable");
   choosingArchive = true;
   try {
@@ -53,9 +53,7 @@ export async function chooseArchive(): Promise<string | null> {
     if (result.status === "cancelled") return null;
     if (result.status === "too-large")
       throw new ArchiveSizeError("Diary archive exceeds the restore size limit");
-    const source = result.source.startsWith("\uFEFF") ? result.source.slice(1) : result.source;
-    checkArchiveComplexity(source);
-    return source;
+    return result.source.startsWith("\uFEFF") ? result.source.slice(1) : result.source;
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error) {
       if (error.code === "ERR_EDO_ARCHIVE_TIMEOUT") {
@@ -69,4 +67,10 @@ export async function chooseArchive(): Promise<string | null> {
   } finally {
     choosingArchive = false;
   }
+}
+
+export async function chooseArchive(): Promise<string | null> {
+  const source = await chooseDiaryFile();
+  if (source !== null) checkArchiveComplexity(source);
+  return source;
 }

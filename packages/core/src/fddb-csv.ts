@@ -38,6 +38,8 @@ export interface FddbDiaryPreview {
   readonly issues: readonly { line: number; code: FddbIssueCode }[];
 }
 
+export class FddbCsvRecordLimitError extends RangeError {}
+
 function readQuotedField(source: string, start: number) {
   let end = source.indexOf('"', start + 1);
   while (end !== -1 && source[end + 1] === '"') {
@@ -108,7 +110,10 @@ function timestamp(field: string | undefined): { localDay: string; localTime: st
 }
 
 /** Read the supported FDDB web export without rewriting dates or inserting records. */
-export function previewFddbDiaryCsv(source: string): FddbDiaryPreview {
+export function previewFddbDiaryCsv(source: string, maxRecords?: number): FddbDiaryPreview {
+  if (maxRecords !== undefined && (!Number.isSafeInteger(maxRecords) || maxRecords < 1)) {
+    throw new RangeError("Invalid FDDB record limit");
+  }
   const csv = records(source.replace(/^\uFEFF/, ""));
   const header = csv.next().value?.fields;
   if (
@@ -122,12 +127,16 @@ export function previewFddbDiaryCsv(source: string): FddbDiaryPreview {
   const rows: FddbDiaryRow[] = [];
   const issues: { line: number; code: FddbIssueCode }[] = [];
   let activityRows = 0;
+  let recordCount = 0;
   for (const { line, fields } of csv) {
+    if (fields?.length === 1 && !fields[0]?.trim()) continue;
+    if (maxRecords !== undefined && ++recordCount > maxRecords) {
+      throw new FddbCsvRecordLimitError("The FDDB export has too many records");
+    }
     if (!fields) {
       issues.push({ line, code: "malformed-csv" });
       break;
     }
-    if (fields.length === 1 && !fields[0]?.trim()) continue;
     if (fields.length !== germanHeader.length) {
       issues.push({ line, code: "wrong-column-count" });
       continue;
