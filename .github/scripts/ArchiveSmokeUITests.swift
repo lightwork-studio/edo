@@ -3,17 +3,30 @@ import XCTest
 final class ArchiveSmokeUITests: XCTestCase {
     private let app = XCUIApplication(bundleIdentifier: "studio.lightwork.edo")
 
-    func testArchiveRestoreThroughFiles() throws {
+    private func launchDiaryFiles() throws {
         continueAfterFailure = false
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         try openDiaryFiles()
+    }
 
+    func testCancellationReturnsToDiaryFiles() throws {
+        try launchDiaryFiles()
         try tap("Choose archive", in: [app])
         try tapPicker("Cancel")
-        try waitFor("Share diary archive", in: [app])
+        if element(["Cancel"], in: [app], timeout: 2, hittable: false, picker: true) != nil {
+            // The system sheet also supports an interactive dismissal from its top edge.
+            let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.09))
+            let below = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+            top.press(forDuration: 0.1, thenDragTo: below)
+        }
+        _ = try locate(["Choose archive"], in: [app], hittable: true)
+        XCTAssertFalse(app.buttons["Cancel"].exists)
         print("Cancelled the iOS picker and returned to Diary files")
+    }
 
+    func testArchiveRestoreThroughFiles() throws {
+        try launchDiaryFiles()
         try chooseArchive("Edo-valid-smoke")
         try waitFor("1 new · 0 already saved", in: [app])
         try tap("Restore records", in: [app])
@@ -72,10 +85,8 @@ final class ArchiveSmokeUITests: XCTestCase {
     }
 
     private func tapPickerElement(_ element: XCUIElement) {
-        // The remote view exposes the rendered frame even when XCTest cannot hit-test it.
-        let frame = element.frame
-        app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+        // A coordinate anchored to the remote control can tap its rendered center.
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
 
     private func tap(_ label: String, in applications: [XCUIApplication]) throws {
@@ -105,7 +116,10 @@ final class ArchiveSmokeUITests: XCTestCase {
                 for label in labels {
                     let predicate = NSPredicate(format: "label == %@ OR identifier == %@", label, label)
                     let matches = application.descendants(matching: .any).matching(predicate)
-                    for match in matches.allElementsBoundByIndex {
+                    let candidates = picker
+                        ? application.buttons.matching(predicate).allElementsBoundByIndex + matches.allElementsBoundByIndex
+                        : matches.allElementsBoundByIndex
+                    for match in candidates {
                         guard match.exists else { continue }
                         if picker {
                             let frame = match.frame
