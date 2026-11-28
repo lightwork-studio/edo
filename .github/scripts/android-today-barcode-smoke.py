@@ -1,4 +1,4 @@
-"""Verify the Today calendar in an offline Android release."""
+"""Verify the Today barcode shortcut in an offline Android release."""
 
 from datetime import date, timedelta
 import os
@@ -100,7 +100,7 @@ historical_header += ". Choose a day"
 find(historical_header)
 capture("today-barcode-shortcut")
 tap("Scan barcode")
-tap("", resource="permission_deny_button")
+tap("Don’t allow")
 find("Camera access was denied.", fragments=True)
 capture("today-barcode-manual-fallback")
 tap("Product barcode", widget="android.widget.EditText")
@@ -113,7 +113,7 @@ tap("Back")
 find(historical_header)
 
 tap("Scan barcode")
-tap("", resource="permission_deny_button")
+tap("Don’t allow")
 find("Camera access was denied.", fragments=True)
 find("Product barcode", widget="android.widget.EditText")
 tap("Back")
