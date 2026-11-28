@@ -78,6 +78,16 @@ def scroll():
     adb("shell", "input", "swipe", "300", "1150", "300", "540", "360")
 
 
+def scroll_until(label, fragments=False):
+    for attempt in range(4):
+        try:
+            return find(label, fragments=fragments, timeout=4)
+        except AssertionError:
+            if attempt == 3:
+                raise
+            scroll()
+
+
 adb("shell", "wm", "size", "780x1688")
 adb("shell", "wm", "density", "320")
 adb("shell", "cmd", "connectivity", "airplane-mode", "enable")
@@ -90,16 +100,15 @@ find("7-day average")
 find("78.4 kg", fragments=True)
 tap("Week")
 find("1,461 / 2,083 kcal", fragments=True)
-find("120 kcal over target", fragments=True)
+find("target 2,050 kcal, 30 kcal over target", fragments=True)
 find("90 kcal over target", fragments=True)
+find("Today, 1,064 kcal, target 2,150 kcal", fragments=True)
 find("3 logged days")
 capture("progress-390dp")
-scroll()
-find("Macros · daily average")
-find("52.7")
-find("114")
-find("43.7")
-find("of 150 g")
+scroll_until("Macros · daily average")
+find("Protein, 52.7 g, target 150 g")
+find("Carbs, 114 g, target 213.3 g")
+find("Fat, 43.7 g, target 70 g")
 capture("progress-macros-390dp")
 tap("Add weight")
 tap("Weight in kilograms", widget="android.widget.EditText")
@@ -119,11 +128,15 @@ tap("Fortschritt")
 tap("3 Monate")
 find("77,5 kg", fragments=True)
 capture("progress-320dp-de-150")
-scroll()
-find("1.461 / 2.083 kcal", fragments=True)
-find("3 erfasste Tage")
-scroll()
-find("Makros · Tagesdurchschnitt")
+scroll_until("1.461 / 2.083 kcal", fragments=True)
+scroll_until("3 erfasste Tage")
+earlier = find("Ziel 2.050 kcal", fragments=True)
+_, top, _, bottom = map(int, re.findall(r"\d+", earlier.attrib["bounds"]))
+middle = str((top + bottom) // 2)
+adb("shell", "input", "swipe", "530", middle, "115", middle, "300")
+find("Heute, 1.064 kcal, Ziel 2.150 kcal", fragments=True)
+capture("progress-days-320dp-de-150")
+scroll_until("Makros · Tagesdurchschnitt")
 capture("progress-macros-320dp-de-150")
 print("Verified historical calorie targets, macro targets, range switching, weigh-in persistence and large text offline.")
 
