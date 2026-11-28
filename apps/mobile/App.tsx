@@ -320,7 +320,14 @@ function DiaryApp({
     );
   }
   if (route.kind === "archive") {
-    return <ArchiveScreen t={t} archive={diary} onBack={goBack} />;
+    return (
+      <ArchiveScreen
+        t={t}
+        archive={diary}
+        onBack={goBack}
+        onRestored={() => setRefresh((revision) => revision + 1)}
+      />
+    );
   }
   if (route.kind === "weigh-in") {
     return (

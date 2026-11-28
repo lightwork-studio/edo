@@ -54,6 +54,14 @@ export interface PrivateArchivePreview {
   readonly issues: readonly PrivateArchiveIssue[];
 }
 
+export class ArchiveIssueLimitError extends RangeError {}
+export class ArchiveRecordLimitError extends RangeError {}
+
+export interface PrivateArchiveLimits {
+  readonly maxIssues?: number;
+  readonly maxRecords?: number;
+}
+
 export type PrivateArchiveResult =
   | { readonly status: "restored"; readonly added: number; readonly alreadyPresent: number }
   | { readonly status: "rejected"; readonly preview: PrivateArchivePreview };
@@ -119,7 +127,7 @@ function readCollection<T>(
   collection: Collection,
   read: (input: unknown) => T,
   idOf: (record: T) => string,
-  issues: PrivateArchiveIssue[],
+  reportIssue: (issue: PrivateArchiveIssue) => void,
 ): Indexed<T>[] {
   const rows = archiveArray(root[collection]);
   const ids = new Set<string>();
@@ -133,13 +141,17 @@ function readCollection<T>(
       records.push({ index, record });
     } catch (error) {
       if (!(error instanceof TypeError || error instanceof RangeError)) throw error;
-      issues.push({ collection, index, message: error.message });
+      reportIssue({ collection, index, message: error.message });
     }
   }
   return records;
 }
 
-export function readPrivateArchive(source: string): {
+export function readPrivateArchive(
+  source: string,
+  onIssue?: () => void,
+  maxRecords?: number,
+): {
   meals: ReturnType<typeof readMealEntries>;
   records: IndexedRecords | null;
   issues: PrivateArchiveIssue[];
@@ -152,14 +164,29 @@ export function readPrivateArchive(source: string): {
     throw error;
   }
   const root = archiveRecord(value, ["format", "formatVersion", "meals", ...additionalCollections]);
+  if (maxRecords !== undefined) {
+    if (!Number.isSafeInteger(maxRecords) || maxRecords < 0) {
+      throw new RangeError("Invalid archive record limit");
+    }
+    let records = 0;
+    for (const collection of ["meals", ...additionalCollections]) {
+      const rows = root[collection];
+      if (Array.isArray(rows)) records += rows.length;
+    }
+    if (records > maxRecords) throw new ArchiveRecordLimitError("Too many diary archive records");
+  }
   if (root.format === format && root.formatVersion === 1) {
-    return { meals: readDiaryArchiveValue(value), records: null, issues: [] };
+    return { meals: readDiaryArchiveValue(value, onIssue), records: null, issues: [] };
   }
   if (root.format !== format || root.formatVersion !== formatVersion) {
     throw new TypeError("Unsupported diary archive format");
   }
   const issues: PrivateArchiveIssue[] = [];
-  const meals = readMealEntries(archiveArray(root.meals));
+  const meals = readMealEntries(archiveArray(root.meals), onIssue);
+  function reportIssue(issue: PrivateArchiveIssue): void {
+    onIssue?.();
+    issues.push(issue);
+  }
   const records = {
     customFoods: readCollection(
       root,
@@ -169,30 +196,36 @@ export function readPrivateArchive(source: string): {
         return readCustomFood(row);
       },
       (record) => record.id.sourceId,
-      issues,
+      reportIssue,
     ),
-    recipes: readCollection(root, "recipes", readArchiveRecipe, (record) => record.id, issues),
+    recipes: readCollection(root, "recipes", readArchiveRecipe, (record) => record.id, reportIssue),
     mealTemplates: readCollection(
       root,
       "mealTemplates",
       readArchiveTemplate,
       (record) => record.id,
-      issues,
+      reportIssue,
     ),
     favorites: readCollection(
       root,
       "favorites",
       (row) => readFavoriteId(archiveRecord(row, ["provider", "sourceId"])),
       favoriteKey,
-      issues,
+      reportIssue,
     ),
-    weighIns: readCollection(root, "weighIns", readArchiveWeighIn, (record) => record.id, issues),
+    weighIns: readCollection(
+      root,
+      "weighIns",
+      readArchiveWeighIn,
+      (record) => record.id,
+      reportIssue,
+    ),
     nutritionTargets: readCollection(
       root,
       "nutritionTargets",
       readArchiveTarget,
       (record) => record.id,
-      issues,
+      reportIssue,
     ),
   };
   return { meals, records, issues };
@@ -227,7 +260,7 @@ function targetOrderConflicts(
   archived: Indexed<NutritionTargetRecord>[],
   existing: NutritionTargetRecord[],
   add: NutritionTargetRecord[],
-  issues: PrivateArchiveIssue[],
+  reportIssue: (issue: PrivateArchiveIssue) => void,
 ): Set<string> {
   const bySavedDay = byDay(existing, ({ effectiveDay }) => effectiveDay);
   const byArchiveDay = byDay(archived, ({ record }) => record.effectiveDay);
@@ -248,7 +281,7 @@ function targetOrderConflicts(
       const entry =
         incoming.find(({ record }) => record.id === archiveOrder[mismatch]) ?? incoming[0];
       if (entry)
-        issues.push({
+        reportIssue({
           collection: "nutritionTargets",
           index: entry.index,
           message: "The saved targets have a different order on this day",
@@ -262,9 +295,20 @@ function targetOrderConflicts(
 export function planPrivateRecords(
   db: DiarySqliteConnection,
   archived: IndexedRecords,
-  issues: PrivateArchiveIssue[],
+  reportIssue: (issue: PrivateArchiveIssue) => void,
 ) {
-  const current = { ...readMyFoodsRecords(db), ...readDiaryProgressRecords(db) };
+  const current = {
+    ...readMyFoodsRecords(db, {
+      customFoods: archived.customFoods.map(({ record }) => record.id.sourceId),
+      recipes: archived.recipes.map(({ record }) => record.id),
+      mealTemplates: archived.mealTemplates.map(({ record }) => record.id),
+      favorites: archived.favorites.map(({ record }) => record),
+    }),
+    ...readDiaryProgressRecords(db, {
+      weighIns: archived.weighIns.map(({ record }) => record.id),
+      targets: archived.nutritionTargets.map(({ record }) => record),
+    }),
+  };
   let alreadyPresent = 0;
   function compare<T>(
     collection: Collection,
@@ -278,7 +322,7 @@ export function planPrivateRecords(
       const saved = byId.get(idOf(record));
       if (saved === undefined) additions.push(record);
       else if (JSON.stringify(saved) === JSON.stringify(record)) alreadyPresent += 1;
-      else issues.push({ collection, index, message: "This ID has different saved content" });
+      else reportIssue({ collection, index, message: "This ID has different saved content" });
     }
     return additions;
   }
@@ -292,7 +336,7 @@ export function planPrivateRecords(
     archived.nutritionTargets,
     current.nutritionTargets,
     targets,
-    issues,
+    reportIssue,
   );
   const additions = {
     customFoods: compare(

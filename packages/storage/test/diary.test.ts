@@ -10,6 +10,8 @@ import {
   updateDiaryPortion,
 } from "@edo/core";
 import {
+  ArchiveIssueLimitError,
+  ArchiveRecordLimitError,
   type DiaryMeal,
   type DiarySqliteConnection,
   mealFromTemplate,
@@ -971,6 +973,123 @@ test("round-trips all private collections through a fresh SQLite diary and repla
   expect(reopened.nutritionTargetAt(target.effectiveDay)).toEqual(archiveTarget);
 });
 
+test("previews and restores a large diary with bounded SQLite statement counts", async () => {
+  const { options } = createDatabase("archive-batches.db");
+  const original = options.connection;
+  let reads = 0;
+  let writes = 0;
+  const diary = await openDiary({
+    ...options,
+    connection: {
+      ...original,
+      all(sql, ...parameters) {
+        reads++;
+        return original.all(sql, ...parameters);
+      },
+      get(sql, ...parameters) {
+        reads++;
+        return original.get(sql, ...parameters);
+      },
+      run(sql, ...parameters) {
+        writes++;
+        expect(parameters.length).toBeLessThan(999);
+        original.run(sql, ...parameters);
+      },
+    },
+  });
+  const meals = Array.from({ length: 1200 }, (_, index) => ({
+    ...meal,
+    id: `batch-meal-${index}`,
+    items: [createDiaryItem(`batch-item-${index}`, sourceFood, { amount: 100, unit: "ml" })],
+  }));
+  const source = JSON.stringify({ format: "edo-diary", formatVersion: 1, meals });
+  reads = 0;
+  writes = 0;
+  expect(() => diary.previewPrivateArchive(source, { maxRecords: meals.length - 1 })).toThrow(
+    ArchiveRecordLimitError,
+  );
+  expect(() => diary.restorePrivateArchive(source, { maxRecords: meals.length - 1 })).toThrow(
+    ArchiveRecordLimitError,
+  );
+  expect(reads + writes).toBe(0);
+  expect(diary.previewPrivateArchive(source, { maxIssues: 100 })).toEqual({
+    newRecords: meals.length,
+    alreadyPresent: 0,
+    issues: [],
+  });
+  expect(reads).toBeLessThan(50);
+  expect(writes).toBe(0);
+
+  reads = 0;
+  expect(diary.restorePrivateArchive(source, { maxIssues: 100 })).toEqual({
+    status: "restored",
+    added: meals.length,
+    alreadyPresent: 0,
+  });
+  expect(reads).toBeLessThan(50);
+  expect(writes).toBeLessThan(50);
+  expect(diary.getMeal("batch-meal-1199")).toEqual(meals.at(-1));
+  expect(diary.restorePrivateArchive(source, { maxIssues: 100 })).toEqual({
+    status: "restored",
+    added: 0,
+    alreadyPresent: meals.length,
+  });
+});
+
+test("counts all top-level version 2 collections toward the interactive archive limit", async () => {
+  const { archive } = await populatedPrivateArchive();
+  const diary = await createDatabase("archive-record-limit.db").start();
+  expect(() => diary.restorePrivateArchive(archive, { maxRecords: 8 })).toThrow(
+    ArchiveRecordLimitError,
+  );
+  expect(diary.getMeal(meal.id)).toBeNull();
+  expect(diary.restorePrivateArchive(archive, { maxRecords: 9 })).toMatchObject({
+    status: "restored",
+    added: 9,
+  });
+});
+
+test("looks up only the stored records that can affect a version 2 archive", async () => {
+  const { options, db } = createDatabase("archive-scoped-lookups.db");
+  const original = options.connection;
+  const reads: Array<{ sql: string; rows: number }> = [];
+  const diary = await openDiary({
+    ...options,
+    connection: {
+      ...original,
+      all(sql, ...parameters) {
+        const rows = original.all(sql, ...parameters);
+        reads.push({ sql, rows: rows.length });
+        return rows;
+      },
+    },
+  });
+  const stored = { ...weighIn, id: "history-500" };
+  const source = JSON.stringify({
+    ...JSON.parse(diary.exportPrivateArchive()),
+    meals: [{ ...meal, items: [] }],
+    weighIns: [stored],
+  });
+  db.exec(`WITH RECURSIVE seq(n) AS (
+    SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 1000
+  )
+  INSERT INTO diary_weigh_ins SELECT 'history-' || n, '${stored.localDay}', ${stored.occurredAt},
+    ${stored.kg} FROM seq`);
+  diary.saveMeal(meal);
+  reads.length = 0;
+  expect(diary.previewPrivateArchive(source)).toMatchObject({
+    newRecords: 0,
+    alreadyPresent: 1,
+    issues: [
+      { collection: "meals", index: 0, message: "This meal ID has different saved content" },
+    ],
+  });
+  expect(
+    reads.filter(({ sql }) => sql.includes("FROM diary_weigh_ins")).map(({ rows }) => rows),
+  ).toEqual([1]);
+  expect(reads.some(({ sql }) => /items\.snapshot|FROM diary_recipes/.test(sql))).toBe(false);
+});
+
 test("keeps legacy meal-only archives readable and does not touch other private collections", async () => {
   const legacy =
     '{"format":"edo-diary","formatVersion":1,"meals":[{"id":"legacy-meal","localDay":"2026-10-31","occurredAt":1793433600000,"items":[]}]}';
@@ -999,6 +1118,39 @@ test("keeps legacy meal-only archives readable and does not touch other private 
     alreadyPresent: 1,
     issues: [],
   });
+});
+
+test("stops a mobile preview with a large number of malformed legacy records", async () => {
+  const diary = await createDatabase("archive-issue-budget.db").start();
+  const source = `{"format":"edo-diary","formatVersion":1,"meals":[${"0,".repeat(999_999)}0]}`;
+  expect(() => diary.previewPrivateArchive(source, { maxIssues: 100 })).toThrow(
+    ArchiveIssueLimitError,
+  );
+  expect(() => diary.restorePrivateArchive(source, { maxIssues: 100 })).toThrow(
+    ArchiveIssueLimitError,
+  );
+  expect(diary.latestMealDay()).toBeNull();
+});
+
+test("counts invalid and conflicting archive records toward the same optional issue budget", async () => {
+  const diary = await createDatabase("archive-conflict-budget.db").start();
+  diary.saveWeighIn(weighIn);
+  const before = diary.exportPrivateArchive();
+  const source = JSON.stringify({
+    ...JSON.parse(before),
+    meals: [null],
+    weighIns: [{ ...weighIn, kg: weighIn.kg + 1 }],
+  });
+  expect(
+    diary
+      .previewPrivateArchive(source, { maxIssues: 2 })
+      .issues.map(({ collection }) => collection),
+  ).toEqual(["meals", "weighIns"]);
+  expect(() => diary.restorePrivateArchive(source, { maxIssues: 1 })).toThrow(
+    ArchiveIssueLimitError,
+  );
+  expect(diary.restorePrivateArchive(source)).toMatchObject({ status: "rejected" });
+  expect(diary.exportPrivateArchive()).toBe(before);
 });
 
 test("round-trips both saved offsets at a DST repeat, zero and an unknown offset", async () => {

@@ -1,4 +1,5 @@
 import { type DailyNutritionTarget, manualNutritionTarget, type WeighIn } from "@edo/core";
+import { insertArchiveRows, selectArchiveMatches } from "./archive-sql.ts";
 import { inCurrentDiary } from "./migrations.ts";
 import { diaryId, readDay, readInstant } from "./snapshot.ts";
 import type { DiarySqliteConnection, SqlRow } from "./sqlite.ts";
@@ -73,12 +74,12 @@ export function validateTargetBudget(target: DailyNutritionTarget): void {
 }
 
 const insertWeighIn = "INSERT INTO diary_weigh_ins VALUES (?, ?, ?, ?)";
+const insertTarget = `INSERT INTO diary_targets (
+  id, effective_day, configured_at, mode, kcal, protein_g, fat_g, carbohydrate_g
+)`;
 
-function insertNutritionTarget(db: DiarySqliteConnection, record: NutritionTargetRecord): void {
-  db.run(
-    `INSERT INTO diary_targets (
-      id, effective_day, configured_at, mode, kcal, protein_g, fat_g, carbohydrate_g
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+function targetBindings(record: NutritionTargetRecord) {
+  return [
     record.id,
     record.effectiveDay,
     record.configuredAt,
@@ -87,10 +88,47 @@ function insertNutritionTarget(db: DiarySqliteConnection, record: NutritionTarge
     record.target.proteinG,
     record.target.fatG,
     record.target.availableCarbohydratesG,
-  );
+  ];
 }
 
-export function readDiaryProgressRecords(db: DiarySqliteConnection) {
+function insertNutritionTarget(db: DiarySqliteConnection, record: NutritionTargetRecord): void {
+  db.run(`${insertTarget} VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, ...targetBindings(record));
+}
+
+export function readDiaryProgressRecords(
+  db: DiarySqliteConnection,
+  ids?: { weighIns: string[]; targets: readonly NutritionTargetRecord[] },
+) {
+  if (ids) {
+    const targetDays = new Set(ids.targets.map(({ effectiveDay }) => effectiveDay));
+    const onDays = selectArchiveMatches(
+      db,
+      "SELECT * FROM diary_targets",
+      "effective_day",
+      [...targetDays].map((day) => [day]),
+      "ORDER BY effective_day, save_order",
+    );
+    const byId = selectArchiveMatches(
+      db,
+      "SELECT * FROM diary_targets",
+      "id",
+      ids.targets.map(({ id }) => [id]),
+    );
+    return {
+      weighIns: selectArchiveMatches(
+        db,
+        "SELECT * FROM diary_weigh_ins",
+        "id",
+        ids.weighIns.map((id) => [id]),
+      ).map(readWeighIn),
+      nutritionTargets: [
+        ...onDays.map(readNutritionTarget),
+        ...byId
+          .map(readNutritionTarget)
+          .filter(({ effectiveDay }) => !targetDays.has(effectiveDay)),
+      ],
+    };
+  }
   return {
     weighIns: db
       .all("SELECT * FROM diary_weigh_ins ORDER BY local_day, occurred_at, id")
@@ -105,10 +143,12 @@ export function insertDiaryProgressRecords(
   db: DiarySqliteConnection,
   records: ReturnType<typeof readDiaryProgressRecords>,
 ) {
-  for (const { id, localDay, occurredAt, kg } of records.weighIns) {
-    db.run(insertWeighIn, id, localDay, occurredAt, kg);
-  }
-  for (const record of records.nutritionTargets) insertNutritionTarget(db, record);
+  insertArchiveRows(
+    db,
+    "INSERT INTO diary_weigh_ins",
+    records.weighIns.map(({ id, localDay, occurredAt, kg }) => [id, localDay, occurredAt, kg]),
+  );
+  insertArchiveRows(db, insertTarget, records.nutritionTargets.map(targetBindings));
 }
 
 export function verifyDiaryProgress(db: DiarySqliteConnection): void {
