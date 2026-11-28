@@ -113,6 +113,8 @@ tap("Back")
 find(historical_header)
 
 tap("Scan barcode")
+tap("", resource="permission_deny_button")
+find("Camera access was denied.", fragments=True)
 find("Product barcode", widget="android.widget.EditText")
 tap("Back")
 find(historical_header)
