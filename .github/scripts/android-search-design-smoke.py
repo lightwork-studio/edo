@@ -75,7 +75,10 @@ def capture(name):
 
 
 def type_query(text):
-    adb("shell", "input", "text", text)
+    for character in text:
+        adb("shell", "input", "text", character)
+        time.sleep(0.08)
+    find(text, widget="android.widget.EditText", timeout=12)
     adb("shell", "input", "keyevent", "66")
 
 
