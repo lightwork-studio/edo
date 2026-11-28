@@ -69,6 +69,13 @@ jobs:
             -destination "platform=iOS Simulator,id=$EDO_SIMULATOR" \
             -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/edo-archive.xcresult" \
             test-without-building
+      - name: Show simulator file provider diagnostics
+        if: failure() && env.EDO_SIMULATOR != ''
+        run: |
+          xcrun simctl spawn "$EDO_SIMULATOR" log show --last 12m --info --style compact \
+            --predicate 'process == "fileproviderd" OR process == "DocumentPickerViewService" OR process == "Files" OR subsystem BEGINSWITH[c] "com.apple.documentmanager"' \
+            > "$RUNNER_TEMP/edo-file-provider.log"
+          grep -Ei 'error|fail|select|Edo-valid|materializ|sandbox extension' "$RUNNER_TEMP/edo-file-provider.log" | tail -150 || true
       - name: Keep the UI test report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

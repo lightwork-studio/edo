@@ -1,64 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fixture_app="$RUNNER_TEMP/ArchiveFixtures.app"
-fixture_id="studio.lightwork.edo.smoke-fixtures"
-mkdir -p "$fixture_app"
-cat > "$RUNNER_TEMP/ArchiveFixtures.swift" <<'SWIFT'
-import UIKit
+files_app=com.apple.DocumentsApp
+local_storage_group=group.com.apple.FileProvider.LocalStorage
 
-@main
-final class FixtureApp: UIResponder, UIApplicationDelegate {
-    var window: UIWindow?
-
-    func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?
-    ) -> Bool {
-        let view = UIViewController()
-        view.view.backgroundColor = .systemBackground
-        let window = UIWindow(frame: UIScreen.main.bounds)
-        window.rootViewController = view
-        window.makeKeyAndVisible()
-        self.window = window
-        return true
-    }
+find_local_storage() {
+  xcrun simctl get_app_container "$EDO_SIMULATOR" "$files_app" groups 2>/dev/null |
+    awk -F '\t' -v group="$local_storage_group" '$1 == group { print $2 }'
 }
-SWIFT
-xcrun --sdk iphonesimulator swiftc "$RUNNER_TEMP/ArchiveFixtures.swift" \
-  -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
-  -target "$(uname -m)-apple-ios17.0-simulator" \
-  -parse-as-library -o "$fixture_app/ArchiveFixtures"
-python3 - "$fixture_app/Info.plist" "$fixture_id" <<'PYTHON'
-import plistlib
-import sys
 
-with open(sys.argv[1], "wb") as plist:
-    plistlib.dump({
-        "CFBundleDisplayName": "Archive Fixtures",
-        "CFBundleExecutable": "ArchiveFixtures",
-        "CFBundleIdentifier": sys.argv[2],
-        "CFBundleName": "Archive Fixtures",
-        "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "1.0",
-        "CFBundleVersion": "1",
-        "LSRequiresIPhoneOS": True,
-        "LSSupportsOpeningDocumentsInPlace": True,
-        "MinimumOSVersion": "17.0",
-        "UIDeviceFamily": [1],
-        "UIFileSharingEnabled": True,
-    }, plist)
-PYTHON
-codesign --force --sign - --timestamp=none "$fixture_app"
-xcrun simctl install "$EDO_SIMULATOR" "$fixture_app"
-container=$(xcrun simctl get_app_container "$EDO_SIMULATOR" "$fixture_id" data)
-mkdir -p "$container/Documents"
-python3 - "$container/Documents" <<'PYTHON'
+container=$(find_local_storage || true)
+if [[ ! -d "$container" ]]; then
+  xcrun simctl launch "$EDO_SIMULATOR" "$files_app"
+  for _ in {1..20}; do
+    container=$(find_local_storage || true)
+    [[ -d "$container" ]] && break
+    sleep 0.25
+  done
+fi
+if [[ ! -d "$container" ]]; then
+  echo "The local Files provider container was not found for this simulator" >&2
+  exit 1
+fi
+
+fixtures="$container/File Provider Storage/Archive Fixtures"
+mkdir -p "$fixtures"
+python3 - "$fixtures" <<'PYTHON'
 from pathlib import Path
 import sys
 
 sys.path.insert(0, ".github/scripts")
 from archive_smoke_fixtures import write_fixtures
+
 write_fixtures(Path(sys.argv[1]))
 PYTHON
-xcrun simctl launch "$EDO_SIMULATOR" "$fixture_id"
+echo "Seeded synthetic archives in Files → On My iPhone → Archive Fixtures"
