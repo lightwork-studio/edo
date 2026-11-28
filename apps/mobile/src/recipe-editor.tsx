@@ -574,6 +574,12 @@ function IngredientSearch({
         onChangeText={setQuery}
         style={local.search}
       />
+      {refreshing && (
+        <Notice text={t.loading} pending action={{ label: t.useCachedFood, onPress: onUseSaved }} />
+      )}
+      {showPackagedLicense && cached.length > 0 && (
+        <SourceLink uri={openFoodFactsLicenseUrl} title={t.openFoodFactsLicense} />
+      )}
       {[...matches, ...cached, ...(bls ?? [])].map((food) => (
         <Pressable
           key={`${food.id.provider}:${food.id.sourceId}`}
@@ -596,12 +602,6 @@ function IngredientSearch({
           <Text style={styles.actionText}>+</Text>
         </Pressable>
       ))}
-      {showPackagedLicense && cached.length > 0 && (
-        <SourceLink uri={openFoodFactsLicenseUrl} title={t.openFoodFactsLicense} />
-      )}
-      {refreshing && (
-        <Notice text={t.loading} pending action={{ label: t.useCachedFood, onPress: onUseSaved }} />
-      )}
       {term !== "" && catalog === "error" && (
         <Notice
           text={words.catalogUnavailable}
