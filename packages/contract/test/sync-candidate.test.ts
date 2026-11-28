@@ -30,7 +30,11 @@ const history: AuthenticatedHistory = {
   restoredFrom: { lineage: "history-backup", revision: 5 },
 };
 const hello: HelloRequest = { releases: [syncCandidate.release], features: ["write-records"] };
-const scope = { release: syncCandidate.release, lineage: history.lineage };
+const scope = {
+  accountBinding: history.accountBinding,
+  release: syncCandidate.release,
+  lineage: history.lineage,
+};
 const meal = {
   op: "put",
   submissionId: "edit-1",
@@ -139,7 +143,7 @@ describe("local candidate compatibility", () => {
       },
       { state: "unavailable", revision: 7, kind: "recipe", id: "recipe-1" },
     ];
-    const incoming = { ...scope, cursor: 7, hasMore: false, changes };
+    const incoming = { ...scope, cursor: 7, hasMore: true, changes };
     const page = decodePullResponse(incoming, request, client);
     expect(page.changes).toEqual(changes);
     expect(isKnownRecordKind(page.changes[1]?.kind ?? "")).toBe(false);
@@ -253,6 +257,23 @@ test("push decodes all outcomes with one result per stable submission ID", () =>
   ).toThrow(expect.objectContaining({ code: "invalid-request" }));
 });
 
+test("push and pull cannot cross accounts that use the same history lineage", () => {
+  const { client, session } = pair();
+  const other = {
+    ...scope,
+    accountBinding: "another-account",
+  };
+  const push = decodePushRequest({ ...scope, submissions: [meal] }, session);
+  const pull = decodePullRequest({ ...scope, cursor: 0 }, session);
+  const wrongAccount = expect.objectContaining({ code: "account-changed" });
+  expect(() => decodePushRequest({ ...push, ...other }, session)).toThrow(wrongAccount);
+  expect(() => decodePullRequest({ ...pull, ...other }, session)).toThrow(wrongAccount);
+  expect(() => decodePushResponse({ ...other, results: [] }, push, client)).toThrow(wrongAccount);
+  expect(() =>
+    decodePullResponse({ ...other, cursor: 0, hasMore: false, changes: [] }, pull, client),
+  ).toThrow(wrongAccount);
+});
+
 test("unsafe push envelopes, IDs and non-JSON content are rejected", () => {
   const { session } = pair();
   const cyclic = { content: {} };
@@ -287,7 +308,7 @@ test("unsafe push envelopes, IDs and non-JSON content are rejected", () => {
   }
   expect(() =>
     decodePushRequest({ ...scope, accountBinding: "other", submissions: [meal] }, session),
-  ).toThrow(expect.objectContaining({ code: "invalid-request" }));
+  ).toThrow(expect.objectContaining({ code: "account-changed" }));
   const id = favoriteRecordId("open-food-facts", "00001234:ä");
   const favorite = { ...meal, kind: "favorite", id, content: {} };
   expect(decodePushRequest({ ...scope, submissions: [favorite] }, session).submissions).toEqual([
@@ -304,6 +325,20 @@ test("unsafe push envelopes, IDs and non-JSON content are rejected", () => {
   ).toThrow(expect.objectContaining({ code: "invalid-request" }));
 });
 
+test("preserves previously stored record IDs that fit inside the sync envelope", () => {
+  const { session } = pair();
+  const itemId = `legacy-${"α".repeat(2_000)}`;
+  const favoriteId = favoriteRecordId("open-food-facts", `${itemId}"`);
+  const legacyMeal = { ...meal, id: itemId };
+  const favorite = { ...deletion, id: favoriteId, kind: "favorite" };
+  expect(
+    decodePushRequest({ ...scope, submissions: [legacyMeal, favorite] }, session).submissions,
+  ).toEqual([legacyMeal, favorite]);
+  expect(
+    decodeChange({ state: "deleted", kind: "favorite", revision: 12, id: favoriteId }).id,
+  ).toBe(favoriteId);
+});
+
 test("pull pages validate cursors, revisions, progression and limits", () => {
   const { client } = pair();
   const request = decodePullRequest({ ...scope, cursor: 4, limit: 2 }, client);
@@ -311,10 +346,17 @@ test("pull pages validate cursors, revisions, progression and limits", () => {
   expect(
     decodePullResponse({ ...scope, cursor: 5, hasMore: true, changes: [current] }, request, client),
   ).toEqual({ ...scope, cursor: 5, hasMore: true, changes: [current] });
+  expect(() =>
+    decodePullResponse({ ...scope, cursor: 4, hasMore: false, changes: [] }, request, client),
+  ).toThrow(expect.objectContaining({ code: "cursor-reset" }));
+  const caughtUp = decodePullRequest({ ...scope, cursor: history.revision }, client);
   expect(
-    decodePullResponse({ ...scope, cursor: 4, hasMore: false, changes: [] }, request, client)
-      .cursor,
-  ).toBe(4);
+    decodePullResponse(
+      { ...scope, cursor: history.revision, hasMore: false, changes: [] },
+      caughtUp,
+      client,
+    ).cursor,
+  ).toBe(history.revision);
   expect(() =>
     decodePullRequest({ ...scope, cursor: Number.MAX_SAFE_INTEGER + 1 }, client),
   ).toThrow(expect.objectContaining({ code: "invalid-request" }));

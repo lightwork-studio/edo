@@ -1,6 +1,7 @@
 export {
   type AuthenticatedHistory,
   acceptHello,
+  assertSession,
   decodeHelloRequest,
   decodeHelloResponse,
   decodeNegotiationRefused,

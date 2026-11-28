@@ -62,13 +62,13 @@ export function safeInteger(value: unknown, min: number, max: number, field: str
 }
 
 export function readText(value: unknown, max: number, field: string): string {
-  if (typeof value !== "string" || !value.trim() || value.length > max) return invalid(field);
+  if (typeof value !== "string" || value.length > max || !value.trim()) return invalid(field);
   return value;
 }
 
 /** Match the storage ID rules so conversion through SQLite does not alias two identities. */
-export function readId(value: unknown, field: string): string {
-  const id = readText(value, 1024, field);
+export function readId(value: unknown, field: string, max = 1024): string {
+  const id = readText(value, max, field);
   if (id.includes("\0") || /[\ud800-\udfff]/u.test(id)) return invalid(field);
   return id;
 }

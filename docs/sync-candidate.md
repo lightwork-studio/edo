@@ -10,17 +10,35 @@ Edo uses the same protocol with a managed server and a self-hosted server. This 
 | `POST /sync/push`  | The request names the negotiated release, current lineage, and ordered submissions. Each submission carries a stable `submissionId`, record kind and ID, and the base revision it observed. A put also carries its versioned record content.                                                                                                                               |
 | `POST /sync/pull`  | The device asks for changes after its saved cursor on that lineage. The response gives an ordered page, the next cursor and a signal when more pages remain. The app commits the page and cursor together. Each page reports the current form of records changed since the cursor. Superseded versions can leave gaps. The next cursor equals the last delivered revision. |
 
-The service obtains the account from the credential used for the request. The app checks the account binding saved for this diary and the lineage and last observed revision before replaying work. A changed binding, changed lineage or lower revision stops uploads until the app downloads the new history and reconciles it against the local diary and outbox. A download cursor belongs to one account history.
+The service obtains the account from the credential used for the request. Push and pull
+include the negotiated account binding as an assertion in both directions. The server
+checks it against the authenticated session. Before replaying work, the app checks the
+binding saved for this diary, its lineage and its last observed revision. A changed binding,
+changed lineage or lower revision stops uploads until the app downloads the new history
+and reconciles it against the local diary and outbox. A download cursor belongs to one
+account history. A terminal download page must reach at least the revision the peer
+reported during negotiation. The server rejects requests beyond the current account revision.
 
-Local edits remain usable during a connection failure. The local diary write and its outbox entry belong to one SQLite transaction. Every retry uses the original submission ID for the same intent. A successful reply assigns a revision, and another copy of that reply can be processed safely. A stale, deleted, or already-existing record returns the current server revision and the retained value when it is available. Rejected submissions require a visible action, and retryable ones keep their queue position and data.
+Local edits remain usable during a connection failure. The local diary write and its outbox
+entry belong to one SQLite transaction. Every retry uses the original submission ID for the
+same intent. An accepted change returns its new revision. If the requested state is already
+stored, the server records a receipt with the existing revision. The app can safely process
+the same receipt again. A conflict returns the current revision and retained value when
+available. Rejected submissions require a visible action, and retryable ones keep their
+queue position and data.
 
 ## Records and old clients
 
-A meal and a recipe each travel as one record. Nested item IDs let an app compare its original, local, and server copies. The quantity and nutrition captured for an item move together. The other records carry custom foods, meal templates, favourites, nutrition targets and weigh-ins. A favourite has a canonical JSON pair of provider and source ID as its record identity. Public catalog lookups and private captured values can therefore evolve independently.
+A meal and a recipe each travel as one record. Nested item IDs let an app compare its original, local, and server copies. The quantity and nutrition captured for an item move together. The other records carry custom foods, meal templates, favourites, nutrition targets and weigh-ins. A favourite has a canonical JSON pair of provider and source ID as its record identity. IDs already stored in the diary can travel when their records fit the sync envelope. Public catalog lookups and private captured values can therefore evolve independently.
 
 An older decoder retains unknown JSON fields and opaque record kinds when reading newer data. For a write, the server must preserve fields outside the writer's release. The version-specific application layer owns that merge, including nested items identified by ID. Only kinds defined in the negotiated release may be submitted. A peer with no compatible release or without the `write-records` feature keeps its local queue and reports an action the user can take.
 
-The server compares and allocates the new revision in the same transaction that stores an accepted record or tombstone and its receipt. For a normal stale write, the device may automatically rebase independent fields. An edit against a deletion or two edits of the same field need grouped review. The next submission uses the latest revision observed during review, so another device's intervening write triggers a new check.
+The server compares the expected revision and stores record changes and receipts in the
+same transaction. Only a change to the stored record or tombstone allocates a new revision.
+For a normal stale write, the device may automatically rebase independent fields. An edit
+against a deletion or two edits of the same field need grouped review. The next submission
+uses the latest revision observed during review, so another device's intervening write
+triggers a new check.
 
 ## Before publishing a release
 
