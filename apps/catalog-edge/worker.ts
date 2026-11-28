@@ -122,7 +122,7 @@ async function lookup(bucket: CatalogEnvironment["CATALOGS"], code: string) {
   const entries = shard.value as Record<string, unknown>;
   if (!Object.hasOwn(entries, key)) return json({ status: "not-found" }, 404);
   const candidates = entries[key];
-  if (!Array.isArray(candidates) || candidates.length === 0 || candidates.length > 100) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
     throw new Error("Invalid barcode candidates");
   }
   const products: PackagedFood[] = [];

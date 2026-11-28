@@ -131,10 +131,6 @@ test("rejects an entire barcode list containing an invalid or duplicate product"
     [sample, { ...second, barcode: "9999" }],
     [sample, { ...second, id: sample.id }],
     [sample, { ...second, nutrition: { basis: "bad-basis" } }],
-    Array.from({ length: 101 }, (_, index) => ({
-      ...sample,
-      id: { ...sample.id, sourceId: String(index) },
-    })),
   ];
   const request = new Request(`${origin}/${prefix}/barcodes/1234`);
   const responseFor = async (products: unknown[]) => {
@@ -156,6 +152,15 @@ test("rejects an entire barcode list containing an invalid or duplicate product"
       { ...second, release: "fixture" },
       { ...sample, release: "fixture" },
     ],
+  });
+  const largeGroup = Array.from({ length: 101 }, (_, index) => {
+    const barcode = `${"0".repeat(index)}1234`;
+    return { ...sample, barcode, id: { ...sample.id, sourceId: barcode } };
+  });
+  const large = await responseFor(largeGroup);
+  expect(large.status).toBe(200);
+  expect(await large.json()).toMatchObject({
+    products: largeGroup.map((entry) => ({ ...entry, release: "fixture" })),
   });
 });
 
