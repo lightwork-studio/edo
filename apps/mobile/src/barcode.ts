@@ -18,7 +18,7 @@ type CatalogResult =
 export const openFoodFactsLicenseUrl = "https://opendatacommons.org/licenses/odbl/1-0/";
 
 const freshnessMs = 7 * 24 * 60 * 60 * 1000;
-const lookupTimeoutMs = 5000;
+const lookupTimeoutMs = 20_000;
 const maxBarcodeLength = 64;
 const maxResponseBytes = 256 * 1024;
 const previewPath = "/catalog-preview/open-food-facts/barcodes/";

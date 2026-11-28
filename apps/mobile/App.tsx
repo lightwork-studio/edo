@@ -624,7 +624,17 @@ function DiaryApp({
                 origin: packagedCatalogOrigin,
                 cache: cachedProducts ?? null,
                 keep: () => retainedProducts(diary, today),
-                request: fetch,
+                request: (_input, options) =>
+                  new Promise((_, reject) => {
+                    const signal = options?.signal;
+                    const stop = () => reject(new Error("Native recipe fixture request ended"));
+                    if (!signal || signal.aborted) {
+                      stop();
+                      return;
+                    }
+                    console.info("EDO_RECIPE_NATIVE_RECHECK_STARTED");
+                    signal.addEventListener("abort", stop, { once: true });
+                  }),
                 signal,
               })
             : null;
