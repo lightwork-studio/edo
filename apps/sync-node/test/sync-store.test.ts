@@ -146,6 +146,10 @@ test("verifies a real standalone snapshot with scoped item IDs, gaps and a newes
     using upgraded = openSyncStore(path);
     expect(upgraded.history("alpha")?.revision).toBe(3);
   }
+  {
+    using optimized = new DatabaseSync(path);
+    optimized.exec("ANALYZE");
+  }
   await expect(verifySyncSnapshot(path)).resolves.toBeUndefined();
 });
 
@@ -171,6 +175,28 @@ test.each([
      SELECT RAISE(ABORT, 'Unexpected trigger'); END`,
     "Unexpected sync snapshot schema",
   ],
+  [
+    "unrelated schema",
+    "CREATE TABLE unrelated (id INTEGER); CREATE VIEW duplicate AS SELECT id FROM unrelated;",
+    "Unexpected sync snapshot schema",
+  ],
+  [
+    "unencodable current record",
+    `UPDATE sync_records SET content = json_object('items', json_array(), 'large', hex(zeroblob(525000)))
+      WHERE account_binding = 'alpha' AND revision = 3`,
+    "A stored record exceeds the pull page limit",
+  ],
+  [
+    "invalid account text",
+    "UPDATE sync_accounts SET account_binding = CAST(X'FF' AS TEXT) WHERE account_binding = 'empty'",
+    "A stored sync value has invalid text",
+  ],
+  [
+    "invalid record text",
+    `UPDATE sync_records SET record_id = CAST(X'FF' AS TEXT)
+      WHERE account_binding = 'alpha' AND revision = 3`,
+    "A stored sync value has invalid text",
+  ],
 ])("rejects %s even when SQLite integrity passes", async (_name, edit, diagnostic) => {
   writeSnapshotFixture(filename);
   {
@@ -182,6 +208,37 @@ test.each([
   const before = readFileSync(filename);
   await expect(verifySyncSnapshot(filename)).rejects.toThrow(diagnostic);
   expect(readFileSync(filename)).toEqual(before);
+});
+
+test("matches meal ownership against SQLite's exact text identity", async () => {
+  writeSnapshotFixture(filename);
+  {
+    using copy = new DatabaseSync(filename);
+    copy
+      .prepare(
+        "UPDATE sync_records SET record_id = ? WHERE account_binding = 'alpha' AND revision = 1",
+      )
+      .run("\uFFFD");
+    copy.exec(
+      "UPDATE sync_meal_item_owners SET meal_id = CAST(X'FF' AS TEXT) WHERE account_binding = 'alpha'",
+    );
+    expect(copy.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+  }
+  await expect(verifySyncSnapshot(filename)).rejects.toThrow(
+    "A meal item ownership claim is missing or wrong",
+  );
+});
+
+test("rejects a partial account restore point without printing any account data", async () => {
+  writeSnapshotFixture(filename);
+  {
+    using copy = new DatabaseSync(filename);
+    copy.exec(`PRAGMA ignore_check_constraints = ON;
+      UPDATE sync_accounts SET restored_revision = 0 WHERE account_binding = 'alpha'`);
+  }
+  await expect(verifySyncSnapshot(filename)).rejects.toThrow(
+    "An account restore point is incomplete",
+  );
 });
 
 test.skipIf(process.platform === "win32")(

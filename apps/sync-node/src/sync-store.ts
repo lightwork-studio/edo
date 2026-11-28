@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, openSync, statSync } from "node:fs";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { TextDecoder } from "node:util";
 import {
   type AuthenticatedHistory,
   type Change,
@@ -258,7 +259,23 @@ function backfillMealItemOwners(db: DatabaseSync) {
   }
 }
 
-/** Inspect a standalone copy. No rows are changed and diagnostics contain no record values. */
+function requireStoredText(decoder: TextDecoder, value: unknown, bytes: unknown) {
+  if (value === null && bytes === null) return;
+  try {
+    if (
+      typeof value === "string" &&
+      bytes instanceof Uint8Array &&
+      decoder.decode(bytes) === value
+    ) {
+      return;
+    }
+  } catch {
+    // SQLite text containing invalid bytes can otherwise decode as a different identity.
+  }
+  throw new InvalidSyncSnapshot("A stored sync value has invalid text");
+}
+
+/** Inspect a standalone copy and report data-free diagnostics. */
 export function assertSyncSnapshotConsistency(db: DatabaseSync): void {
   try {
     transaction(db, "BEGIN", () => {
@@ -273,7 +290,7 @@ export function assertSyncSnapshotConsistency(db: DatabaseSync): void {
       initialize(canonical);
       const schemaObjects = `
         SELECT type, name, tbl_name, sql FROM main.sqlite_schema
-        WHERE tbl_name IN ('sync_accounts', 'sync_records', 'sync_receipts', 'sync_meal_item_owners')
+        WHERE name NOT IN ('sqlite_stat1', 'sqlite_stat4')
         ORDER BY type, name`;
       if (
         JSON.stringify(db.prepare(schemaObjects).all()) !==
@@ -288,31 +305,52 @@ export function assertSyncSnapshotConsistency(db: DatabaseSync): void {
         throw new InvalidSyncSnapshot("SQLite integrity verification failed");
       }
 
+      const encoding = db.prepare("PRAGMA main.encoding").get()?.encoding;
+      if (typeof encoding !== "string") throw new InvalidSyncSnapshot("Invalid snapshot encoding");
+      const decoder = new TextDecoder(encoding, { fatal: true, ignoreBOM: true });
       const accounts = db.prepare(`
         SELECT account.*,
+          CAST(account_binding AS BLOB) AS account_bytes,
+          CAST(lineage AS BLOB) AS lineage_bytes,
+          CAST(restored_lineage AS BLOB) AS restored_bytes,
           COALESCE((SELECT MAX(revision) FROM main.sync_records AS record
             WHERE record.account_binding = account.account_binding), 0) AS last_revision
         FROM main.sync_accounts AS account`);
       for (const account of accounts.iterate()) {
+        requireStoredText(decoder, account.account_binding, account.account_bytes);
+        requireStoredText(decoder, account.lineage, account.lineage_bytes);
+        requireStoredText(decoder, account.restored_lineage, account.restored_bytes);
+        if ((account.restored_lineage === null) !== (account.restored_revision === null)) {
+          throw new InvalidSyncSnapshot("An account restore point is incomplete");
+        }
         if (storedHistory(account).revision !== account.last_revision) {
           throw new InvalidSyncSnapshot("An account revision is unreachable by pull");
         }
       }
 
       const owner = db.prepare(`
-        SELECT meal_id FROM main.sync_meal_item_owners WHERE account_binding = ? AND item_id = ?`);
+        SELECT 1 AS found FROM main.sync_meal_item_owners
+        WHERE account_binding = ? AND item_id = ? AND meal_id = ?`);
       const records = db.prepare(`
-        SELECT account_binding, revision, kind, record_id, content FROM main.sync_records`);
+        SELECT account_binding, revision, kind, record_id, content,
+          CAST(kind AS BLOB) AS kind_bytes, CAST(record_id AS BLOB) AS id_bytes,
+          CAST(content AS BLOB) AS content_bytes FROM main.sync_records`);
       let expectedClaims = 0;
       for (const row of records.iterate()) {
+        requireStoredText(decoder, row.kind, row.kind_bytes);
+        requireStoredText(decoder, row.record_id, row.id_bytes);
+        requireStoredText(decoder, row.content, row.content_bytes);
         const record = storedChange(row);
+        if (!fitsPullPage(record)) {
+          throw new InvalidSyncSnapshot("A stored record exceeds the pull page limit");
+        }
         if (record.kind !== "meal" || record.state !== "live") continue;
         const accountBinding = row.account_binding;
         if (typeof accountBinding !== "string") {
           throw new InvalidSyncSnapshot("A meal has an invalid account binding");
         }
         for (const itemId of mealItemIds(record.content)) {
-          if (owner.get(accountBinding, itemId)?.meal_id !== record.id) {
+          if (owner.get(accountBinding, itemId, record.id)?.found !== 1) {
             throw new InvalidSyncSnapshot("A meal item ownership claim is missing or wrong");
           }
           expectedClaims += 1;

@@ -46,7 +46,7 @@ retention remains open for managed rollout.
 Use a closed, standalone copy stored in a private directory.
 
 ```sh
-pnpm --filter @edo/sync-node verify-snapshot /path/to/snapshot.sqlite
+pnpm --silent --filter @edo/sync-node verify-snapshot /path/to/snapshot.sqlite
 ```
 
 The command checks the current sync schema, SQLite integrity, account revisions and
