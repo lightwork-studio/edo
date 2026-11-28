@@ -1,5 +1,11 @@
 import type { NegotiatedSync } from "@edo/contract";
-import { type DiaryItem, type DiaryMeal, reconcileDiaryMeal, type WeighIn } from "@edo/core";
+import {
+  type DiaryItem,
+  type DiaryMeal,
+  reconcileDiaryMeal,
+  reconcileDiaryWeighIn,
+  type WeighIn,
+} from "@edo/core";
 import { openSyncJournal } from "@edo/sync";
 import { readMealEntries } from "./diary-archive.ts";
 import {
@@ -25,6 +31,7 @@ import {
   type PrivateArchivePreview,
   type PrivateArchiveResult,
   planPrivateRecords,
+  readArchiveWeighIn,
   readPrivateArchive,
 } from "./private-archive.ts";
 import {
@@ -66,6 +73,7 @@ export interface SyncDiaryStore extends SyncMealStore {
   readonly sync: SyncMealStore["sync"] & {
     saveWeighIn(entry: WeighIn, submissionId: string): void;
     deleteWeighIn(id: string, submissionId: string): void;
+    tryRebaseWeighIn(session: NegotiatedSync, id: string, submissionId: string): boolean;
   };
 }
 
@@ -162,6 +170,21 @@ function readRebaseMeal(content: unknown, id: string): DiaryMeal | null {
   // Archive decoding rejects opaque fields at every level. Keep those edits for manual review.
   const meal = readMealEntries([content]).entries[0]?.meal;
   return meal?.id === id ? meal : null;
+}
+
+function getWeighIn(db: DiarySqliteConnection, id: string): WeighIn | null {
+  const row = db.get("SELECT * FROM diary_weigh_ins WHERE id = ?", id);
+  return row ? readWeighIn(row) : null;
+}
+
+function readRebaseWeighIn(content: unknown, id: string): WeighIn | null {
+  try {
+    // The archive decoder requires the exact supported fields.
+    const reading = readArchiveWeighIn(content);
+    return reading.id === id ? reading : null;
+  } catch {
+    return null;
+  }
 }
 
 function planPrivateRestore(
@@ -292,9 +315,9 @@ export async function openDiary({
         const reading = prepareWeighIn(entry);
         journal.commitLocalProjection({ kind: "weigh-in", id: reading.id }, submissionId, () => {
           writeWeighIn(db, reading);
-          const row = db.get("SELECT * FROM diary_weigh_ins WHERE id = ?", reading.id);
-          if (!row) throw new Error("Could not read the saved weigh-in for sync");
-          return { op: "put", content: readWeighIn(row) };
+          const persisted = getWeighIn(db, reading.id);
+          if (!persisted) throw new Error("Could not read the saved weigh-in for sync");
+          return { op: "put", content: persisted };
         });
       },
       deleteWeighIn: (id, submissionId) => {
@@ -303,6 +326,36 @@ export async function openDiary({
           db.run("DELETE FROM diary_weigh_ins WHERE id = ?", readingId);
           return { op: "delete" };
         });
+      },
+      tryRebaseWeighIn: (session, id, submissionId) => {
+        const readingId = diaryId(id, "weigh-in ID");
+        return journal.tryRebaseStalePut(
+          session,
+          { kind: "weigh-in", id: readingId },
+          submissionId,
+          ({ base, draft, server }) => {
+            const original = readRebaseWeighIn(base, readingId);
+            const local = readRebaseWeighIn(draft, readingId);
+            const remote = readRebaseWeighIn(server, readingId);
+            if (
+              !original ||
+              !local ||
+              !remote ||
+              JSON.stringify(getWeighIn(db, readingId)) !== JSON.stringify(local)
+            ) {
+              return null;
+            }
+            return reconcileDiaryWeighIn(original, local, remote);
+          },
+          (content) => {
+            const merged = readRebaseWeighIn(content, readingId);
+            if (!merged) throw new Error("Invalid rebased weigh-in");
+            writeWeighIn(db, merged);
+            if (JSON.stringify(getWeighIn(db, readingId)) !== JSON.stringify(merged)) {
+              throw new Error("The rebased weigh-in changed while saving");
+            }
+          },
+        );
       },
     },
     getMeal: (id) => inCurrentDiary(db, "BEGIN", () => readMeal(db, diaryId(id, "meal ID"))),
