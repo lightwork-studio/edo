@@ -59,6 +59,7 @@ const copy = {
       itemRange: (first: number, last: number, total: number) =>
         `Items ${first}–${last} of ${total}`,
       unknownEnergy: "Energy unknown",
+      unknownNutrient: "unknown",
     },
     kinds: {
       meal: "Meal",
@@ -119,6 +120,7 @@ const copy = {
       itemRange: (first: number, last: number, total: number) =>
         `Einträge ${first}–${last} von ${total}`,
       unknownEnergy: "Energie unbekannt",
+      unknownNutrient: "unbekannt",
     },
     kinds: {
       meal: "Mahlzeit",
@@ -522,7 +524,8 @@ function CapturedItems({
             {reviewNutrients
               .map(({ label, nutrient }) => {
                 const value = nutrients[nutrient];
-                const amount = value === null ? "—" : `${formatQuantity(value)} g`;
+                const amount =
+                  value === null ? words.unknownNutrient : `${formatQuantity(value)} g`;
                 return `${strings[language][label]} ${amount}`;
               })
               .join(" · ")}
