@@ -1,16 +1,15 @@
 name: Check published Open Food Facts freshness
 
 on:
-  schedule:
-    - cron: "43 13 * * *"
-  workflow_dispatch:
+  push:
+    branches: [verify/catalog-freshness]
 
 permissions:
   contents: read
 
 jobs:
   freshness:
-    if: github.repository == 'lightwork-studio/edo' && github.ref == 'refs/heads/main'
+    if: github.repository == 'lightwork-studio/edo' && github.ref == 'refs/heads/verify/catalog-freshness'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
