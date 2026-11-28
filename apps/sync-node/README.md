@@ -29,6 +29,10 @@ validate diary records and preserve fields that a newer release wrote. The devel
 entry point serves health and the optional
 catalog preview. Account sync becomes available when the caller supplies an authenticator.
 
+Use `GET /health` for process liveness. `GET /ready` or `HEAD /ready` checks the configured
+sync database's file identity, local write access and required SQLite schema. An exclusive SQLite
+lock returns unavailable immediately. The response contains only the readiness status.
+
 The server rechecks authorization after reading a request. After a restart, the device
 negotiates again and can retry the same submission ID against its receipt in SQLite. An
 accepted change advances the account revision. A pull returns the current records and
