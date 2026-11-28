@@ -1,11 +1,22 @@
 import { roundEnergyKcal } from "@edo/core";
 import type { DiaryProgressStore, DiaryStore } from "@edo/storage";
 import { type ReactNode, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { calendarDate, nutritionTargetProgress } from "./diary-view";
 import { type ProgressRange, progressSummary, type WeightPoint } from "./progress-data";
 import type { Strings } from "./strings";
-import { colors, displayNumber, IconButton, macros, Notice, styles, TargetRing } from "./ui";
+import {
+  colors,
+  displayNumber,
+  IconButton,
+  macros,
+  Notice,
+  nutrientValue,
+  styles,
+  TargetRing,
+} from "./ui";
+
+const dayGap = 3;
 
 function WeightChart({ points, locale }: { points: WeightPoint[]; locale: string }) {
   const [width, setWidth] = useState(0);
@@ -128,6 +139,9 @@ export function ProgressScreen({
   onArchive: () => void;
 }) {
   const [, retry] = useState(0);
+  const { fontScale } = useWindowDimensions();
+  const dayWidth = Math.ceil(42 * Math.max(1, fontScale));
+  const dayRing = Math.ceil(34 * Math.max(1, fontScale));
   const summary = loadProgress(diary, today, range);
   const ranges = [
     { days: 7, label: t.week },
@@ -242,29 +256,42 @@ export function ProgressScreen({
                 </Text>
               )}
             </View>
-            <View style={local.days}>
+            <ScrollView
+              horizontal
+              contentContainerStyle={[
+                local.week,
+                { minWidth: summary.days.length * (dayWidth + dayGap) - dayGap },
+              ]}
+              style={local.weekScroller}
+            >
               {summary.days.map(({ day, nutrition, target }) => {
                 const rawKcal = nutrition?.kcal ?? null;
                 const kcal = rawKcal === null ? null : roundEnergyKcal(rawKcal);
                 const targetKcal = target?.target.kcal ?? null;
+                const roundedTarget = targetKcal === null ? null : roundEnergyKcal(targetKcal);
                 const dayDate = calendarDate(day);
                 const current = day === today;
                 const progress = nutritionTargetProgress(rawKcal, targetKcal);
                 const deviation =
-                  kcal !== null && targetKcal !== null && !current
-                    ? kcal - roundEnergyKcal(targetKcal)
-                    : 0;
+                  kcal !== null && roundedTarget !== null && !current ? kcal - roundedTarget : 0;
                 const difference = deviation > 0 ? displayNumber(deviation, locale, 0) : null;
-                const label =
-                  kcal === null ? t.unavailable : `${displayNumber(kcal, locale, 0)} kcal`;
-                const accessibility = [`${weekday.format(dayDate)}, ${dateText(day)}`, label];
+                const accessibility = [`${weekday.format(dayDate)}, ${dateText(day)}`];
+                if (current) accessibility.push(t.today);
+                accessibility.push(
+                  kcal === null ? t.unavailable : nutrientValue(kcal, locale, "kcal"),
+                );
+                if (roundedTarget !== null) {
+                  accessibility.push(
+                    `${t.targetLabel} ${nutrientValue(roundedTarget, locale, "kcal")}`,
+                  );
+                }
                 if (difference !== null) accessibility.push(t.caloriesOverTarget(difference));
                 return (
                   <View
                     key={day}
                     accessible
                     accessibilityLabel={accessibility.join(", ")}
-                    style={[local.day, local.weekDay]}
+                    style={[local.day, local.weekDay, { minWidth: dayWidth }]}
                   >
                     <Text
                       style={[local.dayCaption, current && local.activeDay]}
@@ -274,7 +301,7 @@ export function ProgressScreen({
                       {weekdayNarrow.format(dayDate)}
                     </Text>
                     <TargetRing
-                      size={34}
+                      size={dayRing}
                       color={current ? colors.accent : colors.muted}
                       fraction={progress?.fraction}
                     >
@@ -286,25 +313,16 @@ export function ProgressScreen({
                         {displayNumber(Number(day.slice(-2)), locale, 0)}
                       </Text>
                     </TargetRing>
-                    <Text
-                      style={[
-                        local.dayCaption,
-                        current && local.activeDay,
-                        difference && local.excess,
-                      ]}
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                    >
-                      {difference
-                        ? `+${difference}`
-                        : kcal === null
-                          ? "—"
-                          : displayNumber(kcal, locale, 0)}
+                    <Text style={[local.dayCaption, current && local.activeDay]}>
+                      {kcal === null ? "—" : displayNumber(kcal, locale, 0)}
                     </Text>
+                    {difference !== null && (
+                      <Text style={[local.dayCaption, local.excess]}>+{difference}</Text>
+                    )}
                   </View>
                 );
               })}
-            </View>
+            </ScrollView>
             {summary.completedDays > 0 && (
               <Text style={styles.meta}>
                 {t.progressLoggedDays(
@@ -328,8 +346,19 @@ export function ProgressScreen({
                 const value = summary.averageMacros[nutrient];
                 const goal = summary.averageTargets[nutrient];
                 const progress = nutritionTargetProgress(value, goal);
+                const description = [
+                  t[label],
+                  value === null ? t.unavailable : nutrientValue(value, locale, "g"),
+                ];
+                if (goal !== null)
+                  description.push(`${t.targetLabel} ${nutrientValue(goal, locale, "g")}`);
                 return (
-                  <View key={nutrient} style={[local.day, styles.stretch]}>
+                  <View
+                    key={nutrient}
+                    accessible
+                    accessibilityLabel={description.join(", ")}
+                    style={[local.day, styles.stretch]}
+                  >
                     <TargetRing size={60} color={color} fraction={progress?.fraction}>
                       <Text
                         style={[styles.body, styles.numbers, { color }]}
@@ -340,9 +369,11 @@ export function ProgressScreen({
                       </Text>
                     </TargetRing>
                     <Text style={local.macroLabel}>{t[label]}</Text>
-                    <Text style={styles.meta}>
-                      {goal === null ? "g" : t.progressMacroGoal(displayNumber(goal, locale, 1))}
-                    </Text>
+                    {(goal !== null || value !== null) && (
+                      <Text style={styles.meta}>
+                        {goal === null ? "g" : t.progressMacroGoal(displayNumber(goal, locale, 1))}
+                      </Text>
+                    )}
                   </View>
                 );
               })}
@@ -419,8 +450,10 @@ const local = StyleSheet.create({
     justifyContent: "space-between",
   },
   day: { alignItems: "center", gap: 6, minWidth: 0 },
-  weekDay: { flex: 1, minWidth: 0 },
-  dayCaption: { ...styles.meta, fontSize: 11, maxWidth: "100%" },
+  week: { flexGrow: 1, flexDirection: "row", gap: dayGap },
+  weekScroller: { flexGrow: 0 },
+  weekDay: { flex: 1 },
+  dayCaption: { ...styles.meta, fontSize: 11, maxWidth: "100%", textAlign: "center" },
   activeDay: { color: colors.accent, fontWeight: "700" },
   excess: { color: colors.text, fontWeight: "700" },
   calorieAverage: { ...styles.meta, maxWidth: "60%", flexShrink: 1, textAlign: "right" },
