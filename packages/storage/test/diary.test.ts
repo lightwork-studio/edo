@@ -122,21 +122,24 @@ const revisedTarget: NutritionTargetRecord = {
   target: { ...target.target, kcal: 2100, availableCarbohydratesG: 280 },
 };
 
-function mealSyncSession() {
+const mealSyncScope = { accountBinding: "account", lineage: "fixture", release: "0.1" };
+
+function mealSyncClient(response?: (url: string) => unknown) {
   return createSyncClient({
     origin: "https://example.test",
     releases: [{ release: "0.1", features: ["write-records"], writableKinds: ["meal"] }],
     authorization: () => "Bearer synthetic",
-    fetch: async () =>
-      Response.json({
-        accountBinding: "account",
-        lineage: "fixture",
-        revision: 0,
-        restoredFrom: null,
-        release: "0.1",
-        features: ["write-records"],
-      }),
-  }).connect();
+    fetch: async (input) =>
+      Response.json(
+        String(input).endsWith("/hello")
+          ? { ...mealSyncScope, revision: 0, restoredFrom: null, features: ["write-records"] }
+          : response?.(String(input)),
+      ),
+  });
+}
+
+function mealSyncSession() {
+  return mealSyncClient().connect();
 }
 
 test("queues the actual persisted meal and preserves an in-flight edit over a restart", async () => {
@@ -210,6 +213,105 @@ test("rolls back a sync meal deletion and its submission reservation if the jour
   const reopened = await createDatabase().start();
   expect(reopened.getMeal(meal.id)).toBeNull();
   expect(reopened.sync.journal.queued()[0]?.attempt?.submissionId).toBe("retry-delete");
+});
+
+test("commits downloaded meals, their server copies, and the cursor together", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const recorded = { ...meal, utcOffsetMinutes: -240 };
+  const live = {
+    kind: "meal",
+    id: recorded.id,
+    state: "live",
+    revision: 1,
+    content: { ...recorded, laterField: "server evidence" },
+  };
+  let payload: typeof mealSyncScope & { changes: unknown[]; cursor: number; hasMore: boolean } = {
+    ...mealSyncScope,
+    cursor: 2,
+    hasMore: false,
+    changes: [live, { ...live, id: "different-id", revision: 2 }],
+  };
+  const client = mealSyncClient(() => payload);
+  const session = await client.connect();
+  diary.sync.journal.bind(session);
+  const invalid = await client.pull(session, 0);
+  expect(() => diary.sync.applyMealPage(session, 0, invalid)).toThrow(
+    /does not match its identity/,
+  );
+  expect(diary.getMeal(meal.id)).toBeNull();
+  expect(diary.sync.journal.history()?.cursor).toBe(0);
+  expect(diary.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toBeNull();
+
+  payload = {
+    ...payload,
+    changes: [
+      live,
+      { kind: "weigh-in", id: "another-kind", revision: 2, state: "live", content: {} },
+    ],
+  };
+  const mixed = await client.pull(session, 0);
+  expect(() => diary.sync.applyMealPage(session, 0, mixed)).toThrow(/only apply sync meal/);
+  expect(diary.getMeal(meal.id)).toBeNull();
+  expect(diary.sync.journal.history()?.cursor).toBe(0);
+
+  payload = { ...payload, cursor: 1, changes: [live] };
+  const page = await client.pull(session, 0);
+  diary.sync.applyMealPage(session, 0, page);
+  expect(diary.getMeal(meal.id)).toEqual(recorded);
+  expect(diary.sync.journal.history()?.cursor).toBe(1);
+  expect(diary.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toMatchObject(live);
+  expect(diary.sync.journal.queued()).toEqual([]);
+
+  payload = { ...payload, cursor: 2, changes: [{ ...live, revision: 2, content: meal }] };
+  diary.sync.applyMealPage(session, 1, await client.pull(session, 1));
+  expect(diary.getMeal(meal.id)).toEqual(meal);
+  payload = {
+    ...payload,
+    cursor: 3,
+    changes: [{ kind: "meal", state: "deleted", revision: 3, id: meal.id }],
+  };
+  diary.sync.applyMealPage(session, 2, await client.pull(session, 2));
+  expect(diary.getMeal(meal.id)).toBeNull();
+  source.db.close();
+  const reopened = await createDatabase().start();
+  expect(reopened.getMeal(meal.id)).toBeNull();
+  expect(reopened.sync.journal.history()?.cursor).toBe(3);
+  expect(reopened.sync.journal.queued()).toEqual([]);
+});
+
+test("retains the local meal during upload and applies a newer staged remote copy when acknowledged", async () => {
+  const diary = await createDatabase().start();
+  const item = meal.items[0];
+  if (!item) throw new Error("Expected a fixture item");
+  const remote = { ...meal, items: [updateDiaryPortion(item, { amount: 150, unit: "ml" })] };
+  const client = mealSyncClient((url) =>
+    String(url).endsWith("/pull")
+      ? {
+          ...mealSyncScope,
+          cursor: 3,
+          hasMore: false,
+          changes: [{ kind: "meal", state: "live", id: remote.id, revision: 3, content: remote }],
+        }
+      : {
+          ...mealSyncScope,
+          results: [{ status: "accepted", submissionId: "edit-outgoing", revision: 2 }],
+        },
+  );
+  const session = await client.connect();
+  diary.sync.journal.bind(session);
+  diary.sync.saveMeal(meal, "edit-outgoing");
+  const pending = diary.sync.journal.prepare(session);
+  diary.sync.applyMealPage(session, 0, await client.pull(session, 0));
+  expect(diary.getMeal(meal.id)).toEqual(meal);
+  expect(diary.sync.journal.history()?.cursor).toBe(3);
+  expect(diary.sync.journal.serverCopy({ kind: "meal", id: meal.id })).toMatchObject({
+    content: remote,
+  });
+  diary.sync.applyMealResults(session, await client.push(session, pending));
+  expect(diary.getMeal(meal.id)).toEqual(remote);
+  expect(diary.sync.journal.queued()).toEqual([]);
+  expect(diary.sync.journal.history()?.cursor).toBe(3);
 });
 
 test("reopens locally, preserving the event day, stable IDs and nutrition after a catalog refresh", async () => {

@@ -1,3 +1,4 @@
+import type { Change, NegotiatedSync, PullResponse, PushResponse } from "@edo/contract";
 import type { DiaryItem, DiaryMeal } from "@edo/core";
 import { openSyncJournal } from "@edo/sync";
 import { type DiaryProgressStore, diaryProgress, verifyDiaryProgress } from "./diary-progress.ts";
@@ -49,6 +50,8 @@ export interface SyncMealStore {
     readonly journal: ReturnType<typeof openSyncJournal>;
     saveMeal(meal: DiaryMeal, submissionId: string): void;
     deleteMeal(id: string, submissionId: string): void;
+    applyMealPage(session: NegotiatedSync, cursor: number, response: PullResponse): void;
+    applyMealResults(session: NegotiatedSync, response: PushResponse): void;
   };
 }
 
@@ -107,23 +110,28 @@ function prepareMeal(meal: DiaryMeal) {
 function writeMeal(
   db: DiarySqliteConnection,
   meal: ReturnType<typeof prepareMeal>,
-  update: boolean,
+  mode: "insert" | "local" | "remote",
 ): void {
   const insert =
     "INSERT INTO diary_meals (id, local_day, occurred_at, utc_offset_minutes) VALUES (?, ?, ?, ?)";
-  const write = update
-    ? `${insert} ON CONFLICT(id) DO UPDATE SET
-        local_day = excluded.local_day,
-        occurred_at = excluded.occurred_at,
-        utc_offset_minutes = CASE
+  const offset =
+    mode === "remote"
+      ? "excluded.utc_offset_minutes"
+      : `CASE
           WHEN excluded.local_day = diary_meals.local_day
             AND excluded.occurred_at = diary_meals.occurred_at
           THEN coalesce(excluded.utc_offset_minutes, diary_meals.utc_offset_minutes)
           ELSE excluded.utc_offset_minutes
-        END`
-    : insert;
+        END`;
+  const write =
+    mode === "insert"
+      ? insert
+      : `${insert} ON CONFLICT(id) DO UPDATE SET
+        local_day = excluded.local_day,
+        occurred_at = excluded.occurred_at,
+        utc_offset_minutes = ${offset}`;
   db.run(write, meal.id, meal.localDay, meal.occurredAt, meal.utcOffsetMinutes);
-  if (update) db.run("DELETE FROM diary_items WHERE meal_id = ?", meal.id);
+  if (mode !== "insert") db.run("DELETE FROM diary_items WHERE meal_id = ?", meal.id);
   for (const [position, item] of meal.items.entries()) {
     db.run(
       "INSERT INTO diary_items (id, meal_id, position, snapshot) VALUES (?, ?, ?, ?)",
@@ -133,6 +141,39 @@ function writeMeal(
       item.snapshot,
     );
   }
+}
+
+function applyRemoteMeal(db: DiarySqliteConnection, change: Change): undefined {
+  if (change.kind !== "meal") {
+    throw new TypeError("This diary writer can only apply sync meal records");
+  }
+  const id = diaryId(change.id, "meal ID");
+  if (change.state === "deleted") {
+    db.run("DELETE FROM diary_meals WHERE id = ?", id);
+    return;
+  }
+  if (change.state !== "live") throw new TypeError("Unavailable meal cannot be applied");
+  const { content } = change;
+  if (content.id !== id || !Array.isArray(content.items)) {
+    throw new TypeError("The synced meal content does not match its identity");
+  }
+  if (content.utcOffsetMinutes === null) throw new TypeError("Invalid synced meal UTC offset");
+  writeMeal(
+    db,
+    {
+      id,
+      localDay: readDay(content.localDay),
+      occurredAt: readInstant(content.occurredAt),
+      utcOffsetMinutes: readUtcOffset(content.utcOffsetMinutes) ?? null,
+      items: content.items.map((item: unknown) => {
+        if (!item || typeof item !== "object" || !("id" in item)) {
+          throw new TypeError("Invalid synced meal item");
+        }
+        return { id: diaryId(item.id, "item ID"), snapshot: JSON.stringify(readSnapshot(item)) };
+      }),
+    },
+    "remote",
+  );
 }
 
 function readMeal(db: DiarySqliteConnection, id: string): DiaryMeal | null {
@@ -207,7 +248,7 @@ export async function openDiary({
     ...myFoods(db),
     saveMeal: (meal) => {
       const prepared = prepareMeal(meal);
-      inCurrentDiary(db, "BEGIN IMMEDIATE", () => writeMeal(db, prepared, true));
+      inCurrentDiary(db, "BEGIN IMMEDIATE", () => writeMeal(db, prepared, "local"));
     },
     deleteMeal: (id) =>
       inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
@@ -218,7 +259,7 @@ export async function openDiary({
       saveMeal: (meal, submissionId) => {
         const prepared = prepareMeal(meal);
         journal.commitLocalProjection({ kind: "meal", id: prepared.id }, submissionId, () => {
-          writeMeal(db, prepared, true);
+          writeMeal(db, prepared, "local");
           const persisted = readMeal(db, prepared.id);
           if (!persisted) throw new Error("Could not read the saved meal for sync");
           return { op: "put", content: persisted };
@@ -231,6 +272,10 @@ export async function openDiary({
           return { op: "delete" };
         });
       },
+      applyMealPage: (session, cursor, response) =>
+        journal.applyPage(session, cursor, response, (change) => applyRemoteMeal(db, change)),
+      applyMealResults: (session, response) =>
+        journal.applyResults(session, response, (change) => applyRemoteMeal(db, change)),
     },
     getMeal: (id) => inCurrentDiary(db, "BEGIN", () => readMeal(db, diaryId(id, "meal ID"))),
     listMeals: (localDay) =>
@@ -270,7 +315,7 @@ export async function openDiary({
       return inCurrentDiary(db, "BEGIN IMMEDIATE", () => {
         const { meals, records, preview } = planPrivateRestore(db, archive);
         if (preview.issues.length > 0) return { status: "rejected", preview };
-        for (const meal of meals) writeMeal(db, prepareMeal(meal), false);
+        for (const meal of meals) writeMeal(db, prepareMeal(meal), "insert");
         if (records) insertPrivateRecords(db, records);
         return {
           status: "restored",
