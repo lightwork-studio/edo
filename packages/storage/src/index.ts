@@ -8,7 +8,12 @@ export {
   type SyncMealStore,
 } from "./diary.ts";
 export type { DiaryProgressStore, NutritionTargetRecord } from "./diary-progress.ts";
-export { type MyFoodsStore, mealFromTemplate, type SavedMealTemplate } from "./my-foods.ts";
+export {
+  type MyFoodsStore,
+  mealFromTemplate,
+  readRecipe as readRecipeSnapshot,
+  type SavedMealTemplate,
+} from "./my-foods.ts";
 export * from "./packaged-food-cache.ts";
 export type {
   PrivateArchiveIssue,

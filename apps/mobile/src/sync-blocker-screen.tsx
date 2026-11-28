@@ -1,11 +1,13 @@
+import type { DiaryItem } from "@edo/core";
 import { type ComponentRef, useRef, useState } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-native";
 import { type Language, strings } from "./strings";
 import {
   type BlockerJournal,
   type MealReviewSide,
-  mealReviewPage,
+  type RecipeReviewSide,
   readSyncBlocker,
+  reviewItemPage,
   reviewQuantityFormatter,
   type syncBlockerNotice,
   type WeighInReviewSide,
@@ -42,12 +44,20 @@ const copy = {
     meal: {
       unavailable: "Meal contents unavailable",
       empty: "No items in this meal.",
+      offset: "Recorded UTC offset",
+      missingOffset: "Offset unavailable",
+    },
+    recipe: {
+      unavailable: "Recipe contents unavailable",
+      cookedWeight: "Cooked weight",
+      unknownWeight: "Cooked weight unknown",
+      ingredients: "Ingredients",
+    },
+    items: {
       previousPage: "Previous items",
       nextPage: "Next items",
       itemRange: (first: number, last: number, total: number) =>
         `Items ${first}–${last} of ${total}`,
-      offset: "Recorded UTC offset",
-      missingOffset: "Offset unavailable",
       unknownEnergy: "Energy unknown",
     },
     kinds: {
@@ -94,12 +104,20 @@ const copy = {
     meal: {
       unavailable: "Mahlzeit nicht verfügbar",
       empty: "Diese Mahlzeit enthält keine Einträge.",
+      offset: "Erfasste UTC-Abweichung",
+      missingOffset: "UTC-Abweichung nicht verfügbar",
+    },
+    recipe: {
+      unavailable: "Rezept nicht verfügbar",
+      cookedWeight: "Gewicht nach dem Kochen",
+      unknownWeight: "Gewicht nach dem Kochen unbekannt",
+      ingredients: "Zutaten",
+    },
+    items: {
       previousPage: "Vorherige Einträge",
       nextPage: "Nächste Einträge",
       itemRange: (first: number, last: number, total: number) =>
         `Einträge ${first}–${last} von ${total}`,
-      offset: "Erfasste UTC-Abweichung",
-      missingOffset: "UTC-Abweichung nicht verfügbar",
       unknownEnergy: "Energie unbekannt",
     },
     kinds: {
@@ -219,6 +237,23 @@ export function SyncBlockerScreen({
                   language={language}
                 />
               </>
+            ) : issue.recipe ? (
+              <>
+                <RecipeSide
+                  key={`${generation}-${position}-phone`}
+                  title={words.weighIn.phone}
+                  side={issue.recipe.phone}
+                  locale={locale}
+                  language={language}
+                />
+                <RecipeSide
+                  key={`${generation}-${position}-account`}
+                  title={words.weighIn.account}
+                  side={issue.recipe.account}
+                  locale={locale}
+                  language={language}
+                />
+              </>
             ) : (
               <Text style={styles.meta}>{words[issue.operation]}</Text>
             )}
@@ -328,7 +363,6 @@ function MealSide({
   language: Language;
 }) {
   const words = copy[language];
-  const [page, setPage] = useState(0);
   const heading = (
     <Text accessibilityRole="header" style={styles.title}>
       {title}
@@ -347,15 +381,6 @@ function MealSide({
 
   const { meal } = side;
   const offset = meal.utcOffsetMinutes;
-  const formatQuantity = reviewQuantityFormatter(locale);
-  const { items, total, start, end } = mealReviewPage(meal.items, page);
-  function changePage(next: number) {
-    setPage(next);
-    const nextPage = mealReviewPage(meal.items, next);
-    AccessibilityInfo.announceForAccessibility(
-      `${title}. ${words.meal.itemRange(nextPage.start + 1, nextPage.end, total)}`,
-    );
-  }
   return (
     <View>
       {heading}
@@ -369,30 +394,115 @@ function MealSide({
       <Text style={styles.body}>
         {offset === undefined ? words.meal.missingOffset : formatUtcOffset(offset)}
       </Text>
-      {total === 0 && <Text style={styles.meta}>{words.meal.empty}</Text>}
+      {meal.items.length ? (
+        <CapturedItems title={title} entries={meal.items} locale={locale} language={language} />
+      ) : (
+        <Text style={styles.meta}>{words.meal.empty}</Text>
+      )}
+    </View>
+  );
+}
+
+function RecipeSide({
+  title,
+  side,
+  locale,
+  language,
+}: {
+  title: string;
+  side: RecipeReviewSide;
+  locale: string;
+  language: Language;
+}) {
+  const words = copy[language];
+  const heading = (
+    <Text accessibilityRole="header" style={styles.title}>
+      {title}
+    </Text>
+  );
+  if (side.state !== "live") {
+    return (
+      <View>
+        {heading}
+        <Text style={styles.meta}>
+          {side.state === "unavailable" ? words.recipe.unavailable : words.weighIn[side.state]}
+        </Text>
+      </View>
+    );
+  }
+  const { recipe } = side;
+  const formatQuantity = reviewQuantityFormatter(locale);
+  return (
+    <View>
+      {heading}
+      <Text style={styles.body}>{recipe.name}</Text>
+      <Text style={styles.meta}>
+        {strings[language].recipeServings(formatQuantity(recipe.servings), recipe.servings)}
+      </Text>
+      <Text style={styles.meta}>{words.recipe.cookedWeight}</Text>
+      <Text style={styles.body}>
+        {recipe.cookedWeightG === undefined
+          ? words.recipe.unknownWeight
+          : `${formatQuantity(recipe.cookedWeightG)} g`}
+      </Text>
+      <Text style={styles.meta}>{words.recipe.ingredients}</Text>
+      <CapturedItems
+        title={title}
+        entries={recipe.ingredients}
+        locale={locale}
+        language={language}
+      />
+    </View>
+  );
+}
+
+function CapturedItems({
+  title,
+  entries,
+  locale,
+  language,
+}: {
+  title: string;
+  entries: readonly DiaryItem[];
+  locale: string;
+  language: Language;
+}) {
+  const words = copy[language].items;
+  const [page, setPage] = useState(0);
+  const formatQuantity = reviewQuantityFormatter(locale);
+  const { items, total, start, end } = reviewItemPage(entries, page);
+  function changePage(next: number) {
+    setPage(next);
+    const nextPage = reviewItemPage(entries, next);
+    AccessibilityInfo.announceForAccessibility(
+      `${title}. ${words.itemRange(nextPage.start + 1, nextPage.end, total)}`,
+    );
+  }
+  return (
+    <>
       {(start > 0 || end < total) && (
         <>
-          <Text style={styles.meta}>{words.meal.itemRange(start + 1, end, total)}</Text>
+          <Text style={styles.meta}>{words.itemRange(start + 1, end, total)}</Text>
           <View style={styles.row}>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: start === 0 }}
-              accessibilityLabel={`${title}. ${words.meal.previousPage}`}
+              accessibilityLabel={`${title}. ${words.previousPage}`}
               disabled={start === 0}
               onPress={() => changePage(page - 1)}
               style={[styles.action, styles.stretch, start === 0 && styles.faded]}
             >
-              <Text style={styles.actionText}>{words.meal.previousPage}</Text>
+              <Text style={styles.actionText}>{words.previousPage}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: end === total }}
-              accessibilityLabel={`${title}. ${words.meal.nextPage}`}
+              accessibilityLabel={`${title}. ${words.nextPage}`}
               disabled={end === total}
               onPress={() => changePage(page + 1)}
               style={[styles.action, styles.stretch, end === total && styles.faded]}
             >
-              <Text style={styles.actionText}>{words.meal.nextPage}</Text>
+              <Text style={styles.actionText}>{words.nextPage}</Text>
             </Pressable>
           </View>
         </>
@@ -405,7 +515,7 @@ function MealSide({
             {portion.unit === "portion" ? strings[language].portion : portion.unit}
             {" · "}
             {nutrients.kcal === null
-              ? words.meal.unknownEnergy
+              ? words.unknownEnergy
               : `${formatQuantity(nutrients.kcal)} kcal`}
           </Text>
           <Text style={styles.meta}>
@@ -419,7 +529,7 @@ function MealSide({
           </Text>
         </View>
       ))}
-    </View>
+    </>
   );
 }
 
