@@ -12,7 +12,6 @@ import {
   macros,
   Notice,
   nutrientValue,
-  PrimaryButton,
   Ring,
   showDay,
   styles,
@@ -33,8 +32,6 @@ export function TodayScreen({
   syncNotice,
   onDay,
   onWeek,
-  onAdd,
-  onProgress,
   onEdit,
   onSaveMeal,
   onRetry,
@@ -51,8 +48,6 @@ export function TodayScreen({
   syncNotice: ReactNode;
   onDay: (day: string) => void;
   onWeek: (offset: number) => void;
-  onAdd?: () => void;
-  onProgress: () => void;
   onEdit: (mealId: string, itemId: string) => void;
   onSaveMeal: (meal: DiaryMeal) => void;
   onRetry: () => void;
@@ -223,14 +218,6 @@ export function TodayScreen({
           </>
         )}
       </ScrollView>
-      <View style={[styles.footer, styles.row]}>
-        <View style={styles.stretch}>
-          {onAdd && <PrimaryButton title={`+  ${t.addFood}`} onPress={onAdd} />}
-        </View>
-        <Pressable accessibilityRole="button" style={styles.action} onPress={onProgress}>
-          <Text style={styles.actionText}>{t.progress}</Text>
-        </Pressable>
-      </View>
     </>
   );
 }

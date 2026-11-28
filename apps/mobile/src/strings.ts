@@ -1,6 +1,8 @@
 export const strings = {
   en: {
     today: "Today",
+    foods: "Foods",
+    profile: "Profile",
     previousWeek: "Previous week",
     nextWeek: "Next week",
     logged: "Logged",
@@ -180,6 +182,8 @@ export const strings = {
   },
   de: {
     today: "Heute",
+    foods: "Lebensmittel",
+    profile: "Profil",
     previousWeek: "Vorherige Woche",
     nextWeek: "Nächste Woche",
     logged: "Erfasst",

@@ -55,10 +55,12 @@ import { FavoriteFoodList } from "./src/favorite-food-list";
 import { foodKey } from "./src/favorite-foods";
 import { FddbImportScreen } from "./src/fddb-import-screen";
 import { FoodDetail } from "./src/food-detail";
+import { type HomeTab, HomeTabs } from "./src/home-tabs";
 import { openLocalCatalog } from "./src/local-catalog";
 import { openLocalDiary } from "./src/local-diary";
 import { openLocalPackagedCache } from "./src/local-packaged-cache";
 import { type MealTemplateOption, mealTemplateOptions } from "./src/meal-template-form";
+import { ProfileScreen } from "./src/profile";
 import { ProgressScreen } from "./src/progress";
 import { type ProgressRange, recentWeightEnd, weightWindowStart } from "./src/progress-data";
 import { RecipeEditor } from "./src/recipe-editor";
@@ -75,18 +77,24 @@ import { useDatabase } from "./src/use-database";
 import { WeighInScreen } from "./src/weigh-in";
 
 type LocalDiary = Awaited<ReturnType<typeof openLocalDiary>>;
-type SearchContext = EntryTime & { query: string };
+type SearchContext = EntryTime & {
+  query: string;
+  fromFoodsTab?: boolean;
+  returnToTab?: HomeTab;
+};
 type FoodSelection = SearchContext & { food: Food; fromCustomFoods?: boolean };
 type DeviceContext = { today: string; language: Language; locale: string };
+type SettingsParent = "progress" | "profile";
 type Route =
   | { kind: "diary" }
   | { kind: "sync-blockers"; returnTo: "diary" | "progress" }
   | { kind: "progress" }
+  | { kind: "profile" }
   | { kind: "weigh-in" }
-  | { kind: "targets" }
+  | { kind: "targets"; returnTo: SettingsParent }
   | { kind: "save-meal-template"; day: string; templateId: string; options: MealTemplateOption[] }
-  | { kind: "archive" }
-  | { kind: "fddb-import" }
+  | { kind: "archive"; returnTo: SettingsParent }
+  | { kind: "fddb-import"; returnTo: SettingsParent }
   | ({ kind: "search" } & SearchContext)
   | ({ kind: "barcode"; state: BarcodeState } & SearchContext)
   | ({ kind: "my-foods" } & SearchContext)
@@ -269,33 +277,50 @@ function DiaryApp({
     if (route.kind === "diary") return false;
     Keyboard.dismiss();
     if (route.kind === "add" || route.kind === "revalidate-packaged") {
-      const { day, occurredAt, utcOffsetMinutes, query, fromCustomFoods } = route;
+      const {
+        day,
+        occurredAt,
+        utcOffsetMinutes,
+        query,
+        fromCustomFoods,
+        fromFoodsTab,
+        returnToTab,
+      } = route;
       const barcode = route.kind === "add" ? route.barcode : undefined;
-      const context = { day, occurredAt, utcOffsetMinutes, query };
+      const context = { day, occurredAt, utcOffsetMinutes, query, fromFoodsTab, returnToTab };
       setRoute(
         barcode
           ? { ...context, kind: "barcode", state: barcode }
           : { ...context, kind: fromCustomFoods ? "my-foods" : "search" },
       );
+    } else if (route.kind === "my-foods" && route.fromFoodsTab) {
+      setRoute({ kind: "diary" });
+    } else if (route.kind === "search" && route.returnToTab) {
+      if (route.returnToTab === "my-foods") startFoodFlow("my-foods");
+      else setRoute({ kind: route.returnToTab });
     } else if (
       route.kind === "barcode" ||
       route.kind === "my-foods" ||
       route.kind === "custom-food" ||
       route.kind === "recipe"
     ) {
-      const { day, occurredAt, utcOffsetMinutes, query } = route;
+      const { day, occurredAt, utcOffsetMinutes, query, fromFoodsTab, returnToTab } = route;
       setRoute({
         kind: route.kind === "custom-food" || route.kind === "recipe" ? "my-foods" : "search",
         day,
         occurredAt,
         utcOffsetMinutes,
         query,
+        fromFoodsTab,
+        returnToTab,
       });
     } else if (route.kind === "fddb-import") {
-      setRoute({ kind: "archive" });
+      setRoute({ kind: "archive", returnTo: route.returnTo });
     } else if (route.kind === "sync-blockers") {
       setRoute({ kind: route.returnTo });
-    } else if (route.kind === "weigh-in" || route.kind === "targets" || route.kind === "archive") {
+    } else if (route.kind === "targets" || route.kind === "archive") {
+      setRoute({ kind: route.returnTo });
+    } else if (route.kind === "weigh-in") {
       setRoute({ kind: "progress" });
     } else {
       setRoute({ kind: "diary" });
@@ -313,57 +338,80 @@ function DiaryApp({
     setFeedback(null);
   }
 
-  if (route.kind === "diary") {
+  function startFoodFlow(kind: "search" | "my-foods", returnToTab?: HomeTab) {
+    catalog.start();
+    packagedCache.start();
+    setFeedback(null);
+    const loggingDay = kind === "search" && route.kind === "diary" ? selectedDay : null;
+    const context = { ...entryTime(loggingDay, new Date()), query: "" };
+    setRoute(
+      kind === "my-foods"
+        ? { ...context, kind, fromFoodsTab: true }
+        : { ...context, kind, returnToTab },
+    );
+  }
+
+  function homeTabs(active: HomeTab) {
     return (
-      <TodayScreen
+      <HomeTabs
+        active={active}
         t={t}
-        locale={locale}
-        today={today}
-        lastDay={lastDay}
-        day={day}
-        week={week}
-        meals={meals}
-        kcalTarget={readTarget(diary, day)?.target.kcal ?? null}
-        feedback={feedback?.day === day ? t[feedback.kind] : null}
-        syncNotice={syncNotice}
-        onDay={chooseDay}
-        onWeek={(offset) => {
-          const next = addDays(day, offset);
-          const withinDiary = next <= lastDay;
-          chooseDay(withinDiary ? next : lastDay);
-        }}
-        onAdd={
-          day <= today
-            ? () => {
-                catalog.start();
-                packagedCache.start();
-                setFeedback(null);
-                setRoute({ kind: "search", ...entryTime(selectedDay, new Date()), query: "" });
-              }
-            : undefined
+        onLog={
+          route.kind === "diary" && day > today ? undefined : () => startFoodFlow("search", active)
         }
-        onProgress={() => {
-          setSavedWeightDay(null);
-          setRoute({ kind: "progress" });
-        }}
-        onEdit={(mealId, itemId) => {
-          const meal = meals?.find((entry) => entry.id === mealId);
-          const item = meal?.items.find((entry) => entry.id === itemId);
-          if (meal && item) {
-            setFeedback(null);
-            setRoute({ kind: "edit", day: meal.localDay, mealId, itemId, item });
+        onTab={(tab) => {
+          if (tab === active) return;
+          if (tab === "my-foods") {
+            startFoodFlow(tab);
+          } else {
+            if (tab === "progress") setSavedWeightDay(null);
+            setRoute({ kind: tab });
           }
         }}
-        onSaveMeal={(meal) =>
-          setRoute({
-            kind: "save-meal-template",
-            day: meal.localDay,
-            templateId: randomUUID(),
-            options: mealTemplateOptions(meal, meals ?? []),
-          })
-        }
-        onRetry={() => setRefresh((revision) => revision + 1)}
       />
+    );
+  }
+
+  if (route.kind === "diary") {
+    return (
+      <>
+        <TodayScreen
+          t={t}
+          locale={locale}
+          today={today}
+          lastDay={lastDay}
+          day={day}
+          week={week}
+          meals={meals}
+          kcalTarget={readTarget(diary, day)?.target.kcal ?? null}
+          feedback={feedback?.day === day ? t[feedback.kind] : null}
+          syncNotice={syncNotice}
+          onDay={chooseDay}
+          onWeek={(offset) => {
+            const next = addDays(day, offset);
+            const withinDiary = next <= lastDay;
+            chooseDay(withinDiary ? next : lastDay);
+          }}
+          onEdit={(mealId, itemId) => {
+            const meal = meals?.find((entry) => entry.id === mealId);
+            const item = meal?.items.find((entry) => entry.id === itemId);
+            if (meal && item) {
+              setFeedback(null);
+              setRoute({ kind: "edit", day: meal.localDay, mealId, itemId, item });
+            }
+          }}
+          onSaveMeal={(meal) =>
+            setRoute({
+              kind: "save-meal-template",
+              day: meal.localDay,
+              templateId: randomUUID(),
+              options: mealTemplateOptions(meal, meals ?? []),
+            })
+          }
+          onRetry={() => setRefresh((revision) => revision + 1)}
+        />
+        {homeTabs("diary")}
+      </>
     );
   }
 
@@ -380,23 +428,38 @@ function DiaryApp({
 
   if (route.kind === "progress") {
     return (
-      <ProgressScreen
-        diary={diary}
-        today={today}
-        locale={locale}
-        t={t}
-        range={progressRange}
-        savedDay={savedWeightDay}
-        syncNotice={syncNotice}
-        onRange={setProgressRange}
-        onBack={goBack}
-        onTargets={() => setRoute({ kind: "targets" })}
-        onArchive={() => setRoute({ kind: "archive" })}
-        onWeight={() => {
-          setSavedWeightDay(null);
-          setRoute({ kind: "weigh-in" });
-        }}
-      />
+      <>
+        <ProgressScreen
+          diary={diary}
+          today={today}
+          locale={locale}
+          t={t}
+          range={progressRange}
+          savedDay={savedWeightDay}
+          syncNotice={syncNotice}
+          onRange={setProgressRange}
+          onBack={goBack}
+          onTargets={() => setRoute({ kind: "targets", returnTo: "progress" })}
+          onArchive={() => setRoute({ kind: "archive", returnTo: "progress" })}
+          onWeight={() => {
+            setSavedWeightDay(null);
+            setRoute({ kind: "weigh-in" });
+          }}
+        />
+        {homeTabs("progress")}
+      </>
+    );
+  }
+  if (route.kind === "profile") {
+    return (
+      <>
+        <ProfileScreen
+          t={t}
+          onTargets={() => setRoute({ kind: "targets", returnTo: "profile" })}
+          onDiaryFiles={() => setRoute({ kind: "archive", returnTo: "profile" })}
+        />
+        {homeTabs("profile")}
+      </>
     );
   }
   if (route.kind === "archive") {
@@ -405,7 +468,7 @@ function DiaryApp({
         t={t}
         archive={diary}
         onBack={goBack}
-        onFddbImport={() => setRoute({ kind: "fddb-import" })}
+        onFddbImport={() => setRoute({ kind: "fddb-import", returnTo: route.returnTo })}
       />
     );
   }
@@ -456,7 +519,7 @@ function DiaryApp({
             mode,
             target,
           });
-          setRoute({ kind: "progress" });
+          setRoute({ kind: route.returnTo });
         }}
       />
     );
@@ -543,95 +606,98 @@ function DiaryApp({
       // An unavailable template collection should leave other library items usable.
     }
     return (
-      <CustomFoodList
-        t={t}
-        locale={locale}
-        date={date}
-        foods={foods}
-        favorites={
-          favorites === null ? (
-            <Notice
-              text={t.favoriteListError}
-              action={{ label: t.retry, onPress: () => setRefresh((revision) => revision + 1) }}
-            />
-          ) : favorites.length ? (
-            <FavoriteFoodList
+      <>
+        <CustomFoodList
+          t={t}
+          locale={locale}
+          date={date}
+          foods={foods}
+          favorites={
+            favorites === null ? (
+              <Notice
+                text={t.favoriteListError}
+                action={{ label: t.retry, onPress: () => setRefresh((revision) => revision + 1) }}
+              />
+            ) : favorites.length ? (
+              <FavoriteFoodList
+                t={t}
+                ids={favorites}
+                localFoods={foods}
+                recipeFoods={recipes?.map(foodForRecipe) ?? null}
+                catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
+                cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
+                diary={diary}
+                today={today}
+                language={language}
+                onPick={(food) => pickFood(route, food, true)}
+                onRemove={(id) => setFavorite(id, false)}
+                onRetry={(provider) => {
+                  if (provider === "bls") catalog.retry();
+                  if (provider === "open-food-facts") packagedCache.retry();
+                  setRefresh((revision) => revision + 1);
+                }}
+              />
+            ) : undefined
+          }
+          savedMeals={
+            <SavedMealList
               t={t}
-              ids={favorites}
-              localFoods={foods}
-              recipeFoods={recipes?.map(foodForRecipe) ?? null}
-              catalog={catalog.value === "error" ? "error" : (catalog.value?.db ?? null)}
-              cache={packagedCache.value === "error" ? "error" : (cachedProducts ?? null)}
-              diary={diary}
-              today={today}
-              language={language}
-              onPick={(food) => pickFood(route, food, true)}
-              onRemove={(id) => setFavorite(id, false)}
-              onRetry={(provider) => {
-                if (provider === "bls") catalog.retry();
-                if (provider === "open-food-facts") packagedCache.retry();
+              locale={locale}
+              templates={templates}
+              onRetry={() => setRefresh((revision) => revision + 1)}
+              onLog={(template) => {
+                const meal = mealFromTemplate(
+                  template,
+                  {
+                    id: randomUUID(),
+                    localDay: route.day,
+                    occurredAt: route.occurredAt,
+                    utcOffsetMinutes: route.utcOffsetMinutes,
+                  },
+                  randomUUID,
+                );
+                diary.saveMeal(meal);
+                setSelectedDay(meal.localDay === localDay(new Date()) ? null : meal.localDay);
+                setFeedback({ day: meal.localDay, kind: "saved" });
                 setRefresh((revision) => revision + 1);
+                setRoute({ kind: "diary" });
               }}
             />
-          ) : undefined
-        }
-        savedMeals={
-          <SavedMealList
-            t={t}
-            locale={locale}
-            templates={templates}
-            onRetry={() => setRefresh((revision) => revision + 1)}
-            onLog={(template) => {
-              const meal = mealFromTemplate(
-                template,
-                {
-                  id: randomUUID(),
-                  localDay: route.day,
-                  occurredAt: route.occurredAt,
-                  utcOffsetMinutes: route.utcOffsetMinutes,
-                },
-                randomUUID,
-              );
-              diary.saveMeal(meal);
-              setSelectedDay(meal.localDay === localDay(new Date()) ? null : meal.localDay);
-              setFeedback({ day: meal.localDay, kind: "saved" });
-              setRefresh((revision) => revision + 1);
-              setRoute({ kind: "diary" });
-            }}
-          />
-        }
-        recipes={
-          <RecipeList
-            t={t}
-            locale={locale}
-            recipes={recipes}
-            onCreate={() =>
-              setRoute({ ...route, kind: "recipe", current: null, recipeId: randomUUID() })
-            }
-            onEdit={(current) =>
-              setRoute({ ...route, kind: "recipe", current, recipeId: current.id })
-            }
-            onRetry={() => setRefresh((revision) => revision + 1)}
-            onPick={(recipe) =>
-              setRoute({
-                ...route,
-                kind: "add",
-                food: foodForRecipe(recipe),
-                fromCustomFoods: true,
-              })
-            }
-          />
-        }
-        onBack={goBack}
-        onCreate={() =>
-          setRoute({ ...route, kind: "custom-food", current: null, sourceId: randomUUID() })
-        }
-        onEdit={(current) =>
-          setRoute({ ...route, kind: "custom-food", current, sourceId: current.id.sourceId })
-        }
-        onPick={(food) => setRoute({ ...route, kind: "add", food, fromCustomFoods: true })}
-        onRetry={() => setRefresh((revision) => revision + 1)}
-      />
+          }
+          recipes={
+            <RecipeList
+              t={t}
+              locale={locale}
+              recipes={recipes}
+              onCreate={() =>
+                setRoute({ ...route, kind: "recipe", current: null, recipeId: randomUUID() })
+              }
+              onEdit={(current) =>
+                setRoute({ ...route, kind: "recipe", current, recipeId: current.id })
+              }
+              onRetry={() => setRefresh((revision) => revision + 1)}
+              onPick={(recipe) =>
+                setRoute({
+                  ...route,
+                  kind: "add",
+                  food: foodForRecipe(recipe),
+                  fromCustomFoods: true,
+                })
+              }
+            />
+          }
+          onBack={goBack}
+          onCreate={() =>
+            setRoute({ ...route, kind: "custom-food", current: null, sourceId: randomUUID() })
+          }
+          onEdit={(current) =>
+            setRoute({ ...route, kind: "custom-food", current, sourceId: current.id.sourceId })
+          }
+          onPick={(food) => setRoute({ ...route, kind: "add", food, fromCustomFoods: true })}
+          onRetry={() => setRefresh((revision) => revision + 1)}
+        />
+        {route.fromFoodsTab && homeTabs("my-foods")}
+      </>
     );
   }
   if (route.kind === "recipe") {
