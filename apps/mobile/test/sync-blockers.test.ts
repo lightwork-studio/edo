@@ -204,6 +204,16 @@ it("shows the latest phone change and account weigh-in without opaque or identit
   expect(readSyncBlocker(journal, null)).toMatchObject({
     weighIn: { account: { state: "unavailable" } },
   });
+  db.prepare(
+    "UPDATE edo_sync_outbox SET content = json_set(content, '$.blocked.result.current', json(?))",
+  ).run(JSON.stringify({ ...key, revision: 2, state: "unavailable" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "live", ...visible, kg: 83 } },
+  });
+  setAccount.run(2, JSON.stringify({ ...key, revision: 2, state: "deleted" }));
+  expect(readSyncBlocker(journal, null)).toMatchObject({
+    weighIn: { account: { state: "unavailable" } },
+  });
   setAccount.run(3, JSON.stringify({ ...key, revision: 3, state: "deleted" }));
   expect(readSyncBlocker(journal, null)).toMatchObject({
     weighIn: { account: { state: "deleted" } },

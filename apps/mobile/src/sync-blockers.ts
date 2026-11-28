@@ -68,9 +68,11 @@ function latestAccountWeighIn(review: Review, id: string): WeighInReviewSide {
   const latest = !reported || (pulled && pulled.revision >= reported.revision) ? pulled : reported;
   if (!latest || latest.revision < (review.baseRevision ?? 0)) return { state: "unknown" };
   const side = accountWeighIn(latest, id);
+  // A receipt can omit a live copy that the account subsequently sends on pull.
   if (
     reported &&
     pulled?.revision === reported.revision &&
+    !(reported.state === "unavailable" && side.state === "live") &&
     JSON.stringify(side) !== JSON.stringify(accountWeighIn(reported, id))
   ) {
     return { state: "unavailable" };

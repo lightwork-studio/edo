@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ComponentRef, useRef, useState } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-native";
 import { type Language, strings } from "./strings";
 import {
@@ -124,25 +124,28 @@ export function SyncBlockerScreen({
   onBack: () => void;
 }) {
   const words = copy[language];
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const [{ issue, position }, setReview] = useState(() => ({
     issue: readSyncBlocker(journal, null),
     position: 1,
   }));
   function restart() {
     const first = readSyncBlocker(journal, null);
+    scroll.current?.scrollTo({ y: 0, animated: false });
     setReview({ issue: first, position: 1 });
     if (first.state !== "empty") AccessibilityInfo.announceForAccessibility(words.position(1));
   }
   function next() {
     if (!issue.next) return;
     const nextPosition = position + 1;
+    scroll.current?.scrollTo({ y: 0, animated: false });
     setReview({ issue: readSyncBlocker(journal, issue.next), position: nextPosition });
     AccessibilityInfo.announceForAccessibility(words.position(nextPosition));
   }
   return (
     <>
       <DetailHeader title={words.title} back={strings[language].back} onBack={onBack} />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} ref={scroll}>
         {issue.state === "blocked" ? (
           <View style={styles.card}>
             <Text style={styles.meta}>{words.position(position)}</Text>
@@ -199,6 +202,7 @@ function WeighInSide({
   locale: string;
   words: (typeof copy)[Language]["weighIn"];
 }) {
+  const recorded = side.state === "live" ? new Date(side.occurredAt) : null;
   return (
     <View>
       <Text accessibilityRole="header" style={styles.title}>
@@ -215,24 +219,28 @@ function WeighInSide({
           </Text>
           <Text style={styles.meta}>{words.localDay}</Text>
           <Text style={styles.body}>
-            {new Intl.DateTimeFormat(locale, {
-              dateStyle: "medium",
-              timeZone: "UTC",
-            }).format(new Date(`${side.localDay}T00:00:00.000Z`))}
+            {side.localDay.startsWith("0000-")
+              ? side.localDay
+              : new Intl.DateTimeFormat(locale, {
+                  dateStyle: "medium",
+                  timeZone: "UTC",
+                }).format(new Date(`${side.localDay}T00:00:00.000Z`))}
           </Text>
           <Text style={styles.meta}>{words.instant}</Text>
           <Text style={styles.body}>
-            {new Intl.DateTimeFormat(locale, {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-              second: "2-digit",
-              ...(side.occurredAt % 1000 !== 0 && { fractionalSecondDigits: 3 }),
-              timeZone: "UTC",
-              timeZoneName: "short",
-            }).format(side.occurredAt)}
+            {recorded && recorded.getUTCFullYear() <= 0
+              ? recorded.toISOString()
+              : new Intl.DateTimeFormat(locale, {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                  second: "2-digit",
+                  ...(side.occurredAt % 1000 !== 0 && { fractionalSecondDigits: 3 }),
+                  timeZone: "UTC",
+                  timeZoneName: "short",
+                }).format(side.occurredAt)}
           </Text>
         </>
       ) : (
