@@ -192,11 +192,22 @@ function reserveLocalEdit(db: JournalSqlite, key: RecordKey, submissionId: strin
 
 type ProjectedEdit = { op: "put"; content: unknown } | { op: "delete" };
 
+export interface RemoteProjectionContext {
+  trackedRecord(key: RecordKey): OutboxRecord | null;
+}
+
+type RemoteWriter = (change: Change, context: RemoteProjectionContext) => undefined | "deferred";
+
+interface RemoteProjectionOptions {
+  readonly validate?: (change: Change) => undefined;
+  readonly deferredKind?: string;
+}
+
 function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
 }
 
-function requireSynchronousWrite(result: undefined): void {
+function requireSynchronousWrite(result: unknown): void {
   if (result !== undefined) throw new TypeError("Diary writes must complete synchronously");
 }
 
@@ -216,6 +227,58 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
 
   function inspect<T>(operation: () => T): T {
     return requireCurrentStorage ? transact(operation, "BEGIN") : operation();
+  }
+
+  const projectionContext: RemoteProjectionContext = {
+    trackedRecord(key) {
+      const row = db.get(
+        "SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?",
+        key.kind,
+        key.id,
+      );
+      return row ? storedRecord(row).record : null;
+    },
+  };
+
+  function project(
+    change: Change,
+    writer: RemoteWriter,
+    options: RemoteProjectionOptions,
+  ): boolean {
+    const result = writer(change, projectionContext);
+    if (change.kind === options.deferredKind && result === "deferred") return false;
+    requireSynchronousWrite(result);
+    return true;
+  }
+
+  function retryProjections(writer: RemoteWriter, options: RemoteProjectionOptions): void {
+    if (!options.deferredKind) return;
+    let progressed: boolean;
+    do {
+      progressed = false;
+      // A server copy ahead of its idle local projection is also the durable retry record.
+      const rows = db.all(
+        `SELECT remote.content FROM edo_sync_remote AS remote
+        JOIN edo_sync_outbox AS local ON local.kind = remote.kind AND local.id = remote.id
+        WHERE remote.kind = ? AND local.attempt_id IS NULL
+          AND json_type(local.content, '$.pending') = 'null'
+          AND json_type(local.content, '$.blocked') = 'null'
+          AND json_extract(remote.content, '$.state') IN ('live', 'deleted')
+          AND remote.revision >= coalesce(json_extract(local.content, '$.baseRevision'), 0)
+          AND remote.revision > coalesce(json_extract(local.content, '$.base.revision'), 0)
+        ORDER BY remote.revision`,
+        options.deferredKind,
+      );
+      for (const row of rows) {
+        if (typeof row.content !== "string") throw new Error("Stored remote projection is invalid");
+        const change = decodeChange(JSON.parse(row.content));
+        if (!isKnownRecordKind(change.kind)) continue;
+        if (project(change, writer, options)) {
+          saveRecord(db, createOutboxRecord(change, change));
+          progressed = true;
+        }
+      }
+    } while (progressed);
   }
 
   function checkSession(session: NegotiatedSync) {
@@ -351,14 +414,24 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     applyResults(
       session: NegotiatedSync,
       response: PushResponse,
-      applyRemote: (change: Change) => undefined,
+      applyRemote: RemoteWriter,
+      options: RemoteProjectionOptions = {},
     ) {
       return transact(() => {
         const binding = checkSession(session);
         assertResponseSession(response, session);
+        let reported = binding.revision;
+        const results = response.results.map(decodeSubmissionResult);
+        for (const result of results) {
+          if (result.status === "accepted") reported = Math.max(reported, result.revision);
+          if (result.status === "conflict" && result.current) {
+            reported = Math.max(reported, result.current.revision);
+          }
+        }
+        // An older staged copy may still precede an unseen change to another meal.
+        const caughtUp = !options.deferredKind || binding.cursor >= reported;
         let revision = binding.revision;
-        for (const outcome of response.results) {
-          const result = decodeSubmissionResult(outcome);
+        for (const result of results) {
           const row = db.get(
             "SELECT * FROM edo_sync_outbox WHERE attempt_id = ?",
             result.submissionId,
@@ -389,9 +462,10 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           if (
             remote &&
             remote.state !== "unavailable" &&
-            remote.revision >= (next.baseRevision ?? 0)
+            remote.revision >= (next.baseRevision ?? 0) &&
+            caughtUp &&
+            project(remote, applyRemote, options)
           ) {
-            requireSynchronousWrite(applyRemote(remote));
             saveRecord(db, createOutboxRecord(remote, remote));
           } else {
             saveRecord(db, next, release);
@@ -402,6 +476,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           if (result.status === "conflict" && result.current)
             revision = Math.max(revision, result.current.revision);
         }
+        if (caughtUp) retryProjections(applyRemote, options);
         db.run("UPDATE edo_sync_binding SET observed_revision = ?", revision);
       });
     },
@@ -409,7 +484,8 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       session: NegotiatedSync,
       requestCursor: number,
       input: PullResponse,
-      applyRemote: (change: Change) => undefined,
+      applyRemote: RemoteWriter,
+      options: RemoteProjectionOptions = {},
     ) {
       assertResponseSession(input, session, requestCursor);
       const page = decodePullResponse(
@@ -422,6 +498,13 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         if (binding.cursor !== requestCursor)
           throw new Error("The pull cursor changed before the page was saved");
         for (const change of page.changes) {
+          if (
+            options.validate &&
+            change.state !== "unavailable" &&
+            isKnownRecordKind(change.kind)
+          ) {
+            requireSynchronousWrite(options.validate(change));
+          }
           const { record, release } = localRecord(db, change);
           db.run(
             `INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)
@@ -440,13 +523,19 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
             continue;
           }
           if (change.revision < (record.baseRevision ?? 0)) continue;
-          requireSynchronousWrite(applyRemote(change));
-          saveRecord(db, createOutboxRecord(change, change));
+          if (project(change, applyRemote, options))
+            saveRecord(db, createOutboxRecord(change, change));
+          else saveRecord(db, record, release);
         }
+        if (!page.hasMore && page.cursor >= binding.revision) {
+          retryProjections(applyRemote, options);
+        }
+        const observed = page.hasMore && options.deferredKind ? page.cursor + 1 : page.cursor;
+        if (!Number.isSafeInteger(observed)) throw new Error("Invalid next pull revision");
         db.run(
           "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
           page.cursor,
-          page.cursor,
+          observed,
         );
       });
     },

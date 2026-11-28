@@ -120,6 +120,9 @@ importers:
 
   packages/storage:
     dependencies:
+      '@edo/contract':
+        specifier: workspace:*
+        version: link:../contract
       '@edo/core':
         specifier: workspace:*
         version: link:../core
