@@ -108,3 +108,23 @@ test("validates the entire extraction before issuing any catalog queries", async
   await expect(resolveBlsMealDraft(db, [], "de")).resolves.toEqual([]);
   expect(lookups).toBe(0);
 });
+
+test("uses the validated indexed batch when a caller provides an alternate iterator", async () => {
+  let lookups = 0;
+  const db: CatalogDatabase = {
+    async getAllAsync() {
+      lookups += 1;
+      return [];
+    },
+  };
+  const item = { name: "Apfel", portion: null, confidence: 1 };
+  const skipped = [item, null];
+  skipped[Symbol.iterator] = () => [item].values();
+  await expect(resolveBlsMealDraft(db, skipped, "de")).rejects.toThrow(TypeError);
+  expect(lookups).toBe(0);
+
+  const repeated = [item];
+  repeated[Symbol.iterator] = () => Array.from({ length: 17 }, () => item).values();
+  await expect(resolveBlsMealDraft(db, repeated, "de")).resolves.toHaveLength(1);
+  expect(lookups).toBe(1);
+});

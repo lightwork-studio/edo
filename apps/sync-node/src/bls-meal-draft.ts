@@ -102,11 +102,13 @@ export async function resolveBlsMealDraft(
   extraction: unknown,
   language: BlsSearchLanguage,
 ): Promise<BlsMealDraftItem[]> {
-  if (!Array.isArray(extraction) || extraction.length > maxDraftItems) {
+  if (!Array.isArray(extraction)) {
     throw new TypeError("Invalid extracted meal batch");
   }
+  const { length } = extraction;
+  if (length > maxDraftItems) throw new TypeError("Invalid extracted meal batch");
   // Validate the entire batch before a malformed item can initiate any catalog work.
-  const items = Array.from(extraction, readItem);
+  const items = Array.from({ length }, (_, index) => readItem(extraction[index]));
   return Promise.all(
     items.map(async (item) => ({ ...item, catalog: await catalogMatch(db, item.name, language) })),
   );
