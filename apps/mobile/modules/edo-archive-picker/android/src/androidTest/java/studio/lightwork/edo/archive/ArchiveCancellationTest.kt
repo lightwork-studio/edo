@@ -3,8 +3,7 @@ package studio.lightwork.edo.archive
 import android.content.res.AssetFileDescriptor
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
-import java.io.ByteArrayInputStream
-import java.io.FilterInputStream
+import java.io.FileInputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -19,20 +18,23 @@ class ArchiveCancellationTest {
   fun canceledPipeReleasesItsReaderWhileTheWriterRemainsOpen() {
     val worker = Executors.newSingleThreadExecutor()
     try {
-      repeat(2) {
+      for (openReadsFromPipe in listOf(false, true)) {
         val (pipeReader, pipeWriter) = ParcelFileDescriptor.createPipe()
         pipeWriter.use {
           val signal = CancellationSignal()
-          val descriptor = AssetFileDescriptor(pipeReader, 0, AssetFileDescriptor.UNKNOWN_LENGTH)
           val reading = CountDownLatch(1)
-          val input = object : FilterInputStream(descriptor.createInputStream()) {
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+          val descriptor = object : AssetFileDescriptor(
+            pipeReader, 0, AssetFileDescriptor.UNKNOWN_LENGTH,
+          ) {
+            override fun createInputStream(): FileInputStream {
+              val stream = super.createInputStream()
               reading.countDown()
-              return super.read(buffer, offset, length)
+              if (openReadsFromPipe) stream.read()
+              return stream
             }
           }
           val pending = worker.submit<Result<String?>> {
-            runCatching { readCancellableArchive(input, signal) }
+            runCatching { readCancellableArchive(descriptor, signal) }
           }
           assertTrue(reading.await(2, TimeUnit.SECONDS))
           assertThrows(TimeoutException::class.java) { pending.get(200, TimeUnit.MILLISECONDS) }
@@ -40,8 +42,11 @@ class ArchiveCancellationTest {
           assertTrue(pending.get(2, TimeUnit.SECONDS).isFailure)
         }
       }
+      val (pipeReader, pipeWriter) = ParcelFileDescriptor.createPipe()
+      ParcelFileDescriptor.AutoCloseOutputStream(pipeWriter).use { it.write("{}".toByteArray()) }
       val healthy = worker.submit<String?> {
-        readCancellableArchive(ByteArrayInputStream("{}".toByteArray()), CancellationSignal())
+        val descriptor = AssetFileDescriptor(pipeReader, 0, AssetFileDescriptor.UNKNOWN_LENGTH)
+        readCancellableArchive(descriptor, CancellationSignal())
       }
       assertEquals("{}", healthy.get(2, TimeUnit.SECONDS))
     } finally {
