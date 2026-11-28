@@ -19,6 +19,7 @@ export function ProfileScreen({
       <View style={[styles.card, local.card]}>
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel={t.nutritionTargets}
           onPress={onTargets}
           style={({ pressed }) => [styles.row, local.row, pressed && styles.pressed]}
         >
@@ -29,6 +30,7 @@ export function ProfileScreen({
         </Pressable>
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel={t.diaryFiles}
           onPress={onDiaryFiles}
           style={({ pressed }) => [styles.row, local.row, local.divider, pressed && styles.pressed]}
         >
