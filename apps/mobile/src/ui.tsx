@@ -198,6 +198,96 @@ export function Ring({
   );
 }
 
+export function TargetRing({
+  size,
+  color,
+  fraction,
+  children,
+}: {
+  size: number;
+  color: string;
+  fraction: number | undefined;
+  children: ReactNode;
+}) {
+  const rim = size >= 100 ? 13 : size >= 40 ? 4 : 3;
+  const circle = { width: size, height: size, borderRadius: size / 2, borderWidth: rim };
+  const amount = fraction ?? 0;
+  const radians = amount * 2 * Math.PI;
+  const radius = (size - rim) / 2;
+  const partial = amount > 0 && amount < 1;
+  return (
+    <View style={[ringStyles.shell, { width: size, height: size }]}>
+      <View
+        importantForAccessibility="no-hide-descendants"
+        accessibilityElementsHidden
+        style={StyleSheet.absoluteFill}
+      >
+        <View
+          style={[circle, ringStyles.paint, { borderColor: amount >= 1 ? color : colors.field }]}
+        />
+        {/* Each clipped half advances clockwise from its own start point. */}
+        {partial &&
+          [
+            { left: size / 2, offset: -size / 2, degrees: Math.min(amount, 0.5) * 360 - 135 },
+            ...(amount > 0.5 ? [{ left: 0, offset: 0, degrees: (amount - 0.5) * 360 + 45 }] : []),
+          ].map(({ left, offset, degrees }) => (
+            <View key={left} style={[ringStyles.clip, { left, width: size / 2, height: size }]}>
+              <View
+                style={[
+                  circle,
+                  ringStyles.paint,
+                  {
+                    left: offset,
+                    borderTopColor: color,
+                    borderRightColor: color,
+                    transform: [{ rotate: `${degrees}deg` }],
+                  },
+                ]}
+              />
+            </View>
+          ))}
+        {partial && (
+          <>
+            <View
+              style={[
+                ringStyles.cap,
+                {
+                  width: rim,
+                  height: rim,
+                  borderRadius: rim / 2,
+                  backgroundColor: color,
+                  left: radius,
+                },
+              ]}
+            />
+            <View
+              style={[
+                ringStyles.cap,
+                {
+                  width: rim,
+                  height: rim,
+                  borderRadius: rim / 2,
+                  backgroundColor: color,
+                  left: radius + Math.sin(radians) * radius,
+                  top: radius - Math.cos(radians) * radius,
+                },
+              ]}
+            />
+          </>
+        )}
+      </View>
+      {children}
+    </View>
+  );
+}
+
+const ringStyles = StyleSheet.create({
+  shell: { alignItems: "center", justifyContent: "center", padding: 3 },
+  paint: { position: "absolute", top: 0, left: 0, borderColor: "transparent" },
+  clip: { position: "absolute", top: 0, overflow: "hidden" },
+  cap: { position: "absolute", top: 0 },
+});
+
 export function displayNumber(value: number, locale: string, precision = 1): string {
   return new Intl.NumberFormat(locale, { maximumFractionDigits: precision }).format(value);
 }
