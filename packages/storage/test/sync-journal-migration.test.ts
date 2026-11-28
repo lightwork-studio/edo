@@ -497,6 +497,24 @@ test("recovers an in-flight v8 diary when the attempt observation migration is i
   ).rejects.toThrow("saved by a newer version of Edo");
 });
 
+test("checks for a temporary shadow before returning an opened diary", async () => {
+  const source = fixture();
+  const diary = await source.open();
+  const meal = {
+    id: "existing-meal",
+    localDay: "2026-11-04",
+    occurredAt: Date.UTC(2026, 10, 4, 18),
+    items: [],
+  };
+  diary.saveMeal(meal);
+
+  const opening = source.open();
+  source.sqlite.exec("CREATE TEMP VIEW diary_meals AS SELECT * FROM main.diary_meals WHERE 0");
+  await expect(opening).rejects.toThrow("Reopen the diary on a clean SQLite connection");
+  source.sqlite.exec("DROP VIEW temp.diary_meals");
+  expect((await source.open()).listMeals(meal.localDay)).toEqual([meal]);
+});
+
 test.each([
   {
     version: 1,
