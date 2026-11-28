@@ -9,6 +9,7 @@ from xml.etree import ElementTree
 APP = "studio.lightwork.edo"
 UI_DUMP = "/sdcard/edo-fddb-window.xml"
 CSV = "Edo-fddb-smoke.csv"
+TRUNCATED = "Edo-fddb-truncated.csv"
 
 
 def adb(*args):
@@ -65,14 +66,14 @@ def open_importer():
     find("Choose FDDB CSV")
 
 
-def choose_csv():
+def choose_csv(name=CSV):
     tap("Choose FDDB CSV")
-    label, node = find(CSV, "Show roots", "Open navigation drawer", "Downloads")
-    if label != CSV:
+    label, node = find(name, "Show roots", "Open navigation drawer", "Downloads")
+    if label != name:
         if label != "Downloads":
             tap_node(node)
             tap("Downloads")
-        _, node = find(CSV)
+        _, node = find(name)
     if node.get("enabled") != "true":
         raise AssertionError(f"Android reported the synthetic CSV as disabled: {node.attrib}")
     tap_node(node)
@@ -108,6 +109,12 @@ def run(directory):
     )
     adb("shell", "mkdir", "-p", "/sdcard/Download")
     adb("push", str(path), f"/sdcard/Download/{CSV}")
+    truncated = directory / TRUNCATED
+    truncated.write_text(
+        "\n".join([header, f"{day} 10:00;Porridge;0000456;418,4;0;0;;", f'{day} 11:00;"missing']),
+        encoding="utf-8-sig",
+    )
+    adb("push", str(truncated), f"/sdcard/Download/{TRUNCATED}")
 
     open_importer()
     tap("Choose FDDB CSV")
@@ -140,6 +147,16 @@ def run(directory):
         for node in nodes()
     )
     print("The same CSV after a full restart offered no duplicate entries")
+
+    choose_csv(TRUNCATED)
+    preview_utc()
+    find("Preview stopped at line 3. Choose a complete export to import these entries.")
+    find("1 new · 0 already saved")
+    assert all(
+        not any(label.startswith("Import ") and label.endswith(" new entries") for label in labels(node))
+        for node in nodes()
+    )
+    print("A structurally incomplete CSV showed the failed line and offered no Apply action")
 
 
 if __name__ == "__main__":
