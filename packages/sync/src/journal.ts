@@ -167,7 +167,19 @@ function remoteRecord(db: JournalSqlite, key: RecordKey): Change | null {
   return record;
 }
 
-interface MealProjection {
+function saveRemoteRecord(db: JournalSqlite, change: Change): void {
+  db.run(
+    `INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)
+    ON CONFLICT(kind,id) DO UPDATE SET revision = excluded.revision, content = excluded.content
+    WHERE excluded.revision > edo_sync_remote.revision`,
+    change.kind,
+    change.id,
+    change.revision,
+    JSON.stringify(change),
+  );
+}
+
+export interface MealProjection {
   readonly revision: number;
   readonly origin: "accepted" | "pulled";
   readonly content: JsonObject | null;
@@ -314,6 +326,66 @@ function freezeReview(value: unknown): void {
 
 function hasLocalWork(record: OutboxRecord): boolean {
   return Boolean(record.attempt || record.pending || record.blocked);
+}
+
+function availableMealProjection(db: JournalSqlite, id: string): MealProjection | null {
+  const projection = readMealProjection(db, id);
+  if (!projection) return null;
+  const { record } = localRecord(db, { kind: "meal", id });
+  if (hasLocalWork(record) || record.baseRevision !== projection.revision) return null;
+  if (projection.origin === "accepted") return projection;
+  const base = record.base;
+  if (base?.state === "deleted") return projection;
+  return base?.state === "live" && base.content.id === id
+    ? { ...projection, content: base.content }
+    : null;
+}
+
+type ProjectMeals = (
+  changes: readonly Change[],
+  priorProjection: (id: string) => MealProjection | null,
+) => readonly string[];
+
+function projectStagedMeals(db: JournalSqlite, apply: ProjectMeals) {
+  const available = new Map<string, { record: OutboxRecord; change: Change }>();
+  const deferred: string[] = [];
+  for (const row of db.all(`
+    SELECT remote.id FROM edo_sync_remote AS remote
+    LEFT JOIN edo_sync_meal_projections AS projected ON projected.id = remote.id
+    WHERE remote.kind = 'meal'
+      AND (projected.origin IS NULL OR projected.origin <> 'pulled' OR projected.revision <> remote.revision)
+    ORDER BY remote.revision, remote.id
+  `)) {
+    if (typeof row.id !== "string") throw new Error("Stored meal identity is invalid");
+    const key = { kind: "meal", id: row.id };
+    const remote = remoteRecord(db, key);
+    if (!remote) throw new Error("Missing meal copy");
+    const { record } = localRecord(db, key);
+    if (remote.revision < (record.baseRevision ?? 0)) continue;
+    if (remote.state === "unavailable" || hasLocalWork(record)) {
+      deferred.push(remote.id);
+      continue;
+    }
+    const projected = createOutboxRecord(remote, remote);
+    if (!projected.base) throw new Error("Missing immutable meal projection");
+    available.set(remote.id, { record: projected, change: projected.base });
+  }
+  const applied = new Set(
+    apply(
+      [...available.values()].map(({ change }) => change),
+      (id) => availableMealProjection(db, id),
+    ),
+  );
+  for (const id of applied) {
+    if (!available.has(id)) throw new Error("The meal writer reported an unstaged ID");
+  }
+  for (const [id, { record, change }] of available) {
+    if (applied.has(id)) {
+      saveRecord(db, record);
+      writeMealProjection(db, id, pulledMealProjection(change));
+    } else deferred.push(id);
+  }
+  return { awaitingPages: false, deferred };
 }
 
 function requireSynchronousWrite(result: undefined): void {
@@ -476,7 +548,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     applyResults(
       session: NegotiatedSync,
       response: PushResponse,
-      applyRemote: (change: Change) => undefined,
+      applyRemote?: (change: Change) => undefined,
     ) {
       requireActiveSession(session);
       const { results } = authenticatedResponseSnapshot(response, session);
@@ -508,12 +580,12 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           assertReceiptMatchesAttempt(response, record.attempt);
           const next = receiveOutboxOutcome(record, result);
           const remote =
-            result.status === "accepted" && !hasLocalWork(next)
+            applyRemote && result.status === "accepted" && !hasLocalWork(next)
               ? remoteRecord(db, record.key)
               : null;
           const projectRemote =
             remote && remote.state !== "unavailable" && remote.revision >= (next.baseRevision ?? 0);
-          if (projectRemote) {
+          if (projectRemote && applyRemote) {
             const projected = createOutboxRecord(remote, remote);
             requireSynchronousWrite(applyRemote(remote));
             saveRecord(db, projected);
@@ -557,15 +629,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
           throw new Error("The pull cursor changed before the page was saved");
         for (const change of page.changes) {
           const { record, release } = localRecord(db, change);
-          db.run(
-            `INSERT INTO edo_sync_remote VALUES (?, ?, ?, ?)
-            ON CONFLICT(kind,id) DO UPDATE SET revision = excluded.revision, content = excluded.content
-            WHERE excluded.revision > edo_sync_remote.revision`,
-            change.kind,
-            change.id,
-            change.revision,
-            JSON.stringify(change),
-          );
+          saveRemoteRecord(db, change);
           if (change.state === "unavailable" || !isKnownRecordKind(change.kind)) continue;
           if (hasLocalWork(record)) {
             if (!record.base && change.revision === record.baseRevision) {
@@ -598,6 +662,54 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         reviews.set(current.review, { key: current.record.key, state: current.state });
         return current.review;
       }, "BEGIN");
+    },
+    /** Retain pending pages before applying any dependent meal changes. */
+    applyMealPage(
+      session: NegotiatedSync,
+      requestCursor: number,
+      input: PullResponse,
+      apply: ProjectMeals,
+    ) {
+      requireActiveSession(session);
+      const page = authenticatedResponseSnapshot(input, session, requestCursor);
+      return transact(() => {
+        const binding = checkSession(session);
+        if (binding.cursor !== requestCursor) {
+          throw new Error("The pull cursor changed before the page was saved");
+        }
+        for (const change of page.changes) {
+          saveRemoteRecord(db, change);
+          if (change.kind !== "meal" || change.state === "unavailable") continue;
+          const { record, release } = localRecord(db, change);
+          if (hasLocalWork(record) && !record.base && change.revision === record.baseRevision) {
+            saveRecord(db, { ...record, base: change }, release);
+          }
+        }
+        const observed = page.cursor + Number(page.hasMore);
+        if (!Number.isSafeInteger(observed)) throw new Error("Invalid observed pull revision");
+        db.run(
+          "UPDATE edo_sync_binding SET cursor = ?, observed_revision = MAX(observed_revision, ?)",
+          page.cursor,
+          observed,
+        );
+        const result =
+          page.hasMore || page.cursor < binding.revision
+            ? { awaitingPages: true, deferred: [] }
+            : projectStagedMeals(db, apply);
+        requireActiveSession(session);
+        return result;
+      });
+    },
+    replayMealProjections(session: NegotiatedSync, apply: ProjectMeals) {
+      return transact(() => {
+        const binding = checkSession(session);
+        const result =
+          binding.cursor < binding.revision
+            ? { awaitingPages: true, deferred: [] }
+            : projectStagedMeals(db, apply);
+        requireActiveSession(session);
+        return result;
+      });
     },
     retryReviewed(review: BlockedSyncReview, submissionId: string) {
       const shown = reviews.get(review);
@@ -703,18 +815,7 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
     serverCopy: (key: RecordKey) => inspect(() => remoteRecord(db, key)),
     /** Compare with SQLite before using this evidence. Accepted content need not equal the server copy. */
     mealProjection(id: string): MealProjection | null {
-      return transact(() => {
-        const projection = readMealProjection(db, id);
-        if (!projection) return null;
-        const { record } = localRecord(db, { kind: "meal", id });
-        if (hasLocalWork(record) || record.baseRevision !== projection.revision) return null;
-        if (projection.origin === "accepted") return projection;
-        const base = record.base;
-        if (base?.state === "deleted") return projection;
-        return base?.state === "live" && base.content.id === id
-          ? { ...projection, content: base.content }
-          : null;
-      }, "BEGIN");
+      return transact(() => availableMealProjection(db, id), "BEGIN");
     },
   };
 }
