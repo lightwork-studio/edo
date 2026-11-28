@@ -7,6 +7,7 @@ import {
 import type { DiaryMeal } from "@edo/storage";
 import { type ReactNode, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { BarcodeShortcut } from "./barcode-shortcut";
 import { DiaryDatePicker } from "./diary-date-picker";
 import { calendarDate, nutritionTargetProgress, showTime, totalNutrition } from "./diary-view";
 import type { Strings } from "./strings";
@@ -42,6 +43,7 @@ export function TodayScreen({
   feedback,
   syncNotice,
   onDay,
+  onScan,
   onEdit,
   onSaveMeal,
   onRetry,
@@ -57,6 +59,7 @@ export function TodayScreen({
   feedback: string | null;
   syncNotice: ReactNode;
   onDay: (day: string) => void;
+  onScan?: () => void;
   onEdit: (mealId: string, itemId: string) => void;
   onSaveMeal: (meal: DiaryMeal) => void;
   onRetry: () => void;
@@ -82,6 +85,7 @@ export function TodayScreen({
           </Text>
           <View style={local.dateChevron} />
         </Pressable>
+        {onScan && <BarcodeShortcut label={t.scanBarcode} onPress={onScan} />}
       </View>
       {showPicker && (
         <DiaryDatePicker
@@ -368,7 +372,7 @@ function MealCard({
 
 const local = StyleSheet.create({
   dateHeader: { paddingLeft: 20, paddingRight: 12 },
-  date: { minHeight: 44, flexShrink: 1, flexDirection: "row", alignItems: "center", gap: 8 },
+  date: { minHeight: 44, flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
   dateText: { flexShrink: 1 },
   dateChevron: {
     width: 7,

@@ -84,6 +84,7 @@ type SearchContext = EntryTime & {
   returnToTab?: HomeTab;
 };
 type FoodSelection = SearchContext & { food: Food; fromCustomFoods?: boolean };
+type BarcodeCapture = { state: BarcodeState; fromToday?: true };
 type DeviceContext = { today: string; language: Language; locale: string };
 type SettingsParent = "progress" | "profile";
 type Route =
@@ -97,11 +98,11 @@ type Route =
   | { kind: "archive"; returnTo: SettingsParent }
   | { kind: "fddb-import"; returnTo: SettingsParent }
   | ({ kind: "search" } & SearchContext)
-  | ({ kind: "barcode"; state: BarcodeState } & SearchContext)
+  | ({ kind: "barcode"; openCameraInitially?: true } & SearchContext & BarcodeCapture)
   | ({ kind: "my-foods" } & SearchContext)
   | ({ kind: "custom-food"; current: Food | null; sourceId: string } & SearchContext)
   | ({ kind: "recipe"; current: Recipe | null; recipeId: string } & SearchContext)
-  | ({ kind: "add"; barcode?: BarcodeState } & FoodSelection)
+  | ({ kind: "add"; barcode?: BarcodeCapture } & FoodSelection)
   | ({ kind: "revalidate-packaged"; product: PackagedFood } & FoodSelection)
   | { kind: "edit"; day: string; mealId: string; itemId: string; item: DiaryItem };
 
@@ -303,10 +304,13 @@ function DiaryApp({
       const context = { day, occurredAt, utcOffsetMinutes, query, fromFoodsTab, returnToTab };
       setRoute(
         barcode
-          ? { ...context, kind: "barcode", state: barcode }
+          ? { ...context, ...barcode, kind: "barcode" }
           : { ...context, kind: fromCustomFoods ? "my-foods" : "search" },
       );
-    } else if (route.kind === "my-foods" && route.fromFoodsTab) {
+    } else if (
+      (route.kind === "my-foods" && route.fromFoodsTab) ||
+      (route.kind === "barcode" && route.fromToday)
+    ) {
       setRoute({ kind: "diary" });
     } else if (route.kind === "search" && route.returnToTab) {
       if (route.returnToTab === "my-foods") startFoodFlow("my-foods");
@@ -405,6 +409,23 @@ function DiaryApp({
         feedback={feedback?.day === day ? t[feedback.kind] : null}
         syncNotice={syncNotice}
         onDay={chooseDay}
+        onScan={
+          day <= today
+            ? () => {
+                packagedCache.start();
+                setFeedback(null);
+                setRoute({
+                  ...entryTime(selectedDay, new Date()),
+                  kind: "barcode",
+                  query: "",
+                  returnToTab: "diary",
+                  fromToday: true,
+                  openCameraInitially: true,
+                  state: { code: "", result: null },
+                });
+              }
+            : undefined
+        }
         onEdit={(mealId, itemId) => {
           const meal = meals?.find((entry) => entry.id === mealId);
           const item = meal?.items.find((entry) => entry.id === itemId);
@@ -579,6 +600,7 @@ function DiaryApp({
     }
   }
   if (route.kind === "barcode") {
+    const { kind: _kind, state, fromToday, openCameraInitially, ...context } = route;
     return (
       <BarcodeEntry
         t={t}
@@ -587,10 +609,24 @@ function DiaryApp({
         today={today}
         diary={diary}
         cache={cachedProducts}
-        initial={route.state}
+        initial={state}
+        openCameraInitially={openCameraInitially}
         onBack={goBack}
-        onPick={(product, barcode) =>
-          setRoute({ ...route, kind: "add", food: foodForPackagedProduct(product), barcode })
+        onSearch={
+          fromToday
+            ? () => {
+                catalog.start();
+                setRoute({ ...context, kind: "search" });
+              }
+            : undefined
+        }
+        onPick={(product, result) =>
+          setRoute({
+            ...context,
+            kind: "add",
+            food: foodForPackagedProduct(product),
+            barcode: { state: result, fromToday },
+          })
         }
       />
     );
