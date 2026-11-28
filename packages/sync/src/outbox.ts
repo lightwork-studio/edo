@@ -115,8 +115,17 @@ export function receiveOutboxOutcome(record: OutboxRecord, result: SubmissionRes
     return {
       ...record,
       baseRevision: result.revision,
-      // Server projection can preserve extra fields. Only a pulled copy is a verified snapshot.
-      base: record.base?.revision === result.revision ? record.base : null,
+      // A delete receipt proves a tombstone. Live content can include server-preserved fields.
+      base:
+        attempt.op === "delete"
+          ? snapshotChange(record.key, {
+              ...record.key,
+              state: "deleted",
+              revision: result.revision,
+            })
+          : record.base?.revision === result.revision
+            ? record.base
+            : null,
       attempt: null,
     };
   }

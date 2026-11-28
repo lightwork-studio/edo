@@ -193,6 +193,11 @@ function reserveLocalEdit(db: JournalSqlite, key: RecordKey, submissionId: strin
 
 type ProjectedEdit = { op: "put"; content: unknown } | { op: "delete" };
 
+interface LocalProjectionHistory {
+  readonly hasRevisionOrEdit: boolean;
+  readonly hasDeletion: boolean;
+}
+
 interface StalePutEvidence {
   readonly base: JsonObject;
   readonly draft: JsonObject;
@@ -285,10 +290,23 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
       });
     },
     /** Queue the persisted result of a synchronous local write on the same connection. */
-    commitLocalProjection(key: RecordKey, submissionId: string, applyLocal: () => ProjectedEdit) {
+    commitLocalProjection(
+      key: RecordKey,
+      submissionId: string,
+      applyLocal: (history: LocalProjectionHistory) => ProjectedEdit,
+    ) {
       return transact(() => {
         const { record, release } = reserveLocalEdit(db, key, submissionId);
-        const edit = applyLocal();
+        const rejection = record.blocked?.result;
+        const edit = applyLocal({
+          hasRevisionOrEdit: record.baseRevision !== null || hasLocalWork(record),
+          hasDeletion:
+            record.base?.state === "deleted" ||
+            record.pending?.op === "delete" ||
+            record.attempt?.op === "delete" ||
+            record.blocked?.submission.op === "delete" ||
+            (rejection?.status === "conflict" && rejection.current?.state === "deleted"),
+        });
         if (edit?.op !== "put" && edit?.op !== "delete") {
           throw new TypeError("A diary write must synchronously return its projected edit");
         }
