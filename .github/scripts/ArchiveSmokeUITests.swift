@@ -2,7 +2,6 @@ import XCTest
 
 final class ArchiveSmokeUITests: XCTestCase {
     private let app = XCUIApplication(bundleIdentifier: "studio.lightwork.edo")
-    private let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
 
     func testArchiveRestoreThroughFiles() throws {
         continueAfterFailure = false
@@ -11,7 +10,7 @@ final class ArchiveSmokeUITests: XCTestCase {
         try openDiaryFiles()
 
         try tap("Choose archive", in: [app])
-        try tap("Cancel", in: [app, files])
+        try tap("Cancel", in: [app])
         try waitFor("Share diary archive", in: [app])
         print("Cancelled the iOS picker and returned to Diary files")
 
@@ -48,7 +47,8 @@ final class ArchiveSmokeUITests: XCTestCase {
 
     private func chooseArchive(_ name: String) throws {
         try tap("Choose archive", in: [app])
-        let providers = [app, files]
+        // The document picker is presented inside Edo. The standalone Files app need not run.
+        let providers = [app]
         let fileNames = [name, name + ".json"]
         if let archive = element(fileNames, in: providers, timeout: 3, hittable: true) {
             archive.tap()
