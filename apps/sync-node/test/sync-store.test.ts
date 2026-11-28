@@ -1113,6 +1113,116 @@ function capturedMeal(id: string, name: string) {
   };
 }
 
+function capturedMealForDay(id: string, localDay = "2026-11-04") {
+  const meal = capturedMeal(id, `Meal ${id}`);
+  return {
+    ...meal,
+    localDay,
+    occurredAt: Date.parse(`${localDay}T00:30:00.003Z`) + 24 * 60 * 60 * 1000,
+    utcOffsetMinutes: -240,
+    items: meal.items.map((item) => ({ ...item, id: `${id}-item` })),
+  };
+}
+
+test("pages only live meals for the captured day and keeps the exact account scope", () => {
+  using store = openSyncStore(filename);
+  const day = "2026-11-04";
+  const account = "alpha";
+  const alpha = sessionFor(store.createAccount(account, "shared-lineage"));
+  const upper = sessionFor(store.createAccount("ALPHA", "shared-lineage"));
+  const meals = Array.from({ length: 10 }, (_, index) => capturedMealForDay(`meal-${index}`));
+  expect(
+    push(store, alpha, ...meals.map((meal) => put(meal.id, meal.id, null, meal))).results,
+  ).toHaveLength(10);
+  expect(
+    push(
+      store,
+      alpha,
+      put("other-day", "other-day", null, capturedMealForDay("other-day", "2026-11-05")),
+      remove("meal-1", "delete-meal-1", 2),
+    ).results,
+  ).toMatchObject([{ status: "accepted" }, { status: "accepted" }]);
+  expect(
+    push(store, upper, put("meal-0", "upper-meal-0", null, capturedMealForDay("meal-0"))).results,
+  ).toMatchObject([{ status: "accepted" }]);
+  const before = readFileSync(filename);
+
+  const first = store.readMealDay(account, day);
+  expect(first?.meals).toEqual(
+    meals
+      .slice(0, 9)
+      .flatMap((meal, index) => (index === 1 ? [] : [{ ...meal, revision: index + 1 }])),
+  );
+  const next = first?.next;
+  if (!next) throw new Error("Expected another page");
+  expect(store.readMealDay(account, day, next)).toEqual({
+    meals: [{ ...meals[9], revision: 10 }],
+    next: null,
+  });
+  expect(store.readMealDay("ALPHA", day)?.meals).toHaveLength(1);
+  expect(store.readMealDay("Alpha", day)).toBeNull();
+  expect(() => store.readMealDay("ALPHA", day, next)).toThrow("Stale meal day cursor");
+  expect(() => store.readMealDay(account, "2026-11-05", next)).toThrow("Stale meal day cursor");
+  expect(() => store.readMealDay(account, "2026-11-31")).toThrow("Invalid captured meal day");
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test("continues after an empty bounded scan and invalidates continuation after an account edit", () => {
+  using store = openSyncStore(filename);
+  const day = "2026-11-04";
+  const alpha = sessionFor(store.createAccount("alpha", "lineage-alpha"));
+  const beta = sessionFor(store.createAccount("beta", "lineage-beta"));
+  const staleDay = Array.from({ length: 33 }, (_, index) => {
+    const id = `earlier-${index}`;
+    return put(id, id, null, capturedMealForDay(id, "2026-11-03"));
+  });
+  const included = capturedMealForDay("included");
+  expect(
+    push(store, alpha, ...staleDay, put(included.id, "included", null, included)).results,
+  ).toHaveLength(34);
+
+  const first = store.readMealDay("alpha", day);
+  expect(first?.meals).toEqual([]);
+  const next = first?.next;
+  if (!next) throw new Error("Expected an empty page with a continuation");
+  const betaMeal = capturedMealForDay("beta-only");
+  expect(
+    push(store, beta, put(betaMeal.id, "other-account", null, betaMeal)).results,
+  ).toMatchObject([{ status: "accepted" }]);
+  expect(store.readMealDay("alpha", day, next)).toEqual({
+    meals: [{ ...included, revision: 34 }],
+    next: null,
+  });
+  expect(push(store, alpha, remove("earlier-0", "delete-earlier", 1)).results).toMatchObject([
+    { status: "accepted" },
+  ]);
+  expect(() => store.readMealDay("alpha", day, next)).toThrow("Stale meal day cursor");
+  expect(store.readMealDay("alpha", day)?.next?.revision).toBe(35);
+});
+
+test("fails closed for malformed meal identity without reading another account", () => {
+  using store = openSyncStore(filename);
+  const meal = capturedMealForDay("valid-meal");
+  const alpha = sessionFor(store.createAccount("alpha", "lineage-alpha"));
+  const beta = sessionFor(store.createAccount("beta", "lineage-beta"));
+  expect(push(store, alpha, put(meal.id, "alpha-meal", null, meal)).results).toMatchObject([
+    { status: "accepted" },
+  ]);
+  expect(push(store, beta, put(meal.id, "beta-meal", null, meal)).results).toMatchObject([
+    { status: "accepted" },
+  ]);
+  using db = new DatabaseSync(filename);
+  db.prepare(
+    "UPDATE sync_records SET record_id = CAST(X'FF' AS TEXT) WHERE account_binding = ?",
+  ).run("alpha");
+
+  expect(() => store.readMealDay("alpha", meal.localDay)).toThrow("Invalid stored meal day");
+  expect(store.readMealDay("beta", meal.localDay)).toEqual({
+    meals: [{ ...meal, revision: 1 }],
+    next: null,
+  });
+});
+
 test("reads only a current live meal in the exact account and preserves captured fields", () => {
   const id = "same-meal";
   const alphaMeal = { ...capturedMeal(id, "Alpha baked oats"), utcOffsetMinutes: -240 };

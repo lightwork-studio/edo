@@ -32,6 +32,8 @@ const applicationId = 0x45444f53;
 const schemaVersion = 2;
 const defaultPageSize = 100;
 const maxAccountBindingLength = 1024;
+const mealDayScanSize = 32;
+const mealDayPageSize = 8;
 // Two escaped 1,024-unit IDs plus release, cursor, and JSON framing fit in this reserve.
 const pullEnvelopeReserve = 14 * 1024;
 
@@ -120,11 +122,28 @@ export interface SyncStoreOptions {
   }) => JsonObject;
 }
 
+type CurrentMeal = DiaryMeal & { readonly revision: number };
+
+interface MealDayCursor {
+  readonly accountBinding: string;
+  readonly localDay: string;
+  readonly lineage: string;
+  readonly revision: number;
+  readonly afterRevision: number;
+}
+
+interface MealDayPage {
+  readonly meals: readonly CurrentMeal[];
+  readonly next: MealDayCursor | null;
+}
+
 export interface SyncStore extends Disposable {
   createAccount(accountBinding: string, lineage: string): AuthenticatedHistory;
   history(accountBinding: string): AuthenticatedHistory | null;
   /** The caller supplies the account binding from its trusted access context. */
-  readMeal(accountBinding: string, id: string): (DiaryMeal & { readonly revision: number }) | null;
+  readMeal(accountBinding: string, id: string): CurrentMeal | null;
+  /** Scan current meals in ascending record revision. Empty pages can have a continuation. */
+  readMealDay(accountBinding: string, localDay: string, cursor?: MealDayCursor): MealDayPage | null;
   /** The caller supplies the account binding from its trusted access context. */
   readWeighIn(accountBinding: string, id: string): (WeighIn & { readonly revision: number }) | null;
   push(accountBinding: string, session: NegotiatedSync, input: unknown): PushResponse;
@@ -603,6 +622,15 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       LIMIT 2
     `);
     currentPrivateRecord.setReadBigInts(true);
+    const privateRecordPage = db.prepare(`
+      SELECT revision, kind COLLATE BINARY = 'meal' AS is_meal,
+        CASE WHEN kind COLLATE BINARY = 'meal' AND octet_length(record_id) <= ?
+          THEN CAST(record_id AS BLOB) END AS meal_id
+      FROM main.sync_records
+      WHERE account_binding COLLATE BINARY = ? AND revision > ?
+      ORDER BY revision LIMIT ?
+    `);
+    privateRecordPage.setReadBigInts(true);
     const recordRevision = db.prepare(`
       SELECT revision FROM sync_records WHERE account_binding = ? AND kind = ? AND record_id = ?
     `);
@@ -689,6 +717,18 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
       }
     }
 
+    function readMeal(accountBinding: string, id: string): CurrentMeal | null {
+      const change = readCurrentRecord("meal", accountBinding, id);
+      if (!change) return null;
+      try {
+        const meal = readMealSnapshot(change.content);
+        if (meal.id !== id) throw new TypeError("Invalid stored meal identity");
+        return { ...meal, revision: change.revision };
+      } catch {
+        throw new Error("Invalid stored meal");
+      }
+    }
+
     return {
       createAccount(accountBinding, lineage) {
         const account = historyFrom({
@@ -703,16 +743,77 @@ export function openSyncStore(filename: string, { applyContent }: SyncStoreOptio
         return account;
       },
       history,
-      readMeal(accountBinding, id) {
-        const change = readCurrentRecord("meal", accountBinding, id);
-        if (!change) return null;
-        try {
-          const meal = readMealSnapshot(change.content);
-          if (meal.id !== id) throw new TypeError("Invalid stored meal identity");
-          return { ...meal, revision: change.revision };
-        } catch {
-          throw new Error("Invalid stored meal");
+      readMeal,
+      readMealDay(accountBinding, localDay, cursor) {
+        if (!isLocalDay(localDay)) throw new TypeError("Invalid captured meal day");
+        if (!isRecordId(accountBinding) || accountBinding.length > maxAccountBindingLength) {
+          return null;
         }
+        return transaction(db, "BEGIN", () => {
+          const account = history(accountBinding);
+          if (!account || account.accountBinding !== accountBinding) return null;
+          if (
+            cursor &&
+            (cursor.accountBinding !== accountBinding ||
+              cursor.localDay !== localDay ||
+              cursor.lineage !== account.lineage ||
+              cursor.revision !== account.revision ||
+              !Number.isSafeInteger(cursor.afterRevision) ||
+              cursor.afterRevision < 1 ||
+              cursor.afterRevision >= account.revision)
+          ) {
+            throw new Error("Stale meal day cursor");
+          }
+
+          let afterRevision = cursor?.afterRevision ?? 0;
+          const rows = privateRecordPage.iterate(
+            maxStoredReadBytes,
+            accountBinding,
+            afterRevision,
+            mealDayScanSize + 1,
+          );
+          const meals: CurrentMeal[] = [];
+          let scanned = 0;
+          for (const row of rows) {
+            const { revision, is_meal, meal_id } = row;
+            if (
+              typeof revision !== "bigint" ||
+              revision <= afterRevision ||
+              revision > account.revision ||
+              (is_meal !== 0n && is_meal !== 1n)
+            ) {
+              throw new Error("Invalid stored meal day");
+            }
+            if (scanned === mealDayScanSize || meals.length === mealDayPageSize) {
+              return {
+                meals,
+                next: {
+                  accountBinding,
+                  localDay,
+                  lineage: account.lineage,
+                  revision: account.revision,
+                  afterRevision,
+                },
+              };
+            }
+            scanned++;
+            afterRevision = Number(revision);
+            if (is_meal === 0n) continue;
+            if (!(meal_id instanceof Uint8Array)) throw new Error("Invalid stored meal day");
+            let id: string;
+            try {
+              id = textDecoder.decode(meal_id);
+            } catch {
+              throw new Error("Invalid stored meal day");
+            }
+            if (!isRecordId(id) || id.length > maxSyncEnvelopeBytes) {
+              throw new Error("Invalid stored meal day");
+            }
+            const meal = readMeal(accountBinding, id);
+            if (meal?.localDay === localDay) meals.push(meal);
+          }
+          return { meals, next: null };
+        });
       },
       readWeighIn(accountBinding, id) {
         const change = readCurrentRecord("weigh-in", accountBinding, id);
