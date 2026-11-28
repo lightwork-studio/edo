@@ -168,7 +168,9 @@ test("two file-backed devices survive a lost response and preserve stale edits a
     expect(a.journal.queued()).toMatchObject([
       { blocked: { result: { status: "conflict", current: { revision: 2 } } } },
     ]);
-    expect(a.journal.blockedReview(key)).toMatchObject({
+    const beforePull = a.journal.blockedReview(key);
+    if (!beforePull) throw new Error("Expected a blocked review");
+    expect(beforePull).toMatchObject({
       baseRevision: 1,
       original: null,
       device: { submissionId: "a-2", content: { kg: 75 } },
@@ -181,24 +183,36 @@ test("two file-backed devices survive a lost response and preserve stale edits a
     a.journal.applyPage(sessionA, 0, await clientA.pull(sessionA, 0), a.receive);
     expect(a.get()).toBe(75);
     expect(a.journal.serverCopy(key)).toMatchObject({ revision: 2, content: { kg: 81 } });
-    expect(() => a.journal.retryReviewed(key, 1, "a-2", "too-old")).toThrow(
-      /changed during review/,
-    );
+    expect(() => a.journal.retryReviewed(beforePull, "a-3")).toThrow(/changed during review/);
+    const beforeEdit = a.journal.blockedReview(key);
+    if (!beforeEdit) throw new Error("Expected a pulled review");
     a.journal.commitLocal(key, edit("new-draft", 75), () => a.set(75));
-    expect(() => a.journal.retryReviewed(key, 2, "a-2", "old-draft")).toThrow(/local edit changed/);
+    expect(() => a.journal.retryReviewed(beforeEdit, "a-3")).toThrow(/changed during review/);
     a.journal.commitLocal(key, edit("latest-draft", 75), () => a.set(75));
-    expect(a.journal.blockedReview(key)).toMatchObject({
+    const current = a.journal.blockedReview(key);
+    if (!current) throw new Error("Expected the current review");
+    expect(current).toMatchObject({
       device: { submissionId: "latest-draft", content: { kg: 75 } },
       blocked: { submission: { submissionId: "a-2" } },
       pulled: { revision: 2, content: { kg: 81 } },
     });
+    if (current.device.op !== "put" || current.pulled?.state !== "live") {
+      throw new Error("Expected a review of two live weigh-in values");
+    }
+    expect(Reflect.set(current, "device", current.blocked.submission)).toBe(false);
+    expect(Reflect.set(current.device.content, "kg", 79)).toBe(false);
+    expect(Reflect.set(current.pulled.content, "kg", 84)).toBe(false);
     expect(() => a.journal.commitLocal(key, edit("new-draft", 78), () => a.set(78))).toThrow(
       /cannot reuse/,
     );
-    expect(() => a.journal.retryReviewed(key, 2, "latest-draft", "x".repeat(1025))).toThrow(
+    expect(() => a.journal.retryReviewed({ ...current }, "a-3")).toThrow(/Open the blocked edit/);
+    expect(() => openSyncJournal(a.connection).retryReviewed(current, "a-3")).toThrow(
+      /Open the blocked edit/,
+    );
+    expect(() => a.journal.retryReviewed(current, "x".repeat(1025))).toThrow(
       expect.objectContaining({ code: "invalid-request" }),
     );
-    a.journal.retryReviewed(key, 2, "latest-draft", "a-3");
+    a.journal.retryReviewed(current, "a-3");
     const resolved = await clientA.push(sessionA, a.journal.prepare(sessionA));
     a.journal.applyResults(sessionA, resolved, a.receive);
     expect(a.journal.blockedReview(key)).toBeNull();
@@ -234,6 +248,7 @@ test("a blocked review cannot combine its old device edit with a newer pull afte
     const path = join(root, "diary.sqlite");
     using client = diary(path);
     client.sqlite.exec("PRAGMA journal_mode = WAL");
+    client.journal.bind(await candidateSession());
     using writer = new DatabaseSync(path);
     const original = { ...key, state: "live", revision: 1, content: edit("old", 74).content };
     const server = { ...original, revision: 2, content: edit("server", 81).content };
@@ -282,16 +297,49 @@ test("a blocked review cannot combine its old device edit with a newer pull afte
         return row;
       },
     });
-    expect(review.blockedReview(key)).toMatchObject({
+    const originalReview = review.blockedReview(key);
+    if (!originalReview) throw new Error("Expected the original review");
+    expect(originalReview).toMatchObject({
       original: { revision: 1 },
       device: { submissionId: "blocked", content: { kg: 75 } },
       pulled: { revision: 2, content: { kg: 81 } },
     });
-    expect(review.blockedReview(key)).toMatchObject({
+    expect(() => review.retryReviewed(originalReview, "review-retry")).toThrow(
+      /changed during review/,
+    );
+    const currentReview = review.blockedReview(key);
+    if (!currentReview) throw new Error("Expected the concurrent review");
+    expect(currentReview).toMatchObject({
       original: { revision: 1 },
       device: { submissionId: "latest-local", content: { kg: 77 } },
       pulled: { revision: 3, content: { kg: 82 } },
     });
+    writeDraft.run(
+      key.kind,
+      key.id,
+      JSON.stringify({
+        ...record,
+        base: { ...original, content: { ...original.content, note: "verified again" } },
+        pending: edit("latest-local", 77),
+      }),
+    );
+    expect(() => review.retryReviewed(currentReview, "review-retry")).toThrow(
+      /changed during review/,
+    );
+    const preMove = review.blockedReview(key);
+    if (!preMove) throw new Error("Expected the review before the binding changed");
+    const bindingServer = writer.prepare("UPDATE edo_sync_binding SET server = ?");
+    bindingServer.run("https://other.test");
+    expect(() => review.retryReviewed(preMove, "review-retry")).toThrow(/changed during review/);
+    bindingServer.run("https://example.test");
+
+    const refreshed = review.blockedReview(key);
+    if (!refreshed) throw new Error("Expected the refreshed review");
+    writer.exec("UPDATE edo_sync_binding SET observed_revision = 4, cursor = 4");
+    review.retryReviewed(refreshed, "review-retry");
+    expect(review.queued()).toMatchObject([
+      { baseRevision: 3, pending: { submissionId: "review-retry", content: { kg: 77 } } },
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
