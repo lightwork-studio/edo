@@ -65,4 +65,3 @@ jobs:
           set -euo pipefail
           evidence="$(node apps/mobile/scripts/preflight-apple.mts | jq -c .)"
           printf 'evidence=%s\n' "$evidence" >> "$GITHUB_OUTPUT"
-
