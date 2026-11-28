@@ -45,6 +45,7 @@ function diary(file: string, fresh = true) {
   };
   return {
     sqlite,
+    connection,
     journal: openSyncJournal(connection),
     set,
     get: () => connection.get("SELECT kg FROM diary_fixture WHERE id = ?", key.id)?.kg ?? null,
@@ -148,6 +149,7 @@ test("two file-backed devices survive a lost response and preserve stale edits a
     );
     a.journal.applyResults(sessionA, ack, a.receive);
     a.journal.applyResults(sessionA, ack, a.receive);
+    expect(a.journal.blockedReview(key)).toBeNull();
     expect(a.journal.history()).toMatchObject({ revision: 1, cursor: 0 });
     expect(a.journal.queued()).toMatchObject([
       { pending: { submissionId: "a-2" }, baseRevision: 1 },
@@ -166,6 +168,16 @@ test("two file-backed devices survive a lost response and preserve stale edits a
     expect(a.journal.queued()).toMatchObject([
       { blocked: { result: { status: "conflict", current: { revision: 2 } } } },
     ]);
+    expect(a.journal.blockedReview(key)).toMatchObject({
+      baseRevision: 1,
+      original: null,
+      device: { submissionId: "a-2", content: { kg: 75 } },
+      blocked: {
+        submission: { submissionId: "a-2" },
+        result: { status: "conflict", current: { revision: 2, content: { kg: 81 } } },
+      },
+      pulled: null,
+    });
     a.journal.applyPage(sessionA, 0, await clientA.pull(sessionA, 0), a.receive);
     expect(a.get()).toBe(75);
     expect(a.journal.serverCopy(key)).toMatchObject({ revision: 2, content: { kg: 81 } });
@@ -175,6 +187,11 @@ test("two file-backed devices survive a lost response and preserve stale edits a
     a.journal.commitLocal(key, edit("new-draft", 75), () => a.set(75));
     expect(() => a.journal.retryReviewed(key, 2, "a-2", "old-draft")).toThrow(/local edit changed/);
     a.journal.commitLocal(key, edit("latest-draft", 75), () => a.set(75));
+    expect(a.journal.blockedReview(key)).toMatchObject({
+      device: { submissionId: "latest-draft", content: { kg: 75 } },
+      blocked: { submission: { submissionId: "a-2" } },
+      pulled: { revision: 2, content: { kg: 81 } },
+    });
     expect(() => a.journal.commitLocal(key, edit("new-draft", 78), () => a.set(78))).toThrow(
       /cannot reuse/,
     );
@@ -184,6 +201,7 @@ test("two file-backed devices survive a lost response and preserve stale edits a
     a.journal.retryReviewed(key, 2, "latest-draft", "a-3");
     const resolved = await clientA.push(sessionA, a.journal.prepare(sessionA));
     a.journal.applyResults(sessionA, resolved, a.receive);
+    expect(a.journal.blockedReview(key)).toBeNull();
     expect(a.journal.history()).toMatchObject({ revision: 3, cursor: 2 });
     expect(a.journal.queued()).toEqual([]);
 
@@ -204,6 +222,75 @@ test("two file-backed devices survive a lost response and preserve stale edits a
     expect(b.get()).toBe(75);
     expect(b.sqlite.prepare("PRAGMA integrity_check").get()).toMatchObject({
       integrity_check: "ok",
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a blocked review cannot combine its old device edit with a newer pull after a concurrent commit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "edo-blocked-review-"));
+  try {
+    const path = join(root, "diary.sqlite");
+    using client = diary(path);
+    client.sqlite.exec("PRAGMA journal_mode = WAL");
+    using writer = new DatabaseSync(path);
+    const original = { ...key, state: "live", revision: 1, content: edit("old", 74).content };
+    const server = { ...original, revision: 2, content: edit("server", 81).content };
+    const submitted = { ...key, baseRevision: 1, ...edit("blocked", 75) };
+    const record = {
+      key,
+      baseRevision: 1,
+      base: original,
+      attempt: null,
+      pending: null,
+      blocked: {
+        submission: submitted,
+        result: {
+          submissionId: submitted.submissionId,
+          status: "conflict",
+          reason: "stale",
+          current: server,
+        },
+      },
+    };
+    const writeRemote = writer.prepare(
+      "INSERT OR REPLACE INTO edo_sync_remote VALUES (?, ?, ?, ?)",
+    );
+    const writeDraft = writer.prepare(
+      "INSERT OR REPLACE INTO edo_sync_outbox VALUES (?, ?, NULL, NULL, ?)",
+    );
+    writeDraft.run(key.kind, key.id, JSON.stringify(record));
+    writeRemote.run(key.kind, key.id, server.revision, JSON.stringify(server));
+    const newer = { ...server, revision: 3, content: edit("latest-server", 82).content };
+    let injected = false;
+    const review = openSyncJournal({
+      ...client.connection,
+      get(sql, ...parameters) {
+        const row = client.connection.get(sql, ...parameters);
+        if (!injected && sql.includes("FROM edo_sync_outbox")) {
+          injected = true;
+          writer.exec("BEGIN IMMEDIATE");
+          writeDraft.run(
+            key.kind,
+            key.id,
+            JSON.stringify({ ...record, pending: edit("latest-local", 77) }),
+          );
+          writeRemote.run(key.kind, key.id, newer.revision, JSON.stringify(newer));
+          writer.exec("COMMIT");
+        }
+        return row;
+      },
+    });
+    expect(review.blockedReview(key)).toMatchObject({
+      original: { revision: 1 },
+      device: { submissionId: "blocked", content: { kg: 75 } },
+      pulled: { revision: 2, content: { kg: 81 } },
+    });
+    expect(review.blockedReview(key)).toMatchObject({
+      original: { revision: 1 },
+      device: { submissionId: "latest-local", content: { kg: 77 } },
+      pulled: { revision: 3, content: { kg: 82 } },
     });
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -197,6 +197,16 @@ interface StalePutEvidence {
   readonly server: JsonObject;
 }
 
+export interface BlockedSyncReview {
+  readonly baseRevision: number | null;
+  readonly original: Change | null;
+  /** The latest intent recorded in the outbox for this blocked record. */
+  readonly device: OutboxEdit;
+  readonly blocked: NonNullable<OutboxRecord["blocked"]>;
+  /** The last authenticated pull for this record. The receipt may describe a newer value. */
+  readonly pulled: Change | null;
+}
+
 function orderedJson(content: JsonObject): string {
   return JSON.stringify(content, (_key, value: unknown) => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
@@ -470,6 +480,26 @@ export function openSyncJournal(db: JournalSqlite, requireCurrentStorage?: () =>
         );
         requireActiveSession(session);
       });
+    },
+    /** Read the values for a review together, including edits queued after the refusal. */
+    blockedReview(key: RecordKey): BlockedSyncReview | null {
+      return transact(() => {
+        const row = db.get(
+          "SELECT * FROM edo_sync_outbox WHERE kind = ? AND id = ?",
+          key.kind,
+          key.id,
+        );
+        if (!row) return null;
+        const { record } = storedRecord(row);
+        if (!record.blocked) return null;
+        return {
+          baseRevision: record.baseRevision,
+          original: record.base,
+          device: record.pending ?? record.blocked.submission,
+          blocked: record.blocked,
+          pulled: remoteRecord(db, record.key),
+        };
+      }, "BEGIN");
     },
     retryReviewed(
       key: RecordKey,
