@@ -4,6 +4,7 @@ export {
   type OpenDiaryOptions,
   openDiary,
   type PrivateArchiveStore,
+  type SyncDiaryStore,
   type SyncMealStore,
 } from "./diary.ts";
 export type { DiaryProgressStore, NutritionTargetRecord } from "./diary-progress.ts";

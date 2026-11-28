@@ -50,6 +50,15 @@ export function readWeighIn(row: SqlRow): WeighIn {
   };
 }
 
+export function prepareWeighIn(entry: WeighIn): WeighIn {
+  return readWeighIn({
+    id: entry.id,
+    local_day: entry.localDay,
+    occurred_at: entry.occurredAt,
+    kg: entry.kg,
+  });
+}
+
 export function readNutritionTarget(row: SqlRow): NutritionTargetRecord {
   return {
     id: diaryId(row.id, "target ID"),
@@ -73,6 +82,18 @@ export function validateTargetBudget(target: DailyNutritionTarget): void {
 }
 
 const insertWeighIn = "INSERT INTO diary_weigh_ins VALUES (?, ?, ?, ?)";
+
+export function writeWeighIn(db: DiarySqliteConnection, entry: WeighIn): void {
+  db.run(
+    `${insertWeighIn}
+     ON CONFLICT(id) DO UPDATE SET local_day = excluded.local_day,
+       occurred_at = excluded.occurred_at, kg = excluded.kg`,
+    entry.id,
+    entry.localDay,
+    entry.occurredAt,
+    entry.kg,
+  );
+}
 
 function insertNutritionTarget(db: DiarySqliteConnection, record: NutritionTargetRecord): void {
   db.run(
@@ -119,23 +140,8 @@ export function verifyDiaryProgress(db: DiarySqliteConnection): void {
 export function diaryProgress(db: DiarySqliteConnection): DiaryProgressStore {
   return {
     saveWeighIn(entry) {
-      const weighIn = readWeighIn({
-        id: entry.id,
-        local_day: entry.localDay,
-        occurred_at: entry.occurredAt,
-        kg: entry.kg,
-      });
-      inCurrentDiary(db, "BEGIN IMMEDIATE", () =>
-        db.run(
-          `${insertWeighIn}
-           ON CONFLICT(id) DO UPDATE SET local_day = excluded.local_day,
-             occurred_at = excluded.occurred_at, kg = excluded.kg`,
-          weighIn.id,
-          weighIn.localDay,
-          weighIn.occurredAt,
-          weighIn.kg,
-        ),
-      );
+      const weighIn = prepareWeighIn(entry);
+      inCurrentDiary(db, "BEGIN IMMEDIATE", () => writeWeighIn(db, weighIn));
     },
     listWeighIns(from, through) {
       const first = readDay(from);

@@ -122,10 +122,12 @@ const revisedTarget: NutritionTargetRecord = {
   target: { ...target.target, kcal: 2100, availableCarbohydratesG: 280 },
 };
 
-function mealSyncSession() {
+function diarySyncSession() {
   return createSyncClient({
     origin: "https://example.test",
-    releases: [{ release: "0.1", features: ["write-records"], writableKinds: ["meal"] }],
+    releases: [
+      { release: "0.1", features: ["write-records"], writableKinds: ["meal", "weigh-in"] },
+    ],
     authorization: () => "Bearer synthetic",
     fetch: async () =>
       Response.json({
@@ -148,7 +150,7 @@ test("queues the actual persisted meal and preserves an in-flight edit over a re
   expect(() => diary.sync.saveMeal(meal, "unbound")).toThrow(/Connect this diary/);
   expect(diary.getMeal(meal.id)).toEqual(captured);
 
-  const session = await mealSyncSession();
+  const session = await diarySyncSession();
   diary.sync.journal.bind(session);
   diary.sync.saveMeal(meal, "first-edit");
   const [first] = diary.sync.journal.prepare(session);
@@ -187,7 +189,7 @@ test("rolls back a sync meal deletion and its submission reservation if the jour
   const source = createDatabase();
   const diary = await source.start();
   diary.saveMeal(meal);
-  const session = await mealSyncSession();
+  const session = await diarySyncSession();
   diary.sync.journal.bind(session);
   source.db.exec(`PRAGMA user_version = ${currentVersion + 1}`);
   expect(() => diary.sync.deleteMeal(meal.id, "retry-delete")).toThrow(
@@ -210,6 +212,48 @@ test("rolls back a sync meal deletion and its submission reservation if the jour
   const reopened = await createDatabase().start();
   expect(reopened.getMeal(meal.id)).toBeNull();
   expect(reopened.sync.journal.queued()[0]?.attempt?.submissionId).toBe("retry-delete");
+});
+
+test("commits a bound weigh-in and its pending tombstone with the private diary", async () => {
+  const source = createDatabase();
+  const diary = await source.start();
+  const saved = { ...weighIn, kg: 81.25 };
+  diary.saveWeighIn(weighIn);
+  expect(diary.sync.journal.queued()).toEqual([]);
+  expect(() => diary.sync.saveWeighIn(saved, "unbound")).toThrow(/Connect this diary/);
+  expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([weighIn]);
+
+  const session = await diarySyncSession();
+  diary.sync.journal.bind(session);
+  diary.sync.saveWeighIn(saved, "save-weight");
+  const [attempt] = diary.sync.journal.prepare(session);
+  if (attempt?.op !== "put") throw new Error("Expected a weigh-in submission");
+  expect(attempt).toMatchObject({ kind: "weigh-in", id: weighIn.id, content: saved });
+  expect(
+    applyRecordContent({
+      key: attempt,
+      release: session.release,
+      current: null,
+      submitted: attempt.content,
+    }),
+  ).toEqual(saved);
+
+  source.db.exec(`CREATE TRIGGER deny_weight_outbox BEFORE INSERT ON edo_sync_outbox
+    WHEN NEW.kind = 'weigh-in' BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`);
+  expect(() => diary.sync.deleteWeighIn(weighIn.id, "delete-weight")).toThrow(
+    /journal unavailable/,
+  );
+  expect(diary.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([saved]);
+  expect(diary.sync.journal.queued()).toMatchObject([{ attempt, pending: null }]);
+  source.db.exec("DROP TRIGGER deny_weight_outbox");
+  diary.sync.deleteWeighIn(weighIn.id, "delete-weight");
+
+  source.db.close();
+  const reopened = await createDatabase().start();
+  expect(reopened.listWeighIns(weighIn.localDay, weighIn.localDay)).toEqual([]);
+  expect(reopened.sync.journal.queued()).toMatchObject([
+    { attempt, pending: { op: "delete", submissionId: "delete-weight" } },
+  ]);
 });
 
 test("reopens locally, preserving the event day, stable IDs and nutrition after a catalog refresh", async () => {
