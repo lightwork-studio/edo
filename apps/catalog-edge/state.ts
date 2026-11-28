@@ -1,6 +1,7 @@
 export const checksum = /^[a-f0-9]{64}$/;
 export const maxStateBytes = 1024 * 1024;
 export const maxManifestBytes = 256 * 1024;
+export const maxOffSourceAgeMilliseconds = 72 * 60 * 60 * 1000;
 export const maxBlsManifestBytes = 16 * 1024;
 export const maxBlsArtifactBytes = 8 * 1024 * 1024;
 

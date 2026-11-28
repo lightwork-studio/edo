@@ -22,6 +22,7 @@ import {
   maxBlsArtifactBytes,
   maxBlsManifestBytes,
   maxManifestBytes,
+  maxOffSourceAgeMilliseconds,
   maxStateBytes,
   readCatalogState,
 } from "./state.ts";
@@ -302,7 +303,7 @@ async function run() {
       await writeFile(join(base, "active.json"), current.raw);
       const result = await refreshOpenFoodFactsDeltas(localRoot);
       const time = Date.parse(result.manifest.source.lastModified ?? "");
-      if (!(Date.now() - time < 72 * 60 * 60 * 1000))
+      if (!(Date.now() - time < maxOffSourceAgeMilliseconds))
         throw new Error("Open Food Facts catalog source is more than 72 hours old");
       const release =
         result.status === "published"

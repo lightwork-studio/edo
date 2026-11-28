@@ -22,6 +22,7 @@ import {
   inCurrentDiary,
   migrateDiary,
   requireCurrentDiaryVersion,
+  requireUnshadowedDiary,
 } from "./migrations.ts";
 import { type MyFoodsStore, myFoods, verifyMyFoods } from "./my-foods.ts";
 import {
@@ -247,6 +248,7 @@ export async function openDiary({
     verifyDiaryProgress(connection);
     verifyMyFoods(connection);
   });
+  requireUnshadowedDiary(db);
   const journal = openSyncJournal(db, () => requireCurrentDiaryVersion(db));
   return {
     ...diaryProgress(db),
