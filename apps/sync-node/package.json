@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.ts",
-    "verify-snapshot": "node src/verify-snapshot.ts",
+    "verify-snapshot": "node --disable-warning=ExperimentalWarning src/verify-snapshot.ts",
     "typecheck": "tsc -p ."
   },
   "dependencies": {

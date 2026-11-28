@@ -290,7 +290,10 @@ export function assertSyncSnapshotConsistency(db: DatabaseSync): void {
       initialize(canonical);
       const schemaObjects = `
         SELECT type, name, tbl_name, sql FROM main.sqlite_schema
-        WHERE name NOT IN ('sqlite_stat1', 'sqlite_stat4')
+        WHERE NOT (type IS 'table' AND tbl_name IS name AND (
+          (name IS 'sqlite_stat1' AND sql IS 'CREATE TABLE sqlite_stat1(tbl,idx,stat)') OR
+          (name IS 'sqlite_stat4' AND sql IS 'CREATE TABLE sqlite_stat4(tbl,idx,nEq,nLt,nDLt,sample)')
+        ))
         ORDER BY type, name`;
       if (
         JSON.stringify(db.prepare(schemaObjects).all()) !==

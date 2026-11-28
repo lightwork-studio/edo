@@ -181,6 +181,24 @@ test.each([
     "Unexpected sync snapshot schema",
   ],
   [
+    "a modified statistics table",
+    `ANALYZE; PRAGMA writable_schema = ON;
+      UPDATE sqlite_schema SET sql = 'CREATE TABLE sqlite_stat1(tbl,idx,stat,unexpected)'
+      WHERE name = 'sqlite_stat1';
+      PRAGMA writable_schema = OFF`,
+    "Unexpected sync snapshot schema",
+  ],
+  [
+    "a trigger using a reserved statistics name",
+    `CREATE TRIGGER extra AFTER INSERT ON sync_accounts BEGIN SELECT 1; END;
+      PRAGMA writable_schema = ON;
+      UPDATE sqlite_schema SET name = 'sqlite_stat4',
+        sql = 'CREATE TRIGGER sqlite_stat4 AFTER INSERT ON sync_accounts BEGIN SELECT 1; END'
+      WHERE name = 'extra';
+      PRAGMA writable_schema = OFF`,
+    "Unexpected sync snapshot schema",
+  ],
+  [
     "unencodable current record",
     `UPDATE sync_records SET content = json_object('items', json_array(), 'large', hex(zeroblob(525000)))
       WHERE account_binding = 'alpha' AND revision = 3`,
@@ -201,6 +219,7 @@ test.each([
   writeSnapshotFixture(filename);
   {
     using copy = new DatabaseSync(filename);
+    if (edit.includes("writable_schema")) copy.enableDefensive?.(false);
     copy.exec(edit);
     expect(copy.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
     expect(copy.prepare("PRAGMA foreign_key_check").get()).toBeUndefined();
