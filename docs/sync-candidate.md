@@ -47,4 +47,6 @@ reviewed revision so another device's intervening write triggers a new check.
 
 Exercise the app and server with the same release, a previous client against a newer server, and a client that has no common release. Include lost responses, interrupted pages, deletions, change receipts, stale writes, older backups, and server moves. Confirm that older-client edits preserve unknown fields when the server stores them. Use synthetic fixtures and keep those fixtures fixed after publication.
 
+The HTTP compatibility test uses the candidate and an unpublished test release with an extra field and capability. It verifies an older client's write preserves the field, a newer client falls back to the current server, and disjoint releases leave the account revision unchanged. [HTTP compatibility tests](../apps/sync-node/test/sync-http.test.ts)
+
 The account credential and pairing flow, the retention of submission receipts, and the rule for two different nutrition targets saved for the same day on disconnected devices need decisions before managed rollout. The backup format and offline SQLite migrations have their own versions.
