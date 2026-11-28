@@ -31,7 +31,8 @@ after the user reviews its deletion. Other deleted records need a new ID. The ap
 the attached-account flow and grouped conflict review before it can offer this candidate to users.
 
 The diary candidate's grouped meal path stages each authenticated pull and applies dependent meal
-updates together once its cursor catches up. Unknown prior item membership stays staged through
-replay. Nonmeal copies in those pages remain available to their own projection path. Grouped meal
-receipts commit independently of replay, so the caller can retry an interrupted replay after
-reopening. The app should route meal projection through this grouped path when it enables sync.
+updates together once its cursor catches up. Item IDs observed in a superseded pull, a conflict
+receipt or a local edit remain available to the grouping decision. Unresolved prior membership
+can defer changes to item ownership. The path applies independent weigh-ins when the local
+record can safely advance. Other record kinds retain their staged copies. Grouped meal receipts
+commit independently of replay, so the caller can retry an interrupted replay after reopening.
