@@ -1,7 +1,7 @@
+import { type CatalogDatabase, findBlsFoods } from "@edo/catalog-import/bls-search";
 import type { Food, FoodId } from "@edo/core";
 import type { PackagedFoodCache } from "@edo/storage";
 import { foodForPackagedProduct } from "./barcode";
-import { type CatalogDatabase, findBlsFoods } from "./catalog";
 import type { Language } from "./strings";
 
 export function foodKey(id: FoodId): string {

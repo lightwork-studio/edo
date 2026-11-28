@@ -1,8 +1,8 @@
+import type { CatalogDatabase } from "@edo/catalog-import/bls-search";
 import type { Food, FoodId } from "@edo/core";
 import type { PackagedFoodCache } from "@edo/storage";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import type { CatalogDatabase } from "./catalog";
 import { foodKey, resolveFavoriteFoods } from "./favorite-foods";
 import type { Language, Strings } from "./strings";
 import { Notice, styles } from "./ui";

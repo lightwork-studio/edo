@@ -1,10 +1,10 @@
+import { searchBls } from "@edo/catalog-import/bls-search";
 import { type Food, roundNutritionForDisplay } from "@edo/core";
 import type { PackagedFoodCache } from "@edo/storage";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { useEffect, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { openFoodFactsLicenseUrl } from "./barcode";
-import { searchBls } from "./catalog";
 import { SourceLink } from "./catalog-source-link";
 import { searchCachedPackagedFoods } from "./packaged-food-search";
 import type { Language, Strings } from "./strings";

@@ -1,9 +1,9 @@
+import { searchBls } from "@edo/catalog-import/bls-search";
 import { compatibleCatalog } from "@edo/catalog-import/manifest";
 import { fetch } from "expo/fetch";
 import { CryptoDigestAlgorithm, digest as digestBytes } from "expo-crypto";
 import { Directory, File, FileMode, Paths } from "expo-file-system";
 import { deserializeDatabaseAsync } from "expo-sqlite";
-import { searchBls } from "./catalog";
 
 const provider = "bls";
 const release = "4.0-2025";
