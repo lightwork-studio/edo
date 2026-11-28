@@ -64,7 +64,8 @@ export function HomeTabs({
       {tab("my-foods")}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={t.addFood}
+        accessibilityLabel={t.logMealAction}
+        accessibilityHint={t.addFood}
         accessibilityState={{ disabled: !onLog }}
         disabled={!onLog}
         onPress={onLog}

@@ -68,6 +68,10 @@ export function entryTime(selectedDay: string | null, now: Date): EntryTime {
   return { day, occurredAt: event.getTime(), utcOffsetMinutes: -event.getTimezoneOffset() || 0 };
 }
 
+export function foodLibraryEntryTime(prepared: EntryTime, fromTab: boolean, now: Date): EntryTime {
+  return fromTab ? entryTime(null, now) : prepared;
+}
+
 export function showTime(
   { occurredAt, utcOffsetMinutes }: Pick<DiaryMeal, "occurredAt" | "utcOffsetMinutes">,
   locale: string,
@@ -109,6 +113,15 @@ export function totalNutrition(meals: readonly DiaryMeal[]): Nutrients | null {
     if (error instanceof RangeError) return null;
     throw error;
   }
+}
+
+export function nutritionTargetProgress(logged: number | null, target: number | null) {
+  if (logged === null || target === null) return null;
+  const ratio = target > 0 ? logged / target : Number(logged > 0);
+  return {
+    fraction: Math.min(ratio, 1),
+    ratio: target > 0 && Number.isFinite(ratio) ? ratio : null,
+  };
 }
 
 export type FoodEntry =
