@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import {
   defaultFoodPortion,
+  foodDetailActionLabel,
   nutritionSum,
   nutritionTargetProgress,
   readAmount,
@@ -87,7 +88,8 @@ export function FoodDetail({
   const [error, setError] = useState<"invalid" | "save" | null>(null);
   const [favoriteError, setFavoriteError] = useState(false);
   const { width, fontScale } = useWindowDimensions();
-  const compact = width < 350 || fontScale > 1.2;
+  const largeText = fontScale > 1.2;
+  const compact = width < 350 || largeText;
   const star = favorite && "toggle" in favorite ? favorite : undefined;
   const submitted = useRef(false);
   const amount = unit === initialUnit && value === initialText ? initial : readAmount(value);
@@ -121,32 +123,28 @@ export function FoodDetail({
     (candidate) => candidate === initialUnit || previewNutrition(food, 1, candidate) !== null,
   );
   const measured = food.nutrition.portionSize;
+  const measuredAmount =
+    measured &&
+    new Intl.NumberFormat(locale, { maximumSignificantDigits: 4 }).format(measured.amount);
   const sideBySide = !compact && units.length > 1;
-  const quantity =
-    amount === null
-      ? null
-      : unit === "portion"
-        ? t.foodDetailPortions(displayAmount(amount, locale), amount)
-        : `${displayAmount(amount, locale)} ${unit}`;
-  const energy = preview?.kcal == null ? null : nutrientValue(preview.kcal, locale, "kcal");
-  const action = quantity && preview ? [quantity, energy].filter(Boolean).join(" · ") : null;
-  const submitLabel = action
-    ? originalItem
-      ? t.foodDetailSave(action)
-      : t.foodDetailAdd(action)
-    : originalItem
-      ? t.save
-      : t.add;
+  const portion = amount !== null && preview ? { amount, unit } : null;
+  const submitLabel = foodDetailActionLabel(
+    portion,
+    preview?.kcal ?? null,
+    Boolean(originalItem),
+    locale,
+    t,
+  );
 
   function submit() {
     if (submitted.current) return;
-    if (amount === null || preview === null) {
+    if (!portion) {
       setError("invalid");
       return;
     }
     submitted.current = true;
     try {
-      onSave({ amount, unit });
+      onSave(portion);
       Keyboard.dismiss();
     } catch {
       submitted.current = false;
@@ -236,12 +234,16 @@ export function FoodDetail({
               )}
             </View>
             {units.length > 1 && (
-              <View style={[local.units, sideBySide && local.unitsColumn]}>
+              <View
+                accessibilityRole="radiogroup"
+                accessibilityLabel={t.foodPortionUnit}
+                style={[local.units, sideBySide && local.unitsColumn]}
+              >
                 {units.map((candidate) => (
                   <Pressable
                     key={candidate}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: unit === candidate }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: unit === candidate }}
                     onPress={() => {
                       if (unit === candidate) return;
                       setUnit(candidate);
@@ -256,7 +258,7 @@ export function FoodDetail({
                     </Text>
                     {candidate === "portion" && measured && (
                       <Text style={[styles.meta, local.center]}>
-                        {displayAmount(measured.amount, locale)} {measured.unit}
+                        {measuredAmount} {measured.unit}
                       </Text>
                     )}
                   </Pressable>
@@ -320,9 +322,15 @@ export function FoodDetail({
                   amount == null ? t.unavailable : nutrientValue(amount, locale, unit);
                 const numeric = (
                   <Text
-                    style={[styles.body, styles.numbers, { color, maxWidth: 42 }]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
+                    style={[
+                      styles.body,
+                      styles.numbers,
+                      local.metricNumber,
+                      { color },
+                      !largeText && local.ringNumber,
+                    ]}
+                    numberOfLines={largeText ? undefined : 1}
+                    adjustsFontSizeToFit={!largeText}
                   >
                     {value === null
                       ? "—"
@@ -354,13 +362,14 @@ export function FoodDetail({
                         fraction={after?.fraction ?? prior?.fraction}
                         baseline={prior?.fraction ?? 0}
                       >
-                        {numeric}
+                        {!largeText && numeric}
                       </TargetRing>
                     ) : (
                       <Ring size={54} color={color}>
-                        {numeric}
+                        {!largeText && numeric}
                       </Ring>
                     )}
+                    {largeText && numeric}
                     <Text style={[styles.meta, local.metricName]}>{t[label]}</Text>
                     {comparison ? (
                       <Text style={[styles.meta, local.metricName]}>{comparison}</Text>
@@ -491,6 +500,8 @@ const local = StyleSheet.create({
   metric: { flex: 1, minWidth: 60, alignItems: "center", gap: 3 },
   metricCompact: { flexGrow: 0, flexBasis: "50%" },
   metricName: { textAlign: "center", fontSize: 11 },
+  metricNumber: { textAlign: "center" },
+  ringNumber: { maxWidth: 42 },
   impactBalance: { maxWidth: "48%", flexShrink: 1, textAlign: "right" },
   reference: { gap: 6 },
   nutritionGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },

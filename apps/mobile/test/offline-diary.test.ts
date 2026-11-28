@@ -11,6 +11,7 @@ import { expect, test } from "vitest";
 import {
   diaryDayLimit,
   entryTime,
+  foodDetailActionLabel,
   foodLibraryEntryTime,
   foodPreviewItems,
   localDay,
@@ -23,7 +24,20 @@ import {
   totalNutrition,
 } from "../src/diary-view";
 import { foodKey, resolveFavoriteFoods } from "../src/favorite-foods";
-import { appLocale } from "../src/strings";
+import { appLocale, strings } from "../src/strings";
+
+test("describes the exact portion and distinguishes known zero energy from missing nutrition", () => {
+  expect(
+    foodDetailActionLabel({ amount: 1, unit: "portion" }, 150, false, "en-US", strings.en),
+  ).toBe("Add 1 portion · 150 kcal");
+  expect(foodDetailActionLabel({ amount: 12.5, unit: "ml" }, 0, true, "de-DE", strings.de)).toBe(
+    "12,5 ml · 0 kcal speichern",
+  );
+  expect(
+    foodDetailActionLabel({ amount: 2, unit: "portion" }, null, false, "en-US", strings.en),
+  ).toBe("Add 2 portions");
+  expect(foodDetailActionLabel(null, null, true, "de-DE", strings.de)).toBe("Änderungen speichern");
+});
 
 test("captures primary Foods logging at selection and preserves an existing historical log flow", () => {
   const before = new Date(2026, 10, 28, 22, 0, 0);

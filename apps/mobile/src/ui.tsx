@@ -317,21 +317,7 @@ const ringStyles = StyleSheet.create({
   cap: { position: "absolute", top: 0 },
 });
 
-export function displayNumber(value: number, locale: string, precision = 1): string {
-  return new Intl.NumberFormat(locale, { maximumFractionDigits: precision }).format(value);
-}
-
-export function displayAmount(value: number, locale: string): string {
-  return new Intl.NumberFormat(locale, {
-    useGrouping: false,
-    maximumSignificantDigits: 17,
-    numberingSystem: "latn",
-  }).format(value);
-}
-
-export function nutrientValue(value: number | null, locale: string, unit: "g" | "kcal"): string {
-  return value === null ? "—" : `${displayNumber(value, locale, unit === "kcal" ? 0 : 1)} ${unit}`;
-}
+export { displayAmount, displayNumber, nutrientValue } from "./diary-view";
 
 export function showDay(day: string, locale: string, today: string): string {
   if (day < firstGregorianDisplayDay) return day;
