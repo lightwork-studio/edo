@@ -1184,6 +1184,7 @@ test.each([
 });
 
 test("reads a supported UTF-16 store even when the captured text uses more physical bytes", () => {
+  writeFileSync(filename, "", { mode: 0o600, flag: "wx" });
   {
     using db = new DatabaseSync(filename);
     db.exec("PRAGMA encoding = 'UTF-16be'; CREATE TABLE marker (value); DROP TABLE marker;");
