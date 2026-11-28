@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openDiary, type SqliteConnection } from "@edo/storage";
 import { expect, it } from "vitest";
-import { readSyncBlocker, syncBlockerNotice } from "../src/sync-blockers";
+import { formatWeighInKilograms, readSyncBlocker, syncBlockerNotice } from "../src/sync-blockers";
+
+it("keeps weight precision when the locale uses a different decimal separator or numeral glyph", () => {
+  expect(formatWeighInKilograms(80.0021, "de-DE")).toBe("80,0021");
+  expect(formatWeighInKilograms(80.0022, "de-DE")).toBe("80,0022");
+  expect(formatWeighInKilograms(80.0021, "de-CH")).toBe("80.0021");
+  expect(formatWeighInKilograms(80.0021, "en-US-u-nu-mathbold")).toBe("80.0021");
+});
 
 function connectionFor(db: DatabaseSync): SqliteConnection {
   return {

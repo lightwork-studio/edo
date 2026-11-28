@@ -34,6 +34,12 @@ export type WeighInReviewSide =
     }
   | { readonly state: "deleted" | "unavailable" | "unknown" };
 
+export function formatWeighInKilograms(kg: number, locale: string): string {
+  const formatter = new Intl.NumberFormat(locale);
+  const decimal = formatter.format(1.1).replaceAll(formatter.format(1), "") || ".";
+  return kg.toString().replace(".", decimal);
+}
+
 function weighInValues(content: Record<string, unknown>, id: string): WeighInReviewSide {
   const { id: contentId, kg, localDay, occurredAt } = content;
   if (

@@ -3,6 +3,7 @@ import { AccessibilityInfo, Pressable, ScrollView, Text, View } from "react-nati
 import { type Language, strings } from "./strings";
 import {
   type BlockerJournal,
+  formatWeighInKilograms,
   readSyncBlocker,
   type syncBlockerNotice,
   type WeighInReviewSide,
@@ -206,7 +207,6 @@ function WeighInSide({
   words: (typeof copy)[Language]["weighIn"];
 }) {
   const recorded = side.state === "live" ? new Date(side.occurredAt) : null;
-  const decimalSeparator = new Intl.NumberFormat(locale).format(1.1)[1] ?? ".";
   return (
     <View>
       <Text accessibilityRole="header" style={styles.title}>
@@ -215,7 +215,7 @@ function WeighInSide({
       {side.state === "live" ? (
         <>
           <Text style={[styles.body, styles.numbers]}>
-            {side.kg.toString().replace(".", decimalSeparator)} kg
+            {formatWeighInKilograms(side.kg, locale)} kg
           </Text>
           <Text style={styles.meta}>{words.localDay}</Text>
           <Text style={styles.body}>
