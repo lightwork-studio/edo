@@ -83,7 +83,12 @@ def review_saved_records():
         label for node in ElementTree.fromstring(adb("shell", "cat", UI_PATH)).iter("node")
         for label in labels(node)
     ]
-    hidden = ("Private phone sentinel", "Private account sentinel", "82 kg", "native-weigh-in-review")
+    hidden = (
+        "Private phone sentinel",
+        "Private account sentinel",
+        "Weigh-in values unavailable",
+        "native-weigh-in-review",
+    )
     assert not any(value in label for value in hidden for label in labels_now), labels_now
     tap("Back")
     find("A saved change needs sync review.")
@@ -94,7 +99,7 @@ adb("shell", "svc", "wifi", "disable")
 app_locale("en-US")
 start()
 review_saved_records()
-print("Compared both saved weights and diary days in airplane mode.")
+print("Compared both saved weights and diary days despite a shortened receipt at the same revision.")
 adb("shell", "am", "force-stop", APP)
 start()
 review_saved_records()

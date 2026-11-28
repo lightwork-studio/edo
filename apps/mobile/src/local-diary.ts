@@ -106,7 +106,7 @@ async function openLocalDiaryConnection() {
             status: "conflict",
             reason: "stale",
             submissionId: submission.submissionId,
-            current: { ...account, revision: 2, content: { ...phone, kg: 82 } },
+            current: { ...key, revision: account.revision, state: "unavailable" },
           },
         },
       };
