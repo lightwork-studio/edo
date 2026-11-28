@@ -20,3 +20,20 @@ catalog verifies. The reader keeps serving its current release while it verifies
 Lookups use the local catalog by default. Set `EDO_LIVE_OPEN_FOOD_FACTS=1` to allow an explicit
 live fallback for unknown barcodes. Keep the catalog folder under control of the catalog publisher
 and leave the default loopback binding in place.
+
+## Account sync candidate
+
+For local integration tests, pass a sync store and an authenticator to `createHealthServer`.
+Use `applyRecordContent` with `openSyncStore` to validate diary records and preserve fields
+that a newer release wrote. The development entry point serves health and the optional
+catalog preview. Account sync becomes available when the caller supplies an authenticator.
+
+The server rechecks authorization after reading a request. After a restart, the device
+negotiates again and can retry the same submission ID against its receipt in SQLite. An
+accepted change advances the account revision. A pull returns the current records and
+tombstones, so superseded revisions can leave gaps.
+
+Requests can be up to 768 KiB and replies up to 1 MiB. A conflict can report a record ID
+and revision with its content marked unavailable if the reply would otherwise exceed
+the limit. The server retains each terminal receipt in its private database. Receipt
+retention remains open for managed rollout.
