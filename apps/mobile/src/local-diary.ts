@@ -133,6 +133,9 @@ async function openLocalDiaryConnection() {
       meal(addDays(today, -1), "fixture-later", 12, 0, [
         item("Letzte Mahlzeit", 350, 2240, 80, 175, 70),
       ]);
+      meal(addDays(today, -3), "fixture-half-kcal", 9, 0, [
+        item("Rundungstest", 82, 61.5, 8, 7, 1),
+      ]);
     }
     return {
       diary,
